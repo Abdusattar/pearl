@@ -1,0 +1,26 @@
+{
+    "hooks": {
+        "UserPromptSubmit": [
+            {
+                "hooks": [
+                    {
+                        "type": "command",
+                        "command": "$d = Get-Date -Format 'yyyy-MM-dd'; $f = 'D:\\aispace\\Pearl\\logs\\terminal\\' + $d + '.md'; if (-not (Test-Path $f)) { New-Item -ItemType Directory -Force 'D:\\aispace\\Pearl\\logs\\terminal' | Out-Null; $t = Get-Date -Format 'HH:mm'; $content = '# Лог сессии Pearl ' + $d + \"`n`n## Запуск`n- Время: \" + $t + \"`n`n## Задачи сессии`n`n## Решения и договорённости`n\"; Set-Content -Path $f -Value $content -Encoding UTF8 }",
+                        "shell": "powershell"
+                    }
+                ]
+            }
+        ],
+        "Stop": [
+            {
+                "hooks": [
+                    {
+                        "type": "command",
+                        "command": "python D:\\aispace\\personal\\scripts\\export_session.py --project D--aispace-Pearl --output D:\\aispace\\Pearl\\logs\\terminal",
+                        "shell": "powershell"
+                    }
+                ]
+            }
+        ]
+    }
+}
