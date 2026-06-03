@@ -1,0 +1,180 @@
+{% extends "base.html" %}
+{% set active_page = "expenses" %}
+
+{% block title %}Проверить квитанцию — Жемчужина{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <h1>Проверить квитанцию</h1>
+  <a href="/expenses/?org_id={{ current_org_id }}" class="btn btn-secondary">← Назад</a>
+</div>
+
+{% if error %}
+<div class="alert alert-error">{{ error }}</div>
+{% endif %}
+{% if success %}
+<div class="alert alert-success">{{ success }}</div>
+{% endif %}
+
+<div style="display:grid;grid-template-columns:1fr 1.5fr;gap:20px;align-items:start">
+
+  <!-- Фото -->
+  <div class="card" style="text-align:center">
+    <img src="/media/{{ receipt.file_path }}" alt="Квитанция"
+         style="max-width:100%;border-radius:8px;border:1px solid var(--border)">
+    {% if receipt.ocr_raw %}
+    <details style="margin-top:16px;text-align:left">
+      <summary style="font-size:13px;color:var(--text-muted);cursor:pointer">OCR текст (сырой)</summary>
+      <pre style="font-size:12px;white-space:pre-wrap;margin-top:8px;color:var(--text-muted)">{{ receipt.ocr_raw }}</pre>
+    </details>
+    {% endif %}
+  </div>
+
+  <!-- Правая колонка: позиции + форма -->
+  <div style="display:flex;flex-direction:column;gap:16px">
+
+    {% if items %}
+    <div class="card">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
+        <h3 style="margin:0;font-size:15px">Позиции чека</h3>
+        <span style="font-size:12px;color:var(--text-muted);background:#fef3c7;border:1px solid #fcd34d;border-radius:4px;padding:2px 8px">черновик OCR — проверь перед сохранением</span>
+      </div>
+      <table style="width:100%;border-collapse:collapse;font-size:13px">
+        <thead>
+          <tr style="border-bottom:2px solid var(--border);text-align:left">
+            <th style="padding:6px 4px;width:45%">Наименование</th>
+            <th style="padding:6px 4px;width:12%;text-align:right">Кол-во</th>
+            <th style="padding:6px 4px;width:18%;text-align:right">Цена</th>
+            <th style="padding:6px 4px;width:18%;text-align:right">Сумма</th>
+            <th style="padding:6px 4px;width:7%"></th>
+          </tr>
+        </thead>
+        <tbody id="items-body">
+          {% for item in items %}
+          <tr class="item-row" style="border-bottom:1px solid var(--border)">
+            <td style="padding:4px"><input type="text" name="item_name" value="{{ item.name }}" class="form-control" style="font-size:12px;padding:4px 6px"></td>
+            <td style="padding:4px"><input type="text" name="item_qty" value="{{ item.qty or '' }}" class="form-control" style="font-size:12px;padding:4px 6px;text-align:right"></td>
+            <td style="padding:4px"><input type="text" name="item_unit_price" value="{{ item.unit_price or '' }}" class="form-control" style="font-size:12px;padding:4px 6px;text-align:right"></td>
+            <td style="padding:4px"><input type="text" name="item_total_price" value="{{ item.total_price }}" class="form-control" style="font-size:12px;padding:4px 6px;text-align:right"></td>
+            <td style="padding:4px;text-align:center"><button type="button" onclick="this.closest('tr').remove()" style="background:none;border:none;color:var(--text-muted);cursor:pointer;font-size:16px">×</button></td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      <button type="button" onclick="addItemRow()" style="margin-top:8px;font-size:12px;color:var(--primary);background:none;border:none;cursor:pointer;padding:4px 0">+ добавить строку</button>
+    </div>
+    {% endif %}
+
+  <!-- Форма подтверждения -->
+  <div class="card">
+    {% if receipt.ocr_status == 'confirmed' %}
+      <div class="alert alert-success">Квитанция проведена ✓</div>
+      <p style="font-size:14px;color:var(--text-muted)">Сумма: <strong>{{ "{:,.0f}".format(receipt.amount_confirmed) }} с</strong></p>
+    {% elif receipt.ocr_status == 'rejected' %}
+      <div class="alert alert-error">Квитанция отклонена</div>
+    {% else %}
+    <form method="post" action="/expenses/{{ receipt.id }}/confirm">
+      <input type="hidden" name="org_id" value="{{ current_org_id }}">
+
+      <div class="form-group">
+        <label>Объект</label>
+        <input type="text" class="form-control" value="{{ receipt.org_name }}" disabled>
+      </div>
+
+      <!-- Сплиттер: только если "Оба садика" -->
+      {% if is_both_kinder %}
+      <div style="background:#fef3c7;border:1px solid #fcd34d;border-radius:8px;padding:16px;margin-bottom:18px">
+        <div style="font-size:13px;font-weight:600;margin-bottom:12px">⚡ Общая закупка на оба садика</div>
+        <div class="form-group" style="margin-bottom:10px">
+          <label>Общая сумма</label>
+          <input type="number" id="total-amount" class="form-control" step="0.01"
+                 value="{{ receipt.amount_detected or '' }}" placeholder="0.00" oninput="splitEqual()">
+        </div>
+        <button type="button" class="btn btn-secondary" onclick="splitEqual()" style="margin-bottom:12px;font-size:13px">
+          Разделить поровну
+        </button>
+        <div class="split-row">
+          <div class="form-group">
+            <label>Садик Сокулук, с</label>
+            <input type="number" name="amount_sokuluk" id="amt-sokuluk" class="form-control" step="0.01" required placeholder="0.00">
+          </div>
+          <div class="form-group">
+            <label>Садик Кожомкул, с</label>
+            <input type="number" name="amount_kojomkul" id="amt-kojomkul" class="form-control" step="0.01" required placeholder="0.00">
+          </div>
+        </div>
+      </div>
+      <input type="hidden" name="split_mode" value="both">
+      {% else %}
+      <div class="form-group">
+        <label>Сумма (сом)</label>
+        <input type="number" name="amount" class="form-control" step="0.01"
+               value="{{ receipt.amount_detected or '' }}" required placeholder="0.00">
+      </div>
+      {% endif %}
+
+      <div class="form-group">
+        <label>Дата</label>
+        <input type="date" name="date" class="form-control"
+               value="{{ today }}" required>
+      </div>
+
+      <div class="form-group">
+        <label>Категория</label>
+        <select name="category_id" class="form-control" required>
+          <option value="">Выберите категорию</option>
+          {% for cat in categories %}
+            {% if cat.parent_id is none %}
+            <option value="{{ cat.id }}">{{ cat.name }}</option>
+            {% else %}
+            <option value="{{ cat.id }}">&nbsp;&nbsp;↳ {{ cat.name }}</option>
+            {% endif %}
+          {% endfor %}
+        </select>
+      </div>
+
+      <div class="form-group">
+        <label>Описание (необязательно)</label>
+        <input type="text" name="description" class="form-control" placeholder="Например: Магазин Народный">
+      </div>
+
+      <div style="display:flex;gap:12px;margin-top:8px">
+        <button type="submit" name="action" value="confirm" class="btn btn-success" style="flex:1">✓ Провести</button>
+        <button type="submit" name="action" value="reject" class="btn btn-danger">Отклонить</button>
+      </div>
+    </form>
+    {% endif %}
+  </div>
+
+  </div><!-- /правая колонка -->
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+function splitEqual() {
+  const total = parseFloat(document.getElementById('total-amount')?.value) || 0;
+  const half = (total / 2).toFixed(2);
+  const s = document.getElementById('amt-sokuluk');
+  const k = document.getElementById('amt-kojomkul');
+  if (s) s.value = half;
+  if (k) k.value = half;
+}
+
+function addItemRow() {
+  const tbody = document.getElementById('items-body');
+  if (!tbody) return;
+  const row = document.createElement('tr');
+  row.className = 'item-row';
+  row.style.borderBottom = '1px solid var(--border)';
+  row.innerHTML = `
+    <td style="padding:4px"><input type="text" name="item_name" value="" class="form-control" style="font-size:12px;padding:4px 6px"></td>
+    <td style="padding:4px"><input type="text" name="item_qty" value="" class="form-control" style="font-size:12px;padding:4px 6px;text-align:right"></td>
+    <td style="padding:4px"><input type="text" name="item_unit_price" value="" class="form-control" style="font-size:12px;padding:4px 6px;text-align:right"></td>
+    <td style="padding:4px"><input type="text" name="item_total_price" value="" class="form-control" style="font-size:12px;padding:4px 6px;text-align:right"></td>
+    <td style="padding:4px;text-align:center"><button type="button" onclick="this.closest('tr').remove()" style="background:none;border:none;color:var(--text-muted);cursor:pointer;font-size:16px">×</button></td>
+  `;
+  tbody.appendChild(row);
+}
+</script>
+{% endblock %}

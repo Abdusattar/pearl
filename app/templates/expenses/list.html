@@ -1,0 +1,95 @@
+{% extends "base.html" %}
+{% set active_page = "expenses" %}
+
+{% block title %}Расходы — Жемчужина{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <h1>Расходы</h1>
+  <a href="/expenses/upload?org_id={{ current_org_id }}" class="btn btn-primary">+ Добавить квитанцию</a>
+</div>
+
+<div class="card">
+  <form method="get" class="filters">
+    <input type="hidden" name="org_id" value="{{ current_org_id }}">
+    <select name="category_id" class="form-control" style="width:auto">
+      <option value="">Все категории</option>
+      {% for cat in categories %}
+      <option value="{{ cat.id }}" {% if cat.id == selected_category %}selected{% endif %}>{{ cat.name }}</option>
+      {% endfor %}
+    </select>
+    <input type="month" name="month" value="{{ selected_month }}" class="form-control" style="width:auto">
+    <button type="submit" class="btn btn-secondary">Применить</button>
+    {% if pending_count > 0 %}
+    <a href="/expenses/?org_id={{ current_org_id }}&status=pending" class="btn btn-secondary" style="color:#92400e;background:#fef3c7">
+      ⏳ Непроведённые: {{ pending_count }}
+    </a>
+    {% endif %}
+  </form>
+
+  {% if receipts %}
+  <table class="table">
+    <thead>
+      <tr>
+        <th>Дата</th>
+        <th>Объект</th>
+        <th>Категория</th>
+        <th>Сумма</th>
+        <th>Статус</th>
+        <th></th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for r in receipts %}
+      <tr>
+        <td>{{ r.created_at.strftime('%d.%m.%Y') }}</td>
+        <td>{{ r.org_name }}</td>
+        <td>{{ r.category_name or '—' }}</td>
+        <td>
+          {% if r.amount_confirmed %}
+            <strong>{{ "{:,.0f}".format(r.amount_confirmed) }} с</strong>
+          {% elif r.amount_detected %}
+            {{ "{:,.0f}".format(r.amount_detected) }} с <span style="color:var(--text-muted);font-size:12px">(OCR)</span>
+          {% else %}
+            —
+          {% endif %}
+        </td>
+        <td>
+          <span class="badge badge-{{ r.ocr_status }}">
+            {% if r.ocr_status == 'pending' %}Ожидает
+            {% elif r.ocr_status == 'processing' %}Обработка
+            {% elif r.ocr_status == 'processed' %}Проверить
+            {% elif r.ocr_status == 'confirmed' %}Проведено
+            {% elif r.ocr_status == 'rejected' %}Отклонено
+            {% endif %}
+          </span>
+        </td>
+        <td>
+          {% if r.ocr_status in ('processed', 'pending') %}
+          <a href="/expenses/{{ r.id }}/confirm?org_id={{ current_org_id }}" class="btn btn-secondary" style="padding:5px 12px;font-size:13px">Проверить</a>
+          {% else %}
+          <a href="/expenses/{{ r.id }}/confirm?org_id={{ current_org_id }}" class="btn btn-secondary" style="padding:5px 12px;font-size:13px">Открыть</a>
+          {% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+
+  {% if totals %}
+  <div class="totals">
+    {% for t in totals %}
+    <div class="total-item">{{ t.org_name }}: <strong>{{ "{:,.0f}".format(t.total) }} с</strong></div>
+    {% endfor %}
+  </div>
+  {% endif %}
+
+  {% else %}
+  <div style="text-align:center;padding:40px;color:var(--text-muted)">
+    <div style="font-size:40px;margin-bottom:12px">📋</div>
+    <div>Расходов пока нет</div>
+    <a href="/expenses/upload?org_id={{ current_org_id }}" class="btn btn-primary" style="margin-top:16px">Добавить первую квитанцию</a>
+  </div>
+  {% endif %}
+</div>
+{% endblock %}

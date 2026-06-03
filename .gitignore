@@ -1,0 +1,9 @@
+.env
+__pycache__/
+*.pyc
+*.pyo
+media/receipts/
+media/voice/
+media/photos/
+*.db
+.DS_Store

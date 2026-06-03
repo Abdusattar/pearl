@@ -1,0 +1,98 @@
+{% extends "base.html" %}
+{% set active_page = "expenses" %}
+
+{% block title %}Загрузить квитанцию — Жемчужина{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <h1>Новая квитанция</h1>
+  <a href="/expenses/?org_id={{ current_org_id }}" class="btn btn-secondary">← Назад</a>
+</div>
+
+{% if error %}
+<div class="alert alert-error">{{ error }}</div>
+{% endif %}
+
+<div class="card" style="max-width:540px">
+  <form method="post" action="/expenses/upload" enctype="multipart/form-data" id="upload-form">
+    <input type="hidden" name="org_id" value="{{ current_org_id }}">
+
+    <div class="form-group">
+      <label>Объект</label>
+      <select name="receipt_org_id" class="form-control" required>
+        {% for org in upload_orgs %}
+        <option value="{{ org.id }}" {% if org.id == current_org_id %}selected{% endif %}>{{ org.name }}</option>
+        {% endfor %}
+      </select>
+    </div>
+
+    <div class="form-group">
+      <label>Фото квитанции</label>
+      <!-- Mobile: открывает камеру напрямую -->
+      <div class="upload-zone" id="upload-zone" onclick="document.getElementById('file-input').click()">
+        <div class="upload-icon">📷</div>
+        <div class="upload-text">Нажми чтобы сфотографировать или выбрать файл</div>
+        <input type="file" id="file-input" name="file" accept="image/*" capture="environment" required>
+      </div>
+      <div class="upload-preview" id="preview-container">
+        <img id="preview-img" src="" alt="Предпросмотр">
+        <div style="margin-top:8px;font-size:13px;color:var(--text-muted)" id="file-name"></div>
+      </div>
+      <div class="progress" id="progress">
+        <div class="progress-bar" id="progress-bar"></div>
+      </div>
+    </div>
+
+    <button type="submit" class="btn btn-primary btn-lg" id="submit-btn" style="width:100%">
+      Загрузить и распознать
+    </button>
+  </form>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+const fileInput = document.getElementById('file-input');
+const previewContainer = document.getElementById('preview-container');
+const previewImg = document.getElementById('preview-img');
+const fileNameEl = document.getElementById('file-name');
+const uploadZone = document.getElementById('upload-zone');
+const progressEl = document.getElementById('progress');
+const progressBar = document.getElementById('progress-bar');
+const submitBtn = document.getElementById('submit-btn');
+const form = document.getElementById('upload-form');
+
+fileInput.addEventListener('change', function() {
+  const file = this.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = e => {
+    previewImg.src = e.target.result;
+    previewContainer.style.display = 'block';
+    fileNameEl.textContent = file.name + ' (' + (file.size / 1024).toFixed(0) + ' КБ)';
+    uploadZone.style.borderColor = 'var(--success)';
+  };
+  reader.readAsDataURL(file);
+});
+
+// Draft save — store selected org in localStorage
+document.querySelector('select[name="receipt_org_id"]').addEventListener('change', function() {
+  localStorage.setItem('pearl_draft_org', this.value);
+});
+const savedOrg = localStorage.getItem('pearl_draft_org');
+if (savedOrg) {
+  const sel = document.querySelector('select[name="receipt_org_id"]');
+  if ([...sel.options].some(o => o.value === savedOrg)) sel.value = savedOrg;
+}
+
+form.addEventListener('submit', function() {
+  progressEl.style.display = 'block';
+  submitBtn.disabled = true;
+  submitBtn.textContent = 'Загружаем...';
+  // Animate progress bar (upload time approximation)
+  let w = 0;
+  const iv = setInterval(() => { w = Math.min(w + 8, 90); progressBar.style.width = w + '%'; }, 200);
+  form._progressInterval = iv;
+});
+</script>
+{% endblock %}
