@@ -1,5 +1,5 @@
 from sqlalchemy import (
-    Column, Integer, String, Numeric, Date, DateTime, Text,
+    Column, Integer, String, Numeric, Date, DateTime, Text, Boolean,
     ForeignKey, CheckConstraint, func
 )
 from sqlalchemy.dialects.postgresql import JSONB
