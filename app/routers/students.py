@@ -58,11 +58,16 @@ def list_students(
 
     query = db.query(Student).filter(Student.status == "active")
     if current_org:
-        # Показываем студентов этой орги и её дочерних
+        # Рекурсивно собираем все дочерние орги (внуки тоже)
         all_orgs = db.query(Organization).all()
-        child_ids = {o.id for o in all_orgs if o.parent_id == current_org.id}
-        child_ids.add(current_org.id)
-        query = query.filter(Student.organization_id.in_(child_ids))
+        def descendants(org_id):
+            ids = {org_id}
+            for o in all_orgs:
+                if o.parent_id == org_id:
+                    ids |= descendants(o.id)
+            return ids
+        org_ids = descendants(current_org.id)
+        query = query.filter(Student.organization_id.in_(org_ids))
     if q:
         query = query.filter(
             Student.name.ilike(f"%{q}%") | Student.pin.ilike(f"%{q}%")
