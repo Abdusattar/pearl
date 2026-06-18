@@ -1,14 +1,14 @@
 """add warehouse module: receipts, write_offs, product unit/category
 
-Revision ID: f3a4b5c6d7e8
-Revises: e2f3a4b5c6d7
-Create Date: 2026-06-18 12:00:00.000000
+Revision ID: b5c6d7e8f9a0
+Revises: a1b2c3d4e5f6
+Create Date: 2026-06-18 14:00:00.000000
 """
 from alembic import op
 import sqlalchemy as sa
 
-revision = 'f3a4b5c6d7e8'
-down_revision = 'e2f3a4b5c6d7'
+revision = 'b5c6d7e8f9a0'
+down_revision = 'a1b2c3d4e5f6'
 branch_labels = None
 depends_on = None
 
