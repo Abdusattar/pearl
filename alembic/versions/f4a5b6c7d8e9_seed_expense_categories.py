@@ -8,7 +8,7 @@ Depends On: None
 from alembic import op
 
 revision = 'f4a5b6c7d8e9'
-down_revision = 'e2f3a4b5c6d7'
+down_revision = 'b5c6d7e8f9a0'
 branch_labels = None
 depends_on = None
 
