@@ -284,10 +284,13 @@ function addItemRow() {
 updateGrandTotal();
 
 const FOOD_CATEGORY_IDS = new Set({{ food_cat_ids | tojson }});
+const WAREHOUSE_CAT_IDS = new Set({{ warehouse_cat_ids | tojson }});
 
 function onCategoryChange(categoryId) {
-  const isFood = FOOD_CATEGORY_IDS.has(Number(categoryId));
-  const hasId  = !!categoryId;
+  const catId   = Number(categoryId);
+  const isFood  = FOOD_CATEGORY_IDS.has(catId);
+  const isWh    = WAREHOUSE_CAT_IDS.has(catId);
+  const hasId   = !!categoryId;
 
   document.querySelectorAll('.product-hint').forEach(el => {
     el.style.display = isFood ? '' : 'none';
@@ -298,11 +301,11 @@ function onCategoryChange(categoryId) {
     itemsCard.style.display = (!hasId || isFood) ? '' : 'none';
   }
 
-  // Блок склада — только для питания
+  // Блок склада — только для категорий с warehouse_eligible
   const whBlock = document.getElementById('warehouse-block');
   if (whBlock) {
-    whBlock.style.display = isFood ? '' : 'none';
-    if (isFood) updateWarehouseHint();
+    whBlock.style.display = isWh ? '' : 'none';
+    if (isWh) updateWarehouseHint();
   }
 }
 

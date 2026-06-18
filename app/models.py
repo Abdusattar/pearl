@@ -72,11 +72,12 @@ class Enrollment(Base):
 
 class ExpenseCategory(Base):
     __tablename__ = "expense_categories"
-    id              = Column(Integer, primary_key=True)
-    organization_id = Column(Integer, ForeignKey("organizations.id"))  # NULL = глобальная
-    name            = Column(String(100), nullable=False)
-    parent_id       = Column(Integer, ForeignKey("expense_categories.id"))
-    created_at      = Column(DateTime, server_default=func.now())
+    id                 = Column(Integer, primary_key=True)
+    organization_id    = Column(Integer, ForeignKey("organizations.id"))  # NULL = глобальная
+    name               = Column(String(100), nullable=False)
+    parent_id          = Column(Integer, ForeignKey("expense_categories.id"))
+    warehouse_eligible = Column(Boolean, nullable=False, default=False, server_default='false')
+    created_at         = Column(DateTime, server_default=func.now())
 
     children = relationship("ExpenseCategory", foreign_keys=[parent_id],
                             backref=backref("parent", remote_side="ExpenseCategory.id"))

@@ -412,8 +412,9 @@ def confirm_form(
                 }
 
     all_cats = get_categories(db)
-    food_parent_ids = {c.id for c in all_cats if 'питан' in c.name.lower() or 'продукт' in c.name.lower()}
+    food_parent_ids = {c.id for c in all_cats if 'питан' in c.name.lower()}
     food_cat_ids = list(food_parent_ids | {c.id for c in all_cats if c.parent_id in food_parent_ids})
+    warehouse_cat_ids = [c.id for c in all_cats if c.warehouse_eligible]
 
     return templates.TemplateResponse("expenses/confirm.html", {
         "request": request,
@@ -434,6 +435,7 @@ def confirm_form(
         "items": items,
         "categories": all_cats,
         "food_cat_ids": food_cat_ids,
+        "warehouse_cat_ids": warehouse_cat_ids,
         "today": date.today().isoformat(),
         "confirmed_tx": confirmed_tx,
         "pre_category_id": pre_category_id,
@@ -612,7 +614,7 @@ def add_form(request: Request, org_id: int | None = None, db: Session = Depends(
     from app.models import Product
     products = db.query(Product).order_by(Product.name).all()
     all_cats = get_categories(db)
-    food_parent_ids = {c.id for c in all_cats if 'питан' in c.name.lower() or 'продукт' in c.name.lower()}
+    food_parent_ids = {c.id for c in all_cats if 'питан' in c.name.lower()}
     food_cat_ids = list(food_parent_ids | {c.id for c in all_cats if c.parent_id in food_parent_ids})
     return templates.TemplateResponse("expenses/add.html", {
         "request": request,
