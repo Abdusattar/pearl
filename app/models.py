@@ -26,6 +26,7 @@ class User(Base):
     name            = Column(String(100), nullable=False)
     role            = Column(String(20), nullable=False)  # owner|director|manager|teacher
     organization_id = Column(Integer, ForeignKey("organizations.id"))
+    password_hash   = Column(String(200))
     created_at      = Column(DateTime, server_default=func.now())
     deleted_at      = Column(DateTime)
 

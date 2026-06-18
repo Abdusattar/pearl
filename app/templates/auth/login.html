@@ -13,54 +13,58 @@
   }
   .card {
     background: #fff; border-radius: 16px; padding: 40px;
-    width: 100%; max-width: 380px; box-shadow: 0 4px 24px rgba(0,0,0,0.08);
+    width: 100%; max-width: 360px; box-shadow: 0 4px 24px rgba(0,0,0,0.08);
   }
   .logo { font-size: 28px; margin-bottom: 8px; }
   h1 { font-size: 20px; font-weight: 600; margin-bottom: 4px; }
-  .subtitle { font-size: 14px; color: #6b7280; margin-bottom: 32px; }
-  .user-btn {
-    display: flex; align-items: center; gap: 14px;
-    width: 100%; padding: 14px 16px; margin-bottom: 10px;
-    background: #f5f6fa; border: 2px solid #e2e5ec;
-    border-radius: 12px; cursor: pointer; text-align: left;
-    font-size: 15px; font-weight: 500; transition: all 0.15s;
+  .subtitle { font-size: 14px; color: #6b7280; margin-bottom: 28px; }
+  .form-group { margin-bottom: 16px; }
+  label { display: block; font-size: 13px; font-weight: 500; color: #6b7280; margin-bottom: 6px; }
+  select, input[type="password"] {
+    width: 100%; padding: 10px 14px; border: 1px solid #e2e5ec;
+    border-radius: 8px; font-size: 14px; background: #fff;
+    color: #1a1d23; transition: border 0.15s;
   }
-  .user-btn:hover { border-color: #4f7ef8; background: #eef2ff; }
-  .user-btn .avatar {
-    width: 40px; height: 40px; border-radius: 50%;
-    background: #4f7ef8; color: #fff;
-    display: flex; align-items: center; justify-content: center;
-    font-size: 16px; font-weight: 700; flex-shrink: 0;
+  select:focus, input[type="password"]:focus {
+    outline: none; border-color: #4f7ef8;
   }
-  .user-btn .info { flex: 1; }
-  .user-btn .role { font-size: 12px; color: #6b7280; font-weight: 400; }
+  .btn {
+    width: 100%; padding: 12px; background: #4f7ef8; color: #fff;
+    border: none; border-radius: 8px; font-size: 15px; font-weight: 600;
+    cursor: pointer; margin-top: 8px; transition: background 0.15s;
+  }
+  .btn:hover { background: #3563e9; }
+  .error {
+    background: #fee2e2; color: #991b1b; border: 1px solid #fca5a5;
+    border-radius: 8px; padding: 10px 14px; font-size: 13px; margin-bottom: 16px;
+  }
 </style>
 </head>
 <body>
 <div class="card">
   <div class="logo">🏫</div>
   <h1>Жемчужина</h1>
-  <p class="subtitle">Выберите кто вы</p>
+  <p class="subtitle">Войдите в систему</p>
 
-  {% set role_labels = {
-    "owner": "Владелец",
-    "director": "Директор",
-    "manager": "Управляющий",
-    "teacher": "Педагог"
-  } %}
+  {% if error %}
+  <div class="error">{{ error }}</div>
+  {% endif %}
 
-  {% for user in users %}
   <form method="post" action="/login">
-    <input type="hidden" name="user_id" value="{{ user.id }}">
-    <button type="submit" class="user-btn">
-      <div class="avatar">{{ user.name[0] }}</div>
-      <div class="info">
-        <div>{{ user.name }}</div>
-        <div class="role">{{ role_labels.get(user.role, user.role) }}</div>
-      </div>
-    </button>
+    <div class="form-group">
+      <label for="user_id">Кто вы?</label>
+      <select name="user_id" id="user_id" required>
+        {% for user in users %}
+        <option value="{{ user.id }}">{{ user.name }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="form-group">
+      <label for="password">Пароль</label>
+      <input type="password" name="password" id="password" required autofocus>
+    </div>
+    <button type="submit" class="btn">Войти</button>
   </form>
-  {% endfor %}
 </div>
 </body>
 </html>
