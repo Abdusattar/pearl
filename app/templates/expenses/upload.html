@@ -19,11 +19,12 @@
 
     <div class="form-group">
       <label>Объект</label>
-      <select name="receipt_org_id" class="form-control" required>
+      <select name="receipt_org_id" class="form-control" required id="org-select">
         {% for org in upload_orgs %}
         <option value="{{ org.id }}" {% if org.id == current_org_id %}selected{% endif %}>{{ org.name }}</option>
         {% endfor %}
       </select>
+      <div id="org-confirm" style="margin-top:6px;font-size:13px;color:var(--success);font-weight:500;min-height:20px"></div>
     </div>
 
     <div class="form-group">
@@ -37,9 +38,6 @@
       <div class="upload-preview" id="preview-container">
         <img id="preview-img" src="" alt="Предпросмотр">
         <div style="margin-top:8px;font-size:13px;color:var(--text-muted)" id="file-name"></div>
-      </div>
-      <div class="progress" id="progress">
-        <div class="progress-bar" id="progress-bar"></div>
       </div>
     </div>
 
@@ -57,10 +55,10 @@ const previewContainer = document.getElementById('preview-container');
 const previewImg = document.getElementById('preview-img');
 const fileNameEl = document.getElementById('file-name');
 const uploadZone = document.getElementById('upload-zone');
-const progressEl = document.getElementById('progress');
-const progressBar = document.getElementById('progress-bar');
 const submitBtn = document.getElementById('submit-btn');
 const form = document.getElementById('upload-form');
+const orgSelect = document.getElementById('org-select');
+const orgConfirm = document.getElementById('org-confirm');
 
 fileInput.addEventListener('change', function() {
   const file = this.files[0];
@@ -75,24 +73,34 @@ fileInput.addEventListener('change', function() {
   reader.readAsDataURL(file);
 });
 
-// Draft save — store selected org in localStorage
-document.querySelector('select[name="receipt_org_id"]').addEventListener('change', function() {
-  localStorage.setItem('pearl_draft_org', this.value);
-});
-const savedOrg = localStorage.getItem('pearl_draft_org');
-if (savedOrg) {
-  const sel = document.querySelector('select[name="receipt_org_id"]');
-  if ([...sel.options].some(o => o.value === savedOrg)) sel.value = savedOrg;
+// Показывать выбранный объект + запоминать
+function updateOrgConfirm() {
+  const name = orgSelect.options[orgSelect.selectedIndex]?.text;
+  if (name) orgConfirm.textContent = '✓ Объект: ' + name;
+  localStorage.setItem('pearl_draft_org', orgSelect.value);
 }
+orgSelect.addEventListener('change', updateOrgConfirm);
+// localStorage — только fallback если org не задан явно в URL
+const urlOrgId = new URLSearchParams(window.location.search).get('org_id');
+if (!urlOrgId) {
+  const savedOrg = localStorage.getItem('pearl_draft_org');
+  if (savedOrg && [...orgSelect.options].some(o => o.value === savedOrg)) {
+    orgSelect.value = savedOrg;
+  }
+}
+updateOrgConfirm();
 
+// OCR overlay вместо fake progress bar
 form.addEventListener('submit', function() {
-  progressEl.style.display = 'block';
   submitBtn.disabled = true;
-  submitBtn.textContent = 'Загружаем...';
-  // Animate progress bar (upload time approximation)
-  let w = 0;
-  const iv = setInterval(() => { w = Math.min(w + 8, 90); progressBar.style.width = w + '%'; }, 200);
-  form._progressInterval = iv;
+  document.body.insertAdjacentHTML('beforeend', `
+    <div id="ocr-overlay" style="position:fixed;inset:0;background:rgba(255,255,255,.95);
+      display:flex;flex-direction:column;align-items:center;justify-content:center;z-index:999;
+      font-family:inherit">
+      <div style="font-size:48px;margin-bottom:20px">🔍</div>
+      <div style="font-size:18px;font-weight:600;color:#1a1d23">Распознаём квитанцию...</div>
+      <div style="font-size:14px;color:#6b7280;margin-top:8px">обычно 10–30 секунд</div>
+    </div>`);
 });
 </script>
 {% endblock %}

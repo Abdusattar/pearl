@@ -11,10 +11,11 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.models import (
-    ExpenseCategory, Organization, Receipt, ReceiptItem, ReceiptTransaction,
+    ExpenseCategory, Organization, Product, Receipt, ReceiptItem, ReceiptTransaction,
     Transaction, User, AuditLog,
 )
 from app.services.ocr import compute_hash, analyze_receipt
+from app.services.products import match_product, get_or_create_product, ensure_alias
 
 router = APIRouter(prefix="/expenses", tags=["expenses"])
 templates = Jinja2Templates(directory=str(Path(__file__).parent.parent / "templates"))
@@ -47,15 +48,11 @@ def get_accessible_orgs(user: User, db: Session) -> list[Organization]:
 
 
 def get_upload_orgs(user: User, db: Session) -> list[Organization]:
-    """Объекты доступные для загрузки квитанций (листовые + 'Оба садика')."""
+    """Только листовые орги (без родительских узлов) — куда можно загружать расходы."""
+    all_orgs = db.query(Organization).all()
+    has_children = {o.parent_id for o in all_orgs if o.parent_id is not None}
     orgs = get_accessible_orgs(user, db)
-    # Для manager — Сокулук, Кожомкул, + "Оба садика" (id=3)
-    if user.role == "manager":
-        return orgs
-    # Для director — убрать корневую Жемчужину
-    if user.role == "director":
-        return [o for o in orgs if o.parent_id is not None]
-    return [o for o in orgs if o.parent_id is not None]
+    return [o for o in orgs if o.id not in has_children]
 
 
 def resolve_org(org_id: int | None, user: User, db: Session) -> Organization:
@@ -86,12 +83,14 @@ def audit(db: Session, entity_type: str, entity_id: int, action: str,
 @router.get("/", response_class=HTMLResponse)
 def list_expenses(
     request: Request,
-    org_id: int | None = None,
-    category_id: int | None = None,
+    org_id: str | None = None,
+    category_id: str | None = None,
     month: str | None = None,
     status: str | None = None,
     db: Session = Depends(get_db),
 ):
+    org_id = int(org_id) if org_id and org_id.isdigit() else None
+    category_id = int(category_id) if category_id and category_id.isdigit() else None
     user = get_mock_user(db)
     if not user:
         return HTMLResponse("Нет пользователей в БД. Запустите: python app/seed.py", status_code=503)
@@ -111,14 +110,22 @@ def list_expenses(
     else:
         visible_org_ids = [o.id for o in accessible]
 
+    # Категория + её дети (для корректного фильтра)
+    cat_ids_filter = None
+    if category_id:
+        children = db.query(ExpenseCategory).filter(
+            ExpenseCategory.parent_id == category_id
+        ).all()
+        cat_ids_filter = [category_id] + [c.id for c in children]
+
+    # --- Квитанции ---
     q = db.query(Receipt).filter(Receipt.organization_id.in_(visible_org_ids))
 
-    if category_id:
-        # Фильтр по категории через транзакции
+    if cat_ids_filter:
         tx_receipt_ids = (
             db.query(ReceiptTransaction.receipt_id)
             .join(Transaction, Transaction.id == ReceiptTransaction.transaction_id)
-            .filter(Transaction.category_id == category_id)
+            .filter(Transaction.category_id.in_(cat_ids_filter))
             .subquery()
         )
         q = q.filter(Receipt.id.in_(tx_receipt_ids))
@@ -134,7 +141,10 @@ def list_expenses(
             pass
 
     if status:
-        q = q.filter(Receipt.ocr_status == status)
+        if status == "unconfirmed":
+            q = q.filter(Receipt.ocr_status.in_(["pending", "processed"]))
+        else:
+            q = q.filter(Receipt.ocr_status == status)
 
     receipts_raw = q.order_by(Receipt.created_at.desc()).limit(200).all()
     pending_count = db.query(Receipt).filter(
@@ -142,30 +152,80 @@ def list_expenses(
         Receipt.ocr_status.in_(["pending", "processed"]),
     ).count()
 
-    # Enrich receipts with display data
     org_map = {o.id: o.name for o in db.query(Organization).all()}
     cat_map = {}
+
+    def _cat_name(category_id_val):
+        if not category_id_val:
+            return None
+        if category_id_val not in cat_map:
+            c = db.query(ExpenseCategory).get(category_id_val)
+            cat_map[category_id_val] = c.name if c else None
+        return cat_map[category_id_val]
+
     receipts = []
     for r in receipts_raw:
-        # Get category via first transaction
         rt = db.query(ReceiptTransaction).filter(ReceiptTransaction.receipt_id == r.id).first()
-        cat_name = None
+        tx_cat = None
+        tx_id = None
         if rt:
             tx = db.query(Transaction).get(rt.transaction_id)
-            if tx and tx.category_id:
-                if tx.category_id not in cat_map:
-                    cat = db.query(ExpenseCategory).get(tx.category_id)
-                    cat_map[tx.category_id] = cat.name if cat else None
-                cat_name = cat_map[tx.category_id]
+            if tx:
+                tx_cat = _cat_name(tx.category_id)
+                tx_id = tx.id
+        if r.ocr_status == "manual":
+            href = f"/expenses/tx/{tx_id}/edit?org_id={current_org_id}" if tx_id else None
+        else:
+            href = f"/expenses/{r.id}/confirm?org_id={current_org_id}"
         receipts.append({
+            "row_type": "receipt",
             "id": r.id,
-            "created_at": r.created_at,
+            "tx_id": tx_id,
+            "href": href,
+            "sort_date": r.created_at.date() if hasattr(r.created_at, 'date') else r.created_at,
+            "date_display": r.created_at.strftime('%d.%m.%Y'),
             "org_name": org_map.get(r.organization_id, "—"),
-            "category_name": cat_name,
+            "category_name": tx_cat,
             "amount_detected": r.amount_detected,
             "amount_confirmed": r.amount_confirmed,
             "ocr_status": r.ocr_status,
         })
+
+    # --- Ручные транзакции (без квитанции) ---
+    if not status:  # ручные не имеют OCR-статуса, скрываем если фильтр по статусу
+        receipt_tx_subq = db.query(ReceiptTransaction.transaction_id).subquery()
+        manual_q = db.query(Transaction).filter(
+            Transaction.type == "expense",
+            Transaction.deleted_at.is_(None),
+            Transaction.organization_id.in_(visible_org_ids),
+            ~Transaction.id.in_(receipt_tx_subq),
+        )
+        if cat_ids_filter:
+            manual_q = manual_q.filter(Transaction.category_id.in_(cat_ids_filter))
+        if month:
+            try:
+                y, m = month.split("-")
+                manual_q = manual_q.filter(
+                    func.extract("year", Transaction.date) == int(y),
+                    func.extract("month", Transaction.date) == int(m),
+                )
+            except Exception:
+                pass
+        for tx in manual_q.order_by(Transaction.date.desc()).limit(200).all():
+            receipts.append({
+                "row_type": "manual",
+                "id": None,
+                "tx_id": tx.id,
+                "href": f"/expenses/tx/{tx.id}/edit?org_id={current_org_id}",
+                "sort_date": tx.date,
+                "date_display": tx.date.strftime('%d.%m.%Y') if tx.date else "—",
+                "org_name": org_map.get(tx.organization_id, "—"),
+                "category_name": _cat_name(tx.category_id),
+                "amount_detected": None,
+                "amount_confirmed": tx.amount,
+                "ocr_status": "manual",
+            })
+        receipts.sort(key=lambda r: r["sort_date"] or date.min, reverse=True)
 
     # Totals by org
     totals = []
@@ -240,6 +300,27 @@ async def handle_upload(
     # Проверка дубля
     existing = db.query(Receipt).filter(Receipt.file_hash == file_hash).first()
     if existing:
+        # Обновить объект если пользователь явно выбрал другой
+        if existing.organization_id != receipt_org_id:
+            existing.organization_id = receipt_org_id
+            audit(db, "receipt", existing.id, "update", user.id, {"org_id": receipt_org_id})
+        # Перезапустить OCR только если ещё не проведена
+        if existing.ocr_status not in ("confirmed", "rejected"):
+            ocr_result = analyze_receipt(str(MEDIA_DIR.parent / existing.file_path))
+            if ocr_result:
+                existing.ocr_raw = ocr_result.get("raw")
+                existing.amount_detected = ocr_result.get("amount")
+                existing.ocr_status = "processed"
+                db.query(ReceiptItem).filter(ReceiptItem.receipt_id == existing.id).delete()
+                for item in ocr_result.get("items") or []:
+                    db.add(ReceiptItem(
+                        receipt_id=existing.id,
+                        name=item["name"],
+                        qty=item.get("qty"),
+                        unit_price=item.get("unit_price"),
+                        total_price=item["total_price"],
+                    ))
+        db.commit()
         return RedirectResponse(f"/expenses/{existing.id}/confirm?org_id={org_id}", status_code=303)
 
     # Сохранение файла
@@ -298,13 +379,49 @@ def confirm_form(
 
     org_map = {o.id: o.name for o in db.query(Organization).all()}
     current_org = resolve_org(org_id, user, db)
-    items = db.query(ReceiptItem).filter(ReceiptItem.receipt_id == receipt_id).all()
+    raw_items = db.query(ReceiptItem).filter(ReceiptItem.receipt_id == receipt_id).all()
+
+    items = []
+    for it in raw_items:
+        matched = match_product(db, it.name)
+        items.append({
+            "id": it.id,
+            "raw_name": it.name,
+            "display_name": matched.name if matched else it.name,
+            "product_matched": matched is not None,
+            "qty": it.qty,
+            "unit_price": it.unit_price,
+            "total_price": it.total_price,
+        })
+
+    # Предзаполнить категорию из уже существующей транзакции (если есть)
+    pre_category_id = None
+    existing_rt = db.query(ReceiptTransaction).filter(ReceiptTransaction.receipt_id == receipt_id).first()
+    if existing_rt and receipt.ocr_status not in ("confirmed", "rejected"):
+        existing_tx = db.query(Transaction).get(existing_rt.transaction_id)
+        if existing_tx:
+            pre_category_id = existing_tx.category_id
+
+    # Для экрана успеха — подтянуть транзакцию
+    confirmed_tx = None
+    if receipt.ocr_status == "confirmed":
+        rt = db.query(ReceiptTransaction).filter(ReceiptTransaction.receipt_id == receipt_id).first()
+        if rt:
+            tx = db.query(Transaction).get(rt.transaction_id)
+            if tx:
+                cat = db.query(ExpenseCategory).get(tx.category_id) if tx.category_id else None
+                confirmed_tx = {
+                    "amount": tx.amount,
+                    "date": tx.date.strftime("%d.%m.%Y") if tx.date else "—",
+                    "category_name": cat.name if cat else "—",
+                }
 
     return templates.TemplateResponse("expenses/confirm.html", {
         "request": request,
         "current_user": user,
         "accessible_orgs": accessible,
         "current_org_id": current_org.id if current_org else org_id,
+        "upload_orgs": get_upload_orgs(user, db),
         "receipt": {
             "id": receipt.id,
             "file_path": receipt.file_path,
@@ -312,12 +429,14 @@ def confirm_form(
             "amount_detected": receipt.amount_detected,
             "amount_confirmed": receipt.amount_confirmed,
             "ocr_status": receipt.ocr_status,
+            "org_id": receipt.organization_id,
             "org_name": org_map.get(receipt.organization_id, "—"),
         },
         "items": items,
-        "is_both_kinder": receipt.organization_id == ORG_KINDERGARTENS,
         "categories": get_categories(db),
         "today": date.today().isoformat(),
+        "confirmed_tx": confirmed_tx,
+        "pre_category_id": pre_category_id,
         "error": None,
         "success": None,
     })
@@ -328,18 +447,19 @@ def handle_confirm(
     receipt_id: int,
     request: Request,
     org_id: int = Form(None),
+    receipt_org_id: int = Form(None),
     action: str = Form(...),
     amount: float = Form(None),
-    amount_sokuluk: float = Form(None),
-    amount_kojomkul: float = Form(None),
-    split_mode: str = Form(None),
-    category_id: int = Form(None),
+    category_id: str | None = Form(None),
     description: str = Form(None),
     date_: str = Form(None, alias="date"),
     item_name: List[str] = Form(default=[]),
+    item_raw_name: List[str] = Form(default=[]),
     item_qty: List[str] = Form(default=[]),
     item_unit_price: List[str] = Form(default=[]),
     item_total_price: List[str] = Form(default=[]),
+    split_category_id: List[str] = Form(default=[]),
+    split_amount: List[str] = Form(default=[]),
     db: Session = Depends(get_db),
 ):
     user = get_mock_user(db)
@@ -347,56 +467,65 @@ def handle_confirm(
     if not receipt:
         return HTMLResponse("Квитанция не найдена", status_code=404)
 
+    category_id = int(category_id) if category_id and str(category_id).isdigit() else None
+    split_category_id = [int(x) for x in split_category_id if x and str(x).isdigit()]
+
+    # Переназначить объект если выбран конкретный садик
+    if receipt_org_id and receipt_org_id != receipt.organization_id:
+        receipt.organization_id = receipt_org_id
+
     if action == "reject":
         receipt.ocr_status = "rejected"
         audit(db, "receipt", receipt.id, "update", user.id, {"status": "rejected"})
         db.commit()
         return RedirectResponse(f"/expenses/?org_id={org_id}", status_code=303)
 
-    # Validate
     tx_date = date.fromisoformat(date_) if date_ else date.today()
-    accessible = get_accessible_orgs(user, db)
-    current_org = resolve_org(org_id, user, db)
     org_map = {o.id: o.name for o in db.query(Organization).all()}
 
-    if split_mode == "both":
-        # Два садика
-        if not amount_sokuluk or not amount_kojomkul:
-            return templates.TemplateResponse("expenses/confirm.html", {
-                "request": request, "current_user": user,
-                "accessible_orgs": accessible,
-                "current_org_id": org_id,
-                "receipt": {"id": receipt.id, "file_path": receipt.file_path,
-                            "ocr_raw": receipt.ocr_raw, "amount_detected": receipt.amount_detected,
-                            "amount_confirmed": receipt.amount_confirmed, "ocr_status": receipt.ocr_status,
-                            "org_name": org_map.get(receipt.organization_id, "—")},
-                "is_both_kinder": True,
-                "categories": get_categories(db),
-                "today": date.today().isoformat(),
-                "error": "Введи суммы для обоих садиков",
-                "success": None,
-            })
+    if not amount:
+        accessible = get_accessible_orgs(user, db)
+        items = db.query(ReceiptItem).filter(ReceiptItem.receipt_id == receipt_id).all()
+        return templates.TemplateResponse("expenses/confirm.html", {
+            "request": request, "current_user": user,
+            "accessible_orgs": accessible,
+            "current_org_id": org_id,
+            "receipt": {"id": receipt.id, "file_path": receipt.file_path,
+                        "ocr_raw": receipt.ocr_raw, "amount_detected": receipt.amount_detected,
+                        "amount_confirmed": receipt.amount_confirmed, "ocr_status": receipt.ocr_status,
+                        "org_name": org_map.get(receipt.organization_id, "—")},
+            "items": items,
+            "categories": get_categories(db),
+            "today": date.today().isoformat(),
+            "error": "Укажи сумму",
+            "success": None,
+        })
 
-        sokuluk_id = db.query(Organization).filter(Organization.parent_id == ORG_KINDERGARTENS).first()
-        kojomkul_id = db.query(Organization).filter(Organization.parent_id == ORG_KINDERGARTENS).offset(1).first()
+    def _parse_amount(s):
+        try:
+            return float(str(s).replace(",", ".")) if s else None
+        except ValueError:
+            return None
 
-        for kinder, amt in [(sokuluk_id, amount_sokuluk), (kojomkul_id, amount_kojomkul)]:
-            if not kinder:
-                continue
+    splits = [
+        (cat_id, _parse_amount(amt))
+        for cat_id, amt in zip(split_category_id, split_amount)
+        if cat_id and _parse_amount(amt)
+    ]
+
+    if splits:
+        total_confirmed = sum(amt for _, amt in splits)
+        for cat_id, amt in splits:
             tx = Transaction(
-                organization_id=kinder.id, type="expense", amount=amt,
-                category_id=category_id, description=description, date=tx_date,
+                organization_id=receipt.organization_id, type="expense", amount=amt,
+                category_id=cat_id, description=description, date=tx_date,
                 created_by=user.id,
             )
             db.add(tx)
             db.flush()
             db.add(ReceiptTransaction(receipt_id=receipt.id, transaction_id=tx.id, amount=amt))
-            audit(db, "transaction", tx.id, "insert", user.id, {"org_id": kinder.id, "amount": amt})
-
-        total_confirmed = amount_sokuluk + amount_kojomkul
+            audit(db, "transaction", tx.id, "insert", user.id, {"org_id": receipt.organization_id, "amount": amt})
     else:
-        if not amount:
-            return RedirectResponse(f"/expenses/{receipt_id}/confirm?org_id={org_id}&error=1", status_code=303)
         tx = Transaction(
             organization_id=receipt.organization_id, type="expense", amount=amount,
             category_id=category_id, description=description, date=tx_date,
@@ -431,9 +560,17 @@ def handle_confirm(
             total = _safe_num(item_total_price, i)
             if total is None:
                 continue
+
+            # Определяем продукт и сохраняем алиас
+            raw = item_raw_name[i].strip() if i < len(item_raw_name) else ""
+            product = get_or_create_product(db, name)
+            if raw:
+                ensure_alias(db, raw, product.id)
+
             db.add(ReceiptItem(
                 receipt_id=receipt_id,
-                name=name,
+                name=raw or name,
+                product_id=product.id,
                 qty=_safe_num(item_qty, i),
                 unit_price=_safe_num(item_unit_price, i),
                 total_price=total,
@@ -441,4 +578,178 @@ def handle_confirm(
 
     db.commit()
 
+    return RedirectResponse(f"/expenses/{receipt_id}/confirm?org_id={org_id}", status_code=303)
+
+
+# ── MANUAL ENTRY (без квитанции) ──────────────────────────────────────────────
+
+@router.get("/add", response_class=HTMLResponse)
+def add_form(request: Request, org_id: int | None = None, db: Session = Depends(get_db)):
+    user = get_mock_user(db)
+    accessible = get_accessible_orgs(user, db)
+    current_org = resolve_org(org_id, user, db)
+    from app.models import Product
+    products = db.query(Product).order_by(Product.name).all()
+    return templates.TemplateResponse("expenses/add.html", {
+        "request": request,
+        "current_user": user,
+        "accessible_orgs": accessible,
+        "current_org_id": current_org.id if current_org else None,
+        "upload_orgs": get_upload_orgs(user, db),
+        "categories": get_categories(db),
+        "products": products,
+        "today": date.today().isoformat(),
+        "error": None,
+    })
+
+
+@router.post("/add")
+def handle_add(
+    request: Request,
+    org_id: int = Form(...),
+    amount: float = Form(...),
+    category_id: str | None = Form(None),
+    description: str = Form(None),
+    date_: str = Form(None, alias="date"),
+    item_name: List[str] = Form(default=[]),
+    item_qty: List[str] = Form(default=[]),
+    item_unit_price: List[str] = Form(default=[]),
+    item_total_price: List[str] = Form(default=[]),
+    db: Session = Depends(get_db),
+):
+    user = get_mock_user(db)
+    accessible = get_accessible_orgs(user, db)
+    current_org = resolve_org(org_id, user, db)
+    category_id = int(category_id) if category_id and str(category_id).isdigit() else None
+
+    if not current_org:
+        return templates.TemplateResponse("expenses/add.html", {
+            "request": request, "current_user": user,
+            "accessible_orgs": accessible,
+            "current_org_id": org_id,
+            "upload_orgs": get_upload_orgs(user, db),
+            "categories": get_categories(db),
+            "today": date.today().isoformat(),
+            "error": "Объект не найден",
+        })
+
+    tx_date = date.fromisoformat(date_) if date_ else date.today()
+    tx = Transaction(
+        organization_id=org_id, type="expense", amount=amount,
+        category_id=category_id, description=description, date=tx_date,
+        created_by=user.id,
+    )
+    db.add(tx)
+    db.flush()
+    audit(db, "transaction", tx.id, "insert", user.id, {"org_id": org_id, "amount": amount, "manual": True})
+
+    # Сохраняем позиции если были введены (для справочника продуктов)
+    def _safe(vals, i):
+        try:
+            v = vals[i].strip() if i < len(vals) else ""
+            return float(v.replace(",", ".")) if v else None
+        except (ValueError, AttributeError):
+            return None
+
+    valid_items = [
+        (item_name[i].strip(), _safe(item_qty, i), _safe(item_unit_price, i), _safe(item_total_price, i))
+        for i in range(len(item_name))
+        if item_name[i].strip() and _safe(item_total_price, i)
+    ]
+
+    if valid_items:
+        receipt = Receipt(
+            organization_id=org_id,
+            file_path="manual",
+            ocr_status="manual",
+            amount_confirmed=amount,
+            confirmed_by=user.id,
+            confirmed_at=datetime.now(),
+            created_by=user.id,
+        )
+        db.add(receipt)
+        db.flush()
+        db.add(ReceiptTransaction(receipt_id=receipt.id, transaction_id=tx.id, amount=amount))
+        for name, qty, unit_price, total in valid_items:
+            product = get_or_create_product(db, name)
+            db.add(ReceiptItem(
+                receipt_id=receipt.id,
+                name=name,
+                product_id=product.id,
+                qty=qty,
+                unit_price=unit_price,
+                total_price=total,
+            ))
+
+    db.commit()
     return RedirectResponse(f"/expenses/?org_id={org_id}", status_code=303)
+
+
+# ── EDIT MANUAL TRANSACTION ───────────────────────────────────────────────────
+
+@router.get("/tx/{tx_id}/edit", response_class=HTMLResponse)
+def edit_tx_form(tx_id: int, request: Request, org_id: int | None = None, db: Session = Depends(get_db)):
+    user = get_mock_user(db)
+    tx = db.query(Transaction).get(tx_id)
+    if not tx or tx.deleted_at:
+        return HTMLResponse("Запись не найдена", status_code=404)
+    accessible = get_accessible_orgs(user, db)
+    current_org = resolve_org(org_id, user, db)
+
+    # Загружаем позиции если есть связанная квитанция
+    items = []
+    rt = db.query(ReceiptTransaction).filter(ReceiptTransaction.transaction_id == tx_id).first()
+    if rt:
+        raw_items = db.query(ReceiptItem).filter(ReceiptItem.receipt_id == rt.receipt_id).all()
+        for it in raw_items:
+            product = db.query(Product).get(it.product_id) if it.product_id else None
+            items.append({
+                "name": product.name if product else it.name,
+                "qty": it.qty,
+                "unit_price": it.unit_price,
+                "total_price": it.total_price,
+            })
+
+    return templates.TemplateResponse("expenses/edit_tx.html", {
+        "request": request,
+        "current_user": user,
+        "accessible_orgs": accessible,
+        "current_org_id": current_org.id if current_org else org_id,
+        "upload_orgs": get_upload_orgs(user, db),
+        "tx": {
+            "id": tx.id,
+            "amount": tx.amount,
+            "date": tx.date.isoformat() if tx.date else date.today().isoformat(),
+            "category_id": tx.category_id,
+            "description": tx.description or "",
+            "org_id": tx.organization_id,
+        },
+        "items": items,
+        "categories": get_categories(db),
+        "error": None,
+    })
+
+
+@router.post("/tx/{tx_id}/edit")
+def handle_edit_tx(
+    tx_id: int,
+    request: Request,
+    org_id: int = Form(None),
+    amount: float = Form(...),
+    category_id: str | None = Form(None),
+    description: str = Form(None),
+    date_: str = Form(None, alias="date"),
+    db: Session = Depends(get_db),
+):
+    user = get_mock_user(db)
+    tx = db.query(Transaction).get(tx_id)
+    if not tx or tx.deleted_at:
+        return HTMLResponse("Запись не найдена", status_code=404)
+
+    tx.amount = amount
+    tx.category_id = int(category_id) if category_id and str(category_id).isdigit() else None
+    tx.description = description
+    tx.date = date.fromisoformat(date_) if date_ else tx.date
+    audit(db, "transaction", tx.id, "update", user.id, {"amount": amount})
+    db.commit()
+    return RedirectResponse(f"/expenses/?org_id={org_id or tx.organization_id}", status_code=303)

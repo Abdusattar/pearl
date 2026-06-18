@@ -1,0 +1,66 @@
+{% extends "base.html" %}
+{% block title %}Добавить ребёнка — Жемчужина{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <h1>Новый ребёнок</h1>
+  <a href="/students/?org_id={{ current_org_id }}" class="btn btn-secondary">← Назад</a>
+</div>
+
+<div class="card" style="max-width:480px">
+  {% if error %}
+  <div class="alert alert-error" style="margin-bottom:18px">{{ error }}</div>
+  {% endif %}
+
+  <form method="post" action="/students/add">
+    <input type="hidden" name="org_id" value="{{ current_org_id }}">
+
+    <div class="form-group">
+      <label>PIN (назначается автоматически)</label>
+      <input type="hidden" name="placeholder_pin" value="{{ next_pin }}">
+      <div style="padding:10px 14px;background:var(--bg);border:1px solid var(--border);
+                  border-radius:8px;font-family:monospace;font-size:18px;
+                  font-weight:700;color:var(--primary);letter-spacing:2px">
+        {{ next_pin }}
+      </div>
+      <div style="font-size:12px;color:var(--text-muted);margin-top:4px">
+        Первый свободный номер — будет на карточке ребёнка
+      </div>
+    </div>
+
+    <div class="form-group">
+      <label for="name">ФИО ребёнка *</label>
+      <input type="text" id="name" name="name" class="form-control"
+             placeholder="Иванов Иван" autofocus required>
+    </div>
+
+    <div class="form-group">
+      <label for="org_id_selected">Садик / класс</label>
+      <select id="org_id_selected" name="org_id_selected" class="form-control">
+        {% for org in leaf_orgs %}
+        <option value="{{ org.id }}"
+          {% if org.id == current_org_id %}selected{% endif %}>
+          {{ org.name }}
+        </option>
+        {% endfor %}
+      </select>
+    </div>
+
+    <div class="form-group">
+      <label for="monthly_fee">Ежемесячная оплата (сом)</label>
+      <input type="number" id="monthly_fee" name="monthly_fee" class="form-control"
+             placeholder="7500">
+    </div>
+
+    <div class="form-group">
+      <label for="parent_contact">Контакт родителя</label>
+      <input type="text" id="parent_contact" name="parent_contact" class="form-control"
+             placeholder="+996 700 000 000 или Telegram">
+    </div>
+
+    <button type="submit" class="btn btn-primary btn-lg" style="width:100%">
+      Добавить ребёнка
+    </button>
+  </form>
+</div>
+{% endblock %}

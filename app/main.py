@@ -12,8 +12,10 @@ app.mount("/media", StaticFiles(directory=str(MEDIA_DIR)), name="media")
 
 templates = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
 
-from app.routers import expenses
+from app.routers import expenses, students, optima
 app.include_router(expenses.router)
+app.include_router(students.router)
+app.include_router(optima.router)
 
 
 @app.get("/")

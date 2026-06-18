@@ -113,6 +113,7 @@ class Transaction(Base):
     student_id      = Column(Integer, ForeignKey("students.id"))
     description     = Column(Text)
     date            = Column(Date, nullable=False)
+    external_txn_id = Column(String(50), unique=True)  # Optima txn_id — идемпотентность
     created_by      = Column(Integer, ForeignKey("users.id"))
     created_at      = Column(DateTime, server_default=func.now())
     updated_at      = Column(DateTime, server_default=func.now(), onupdate=func.now())
@@ -126,14 +127,36 @@ class ReceiptTransaction(Base):
     amount         = Column(Numeric(12, 2), nullable=False)
 
 
+class Product(Base):
+    __tablename__ = "products"
+    id         = Column(Integer, primary_key=True)
+    name       = Column(String(100), nullable=False, unique=True)
+    created_at = Column(DateTime, server_default=func.now())
+
+    aliases = relationship("ProductAlias", back_populates="product")
+
+
+class ProductAlias(Base):
+    __tablename__ = "product_aliases"
+    id         = Column(Integer, primary_key=True)
+    raw_text   = Column(String(200), nullable=False, unique=True)
+    product_id = Column(Integer, ForeignKey("products.id"), nullable=False)
+    created_at = Column(DateTime, server_default=func.now())
+
+    product = relationship("Product", back_populates="aliases")
+
+
 class ReceiptItem(Base):
     __tablename__ = "receipt_items"
     id          = Column(Integer, primary_key=True)
     receipt_id  = Column(Integer, ForeignKey("receipts.id", ondelete="CASCADE"), nullable=False)
-    name        = Column(String(200), nullable=False)
+    name        = Column(String(200), nullable=False)  # сырой текст из OCR
+    product_id  = Column(Integer, ForeignKey("products.id"), nullable=True)
     qty         = Column(Numeric(10, 3))
     unit_price  = Column(Numeric(12, 2))
     total_price = Column(Numeric(12, 2), nullable=False)
+
+    product = relationship("Product")
 
 
 class AuditLog(Base):

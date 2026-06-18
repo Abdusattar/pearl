@@ -4,14 +4,23 @@
 {% block title %}Расходы — Жемчужина{% endblock %}
 
 {% block content %}
+<style>
+@media (max-width: 640px) {
+  .page-header { flex-wrap: wrap; }
+  .page-header .btn { flex: 1; text-align: center; min-height: 44px;
+    display: inline-flex; align-items: center; justify-content: center; }
+}
+</style>
+
 <div class="page-header">
   <h1>Расходы</h1>
   <a href="/expenses/upload?org_id={{ current_org_id }}" class="btn btn-primary">+ Добавить квитанцию</a>
+  <a href="/expenses/add?org_id={{ current_org_id }}" class="btn btn-secondary">+ Вручную</a>
 </div>
 
 <div class="card">
   <form method="get" class="filters">
-    <input type="hidden" name="org_id" value="{{ current_org_id }}">
+    <input type="hidden" name="org_id" value="{{ current_org_id or '' }}">
     <select name="category_id" class="form-control" style="width:auto">
       <option value="">Все категории</option>
       {% for cat in categories %}
@@ -21,11 +30,19 @@
     <input type="month" name="month" value="{{ selected_month }}" class="form-control" style="width:auto">
     <button type="submit" class="btn btn-secondary">Применить</button>
     {% if pending_count > 0 %}
-    <a href="/expenses/?org_id={{ current_org_id }}&status=pending" class="btn btn-secondary" style="color:#92400e;background:#fef3c7">
+    <a href="/expenses/?org_id={{ current_org_id or '' }}&status=unconfirmed" class="btn btn-secondary" style="color:#92400e;background:#fef3c7">
       ⏳ Непроведённые: {{ pending_count }}
     </a>
     {% endif %}
   </form>
+
+  {% if totals %}
+  <div class="totals" style="margin-top:12px">
+    {% for t in totals %}
+    <div class="total-item">{{ t.org_name }}: <strong>{{ "{:,.0f}".format(t.total) }} с</strong></div>
+    {% endfor %}
+  </div>
+  {% endif %}
 
   {% if receipts %}
   <table class="table">
@@ -41,8 +58,8 @@
     </thead>
     <tbody>
       {% for r in receipts %}
-      <tr>
-        <td>{{ r.created_at.strftime('%d.%m.%Y') }}</td>
+      <tr {% if r.href %}data-href="{{ r.href }}" style="cursor:pointer"{% endif %}>
+        <td>{{ r.date_display }}</td>
         <td>{{ r.org_name }}</td>
         <td>{{ r.category_name or '—' }}</td>
         <td>
@@ -55,34 +72,24 @@
           {% endif %}
         </td>
         <td>
-          <span class="badge badge-{{ r.ocr_status }}">
-            {% if r.ocr_status == 'pending' %}Ожидает
-            {% elif r.ocr_status == 'processing' %}Обработка
-            {% elif r.ocr_status == 'processed' %}Проверить
-            {% elif r.ocr_status == 'confirmed' %}Проведено
-            {% elif r.ocr_status == 'rejected' %}Отклонено
-            {% endif %}
-          </span>
-        </td>
-        <td>
-          {% if r.ocr_status in ('processed', 'pending') %}
-          <a href="/expenses/{{ r.id }}/confirm?org_id={{ current_org_id }}" class="btn btn-secondary" style="padding:5px 12px;font-size:13px">Проверить</a>
+          {% if r.row_type == 'manual' or r.ocr_status == 'manual' %}
+            <span class="badge" style="background:#e0e7ff;color:#3730a3">Вручную</span>
           {% else %}
-          <a href="/expenses/{{ r.id }}/confirm?org_id={{ current_org_id }}" class="btn btn-secondary" style="padding:5px 12px;font-size:13px">Открыть</a>
+            <span class="badge badge-{{ r.ocr_status }}">
+              {% if r.ocr_status == 'pending' %}Ожидает
+              {% elif r.ocr_status == 'processing' %}Обработка
+              {% elif r.ocr_status == 'processed' %}Проверить
+              {% elif r.ocr_status == 'confirmed' %}Проведено
+              {% elif r.ocr_status == 'rejected' %}Отклонено
+              {% endif %}
+            </span>
           {% endif %}
         </td>
+        <td style="color:var(--text-muted);font-size:18px;text-align:right">›</td>
       </tr>
       {% endfor %}
     </tbody>
   </table>
-
-  {% if totals %}
-  <div class="totals">
-    {% for t in totals %}
-    <div class="total-item">{{ t.org_name }}: <strong>{{ "{:,.0f}".format(t.total) }} с</strong></div>
-    {% endfor %}
-  </div>
-  {% endif %}
 
   {% else %}
   <div style="text-align:center;padding:40px;color:var(--text-muted)">
@@ -92,4 +99,16 @@
   </div>
   {% endif %}
 </div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+document.querySelectorAll('tr[data-href]').forEach(function(row) {
+  row.addEventListener('click', function(e) {
+    if (!e.target.closest('a, button')) {
+      window.location = row.dataset.href;
+    }
+  });
+});
+</script>
 {% endblock %}

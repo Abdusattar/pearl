@@ -1,0 +1,98 @@
+{% extends "base.html" %}
+{% set active_page = "expenses" %}
+
+{% block title %}Редактировать запись — Жемчужина{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <h1>Редактировать запись</h1>
+  <a href="/expenses/?org_id={{ current_org_id or '' }}" class="btn btn-secondary">← Назад</a>
+</div>
+
+{% if error %}
+<div class="alert alert-error">{{ error }}</div>
+{% endif %}
+
+<div class="card" style="max-width:480px">
+  <form method="post" action="/expenses/tx/{{ tx.id }}/edit">
+    <input type="hidden" name="org_id" value="{{ current_org_id or '' }}">
+
+    <div class="form-group">
+      <label>Объект</label>
+      <select name="org_id" class="form-control" required>
+        {% for org in upload_orgs %}
+        <option value="{{ org.id }}" {% if org.id == tx.org_id %}selected{% endif %}>{{ org.name }}</option>
+        {% endfor %}
+      </select>
+    </div>
+
+    <div class="form-group">
+      <label>Сумма (сом)</label>
+      <input type="number" name="amount" class="form-control" step="0.01"
+             inputmode="decimal" required value="{{ tx.amount }}"
+             style="font-size:24px;font-weight:700;text-align:center;padding:12px">
+    </div>
+
+    <div class="form-group">
+      <label>Категория</label>
+      <select name="category_id" class="form-control">
+        <option value="">Без категории</option>
+        {% set ns = namespace(parent_ids=[]) %}
+        {% for cat in categories %}{% if cat.parent_id is not none and cat.parent_id not in ns.parent_ids %}{% set ns.parent_ids = ns.parent_ids + [cat.parent_id] %}{% endif %}{% endfor %}
+        {% for cat in categories %}
+          {% if cat.parent_id is none %}
+          <option value="{{ cat.id }}"
+            {% if cat.id in ns.parent_ids %}disabled style="color:#9ca3af;font-weight:600"{% endif %}
+            {% if cat.id == tx.category_id %}selected{% endif %}>{{ cat.name }}</option>
+          {% else %}
+          <option value="{{ cat.id }}" {% if cat.id == tx.category_id %}selected{% endif %}>&nbsp;&nbsp;↳ {{ cat.name }}</option>
+          {% endif %}
+        {% endfor %}
+      </select>
+    </div>
+
+    <div class="form-group">
+      <label>Дата</label>
+      <input type="date" name="date" class="form-control" value="{{ tx.date }}" required>
+    </div>
+
+    <div class="form-group">
+      <label>Описание</label>
+      <input type="text" name="description" class="form-control" value="{{ tx.description }}">
+    </div>
+
+    {% if items %}
+    <div class="form-group">
+      <label>Позиции</label>
+      <table style="width:100%;border-collapse:collapse;font-size:13px">
+        <thead>
+          <tr style="border-bottom:2px solid var(--border);text-align:left;color:var(--text-muted)">
+            <th style="padding:4px;width:50%">Наименование</th>
+            <th style="padding:4px;width:15%;text-align:right">Кол-во</th>
+            <th style="padding:4px;width:20%;text-align:right">Цена</th>
+            <th style="padding:4px;width:15%;text-align:right">Сумма</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for item in items %}
+          <tr style="border-bottom:1px solid var(--border)">
+            <td style="padding:6px 4px">{{ item.name }}</td>
+            <td style="padding:6px 4px;text-align:right">{{ item.qty or '—' }}</td>
+            <td style="padding:6px 4px;text-align:right">{{ "{:,.0f}".format(item.unit_price) if item.unit_price else '—' }}</td>
+            <td style="padding:6px 4px;text-align:right"><strong>{{ "{:,.0f}".format(item.total_price) }}</strong></td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% endif %}
+
+    <div style="display:flex;gap:12px;margin-top:8px">
+      <button type="submit" class="btn btn-success"
+              style="flex:1;min-height:48px;font-size:16px">Сохранить</button>
+      <a href="/expenses/?org_id={{ current_org_id or '' }}" class="btn btn-secondary"
+         style="min-height:48px;display:inline-flex;align-items:center">Отмена</a>
+    </div>
+  </form>
+</div>
+{% endblock %}

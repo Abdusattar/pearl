@@ -3,9 +3,34 @@ import hashlib
 import json
 import os
 import re
+from datetime import datetime
+from pathlib import Path
 
 import requests
 from dotenv import load_dotenv
+
+_LOG_FILE = Path(__file__).parent.parent.parent / "logs" / "openrouter_usage.jsonl"
+
+# Цены gemini-2.5-flash-lite ($/M токенов)
+_PRICE = {"input": 0.10, "output": 0.40}
+
+
+def _log_usage(model: str, usage: dict, file_path: str, ok: bool):
+    _LOG_FILE.parent.mkdir(exist_ok=True)
+    inp = usage.get("prompt_tokens", 0)
+    out = usage.get("completion_tokens", 0)
+    cost = round((inp * _PRICE["input"] + out * _PRICE["output"]) / 1_000_000, 6)
+    entry = {
+        "ts": datetime.now().isoformat(timespec="seconds"),
+        "model": model,
+        "file": Path(file_path).name,
+        "tokens_in": inp,
+        "tokens_out": out,
+        "cost_usd": cost,
+        "ok": ok,
+    }
+    with open(_LOG_FILE, "a", encoding="utf-8") as f:
+        f.write(json.dumps(entry, ensure_ascii=False) + "\n")
 
 load_dotenv()
 
@@ -61,8 +86,10 @@ def analyze_receipt(file_path: str) -> dict | None:
         }
         resp = requests.post(_OR_URL, json=payload, headers=headers, timeout=60)
         resp.raise_for_status()
+        resp_json = resp.json()
+        _log_usage(_OR_MODEL, resp_json.get("usage", {}), file_path, ok=True)
 
-        text = resp.json()["choices"][0]["message"]["content"].strip()
+        text = resp_json["choices"][0]["message"]["content"].strip()
         text = re.sub(r"^```(?:json)?\s*|\s*```$", "", text, flags=re.DOTALL).strip()
 
         data = json.loads(text)
@@ -87,6 +114,7 @@ def analyze_receipt(file_path: str) -> dict | None:
 
     except Exception as e:
         print(f"[OCR ERROR] {e}", flush=True)
+        _log_usage(_OR_MODEL, {}, file_path, ok=False)
         return None
 
 

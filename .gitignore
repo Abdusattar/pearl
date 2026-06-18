@@ -2,8 +2,26 @@
 __pycache__/
 *.pyc
 *.pyo
+*.db
+.DS_Store
+
+# Медиа
 media/receipts/
 media/voice/
 media/photos/
-*.db
-.DS_Store
+media/assets/
+
+# Персональные данные — не в репозиторий
+data/*.xlsx
+data/*.csv
+data/*.txt
+data/*.json
+
+# Банковские документы
+банки/
+
+# Логи
+logs/
+
+# Claude internal
+.claude/skills/

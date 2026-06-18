@@ -12,12 +12,13 @@ KEY = os.getenv("OPENROUTER_API_KEY")
 URL = "https://openrouter.ai/api/v1/chat/completions"
 
 MODELS = [
+    "meta-llama/llama-3.2-11b-vision-instruct:free",
     "google/gemini-2.5-flash-lite",
 ]
 
 RECEIPTS = [
-    ("media/receipts/5242699173746906970.jpg", "пони"),   # 18 позиций, сложный почерк
-    ("media/receipts/5242699173746906974.jpg", "профиль"), # 2 позиции, простой
+    ("media/receipts/5242699173746906970.jpg", ""),
+    ("media/receipts/5242699173746906977.jpg", ""),
 ]
 
 PROMPT = (

@@ -1,0 +1,89 @@
+{% extends "base.html" %}
+{% block title %}Ученики — Жемчужина{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <h1>Ученики</h1>
+  <a href="/students/add?org_id={{ current_org_id }}" class="btn btn-primary">+ Добавить</a>
+</div>
+
+<div class="card">
+  <div class="filters">
+    <form method="get" style="display:flex;gap:10px;flex-wrap:wrap;width:100%">
+      <input type="hidden" name="org_id" value="{{ current_org_id }}">
+      <input
+        type="text"
+        name="q"
+        value="{{ q }}"
+        placeholder="Поиск по имени или PIN..."
+        class="form-control"
+        style="max-width:300px"
+      >
+      <button type="submit" class="btn btn-secondary">Найти</button>
+      {% if q %}
+        <a href="/students/?org_id={{ current_org_id }}" class="btn btn-secondary">Сбросить</a>
+      {% endif %}
+    </form>
+  </div>
+
+  {% if students %}
+  <table class="table">
+    <thead>
+      <tr>
+        <th style="width:70px">PIN</th>
+        <th>ФИО ребёнка</th>
+        <th>Группа</th>
+        <th>Оплата / мес</th>
+        <th style="width:100px"></th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for s in students %}
+      <tr>
+        <td>
+          <span style="font-family:monospace;font-weight:700;font-size:15px;color:var(--primary)">
+            {{ s.pin }}
+          </span>
+        </td>
+        <td>{{ s.name }}</td>
+        <td style="color:var(--text-muted);font-size:13px">
+          — {# группы будут позже #}
+        </td>
+        <td style="color:var(--text-muted);font-size:13px">
+          {% if s.extra and s.extra.monthly_fee %}
+            {{ "{:,.0f}".format(s.extra.monthly_fee) }} с
+          {% else %}
+            —
+          {% endif %}
+        </td>
+        <td>
+          <form method="post" action="/students/{{ s.id }}/deactivate"
+                onsubmit="return confirm('Перевести {{ s.name }} в выбывшие? PIN {{ s.pin }} освободится.')">
+            <button type="submit" class="btn btn-secondary"
+                    style="padding:5px 10px;font-size:12px;color:var(--text-muted)">
+              Выбыл
+            </button>
+          </form>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+
+  <div style="padding-top:16px;border-top:1px solid var(--border);margin-top:4px;
+              font-size:13px;color:var(--text-muted)">
+    Активных: <strong>{{ students|length }}</strong>
+    {% if q %} — по запросу «{{ q }}»{% endif %}
+  </div>
+
+  {% else %}
+  <div style="text-align:center;padding:40px 20px;color:var(--text-muted)">
+    {% if q %}
+      Ничего не найдено по «{{ q }}»
+    {% else %}
+      Детей нет
+    {% endif %}
+  </div>
+  {% endif %}
+</div>
+{% endblock %}

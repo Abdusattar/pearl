@@ -4,6 +4,27 @@
 {% block title %}Проверить квитанцию — Жемчужина{% endblock %}
 
 {% block content %}
+<style>
+/* Мобайл: одна колонка */
+@media (max-width: 768px) {
+  .confirm-grid { display: block !important; }
+  .confirm-grid > .card:first-child { margin-bottom: 16px; }
+  .confirm-grid > .card:first-child img { max-height: 220px; object-fit: contain; }
+}
+
+/* Мобайл: позиции чека — карточки вместо таблицы */
+@media (max-width: 640px) {
+  #items-body tr { display: flex; flex-wrap: wrap; padding: 10px 0;
+    border-bottom: 1px solid var(--border); gap: 4px; }
+  #items-body td { padding: 2px; }
+  #items-body td:first-child { width: 100%; }
+  #items-body td:nth-child(2), #items-body td:nth-child(3),
+  #items-body td:nth-child(4) { flex: 1; }
+  #items-body td:last-child { width: auto; }
+  #items-body thead { display: none; }
+}
+</style>
+
 <div class="page-header">
   <h1>Проверить квитанцию</h1>
   <a href="/expenses/?org_id={{ current_org_id }}" class="btn btn-secondary">← Назад</a>
@@ -16,7 +37,7 @@
 <div class="alert alert-success">{{ success }}</div>
 {% endif %}
 
-<div style="display:grid;grid-template-columns:1fr 1.5fr;gap:20px;align-items:start">
+<div class="confirm-grid" style="display:grid;grid-template-columns:1fr 1.5fr;gap:20px;align-items:start">
 
   <!-- Фото -->
   <div class="card" style="text-align:center">
@@ -33,11 +54,11 @@
   <!-- Правая колонка: позиции + форма -->
   <div style="display:flex;flex-direction:column;gap:16px">
 
-    {% if items %}
-    <div class="card">
+    {% if items and receipt.ocr_status not in ('confirmed', 'rejected', 'manual') %}
+    <div class="card" id="items-card">
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
         <h3 style="margin:0;font-size:15px">Позиции чека</h3>
-        <span style="font-size:12px;color:var(--text-muted);background:#fef3c7;border:1px solid #fcd34d;border-radius:4px;padding:2px 8px">черновик OCR — проверь перед сохранением</span>
+        <span style="font-size:12px;color:var(--text-muted);background:#fef3c7;border:1px solid #fcd34d;border-radius:4px;padding:2px 8px">черновик OCR — проверь</span>
       </div>
       <table style="width:100%;border-collapse:collapse;font-size:13px">
         <thead>
@@ -52,11 +73,19 @@
         <tbody id="items-body">
           {% for item in items %}
           <tr class="item-row" style="border-bottom:1px solid var(--border)">
-            <td style="padding:4px"><input type="text" name="item_name" value="{{ item.name }}" class="form-control" style="font-size:12px;padding:4px 6px"></td>
-            <td style="padding:4px"><input type="text" name="item_qty" value="{{ item.qty or '' }}" class="form-control" style="font-size:12px;padding:4px 6px;text-align:right"></td>
-            <td style="padding:4px"><input type="text" name="item_unit_price" value="{{ item.unit_price or '' }}" class="form-control" style="font-size:12px;padding:4px 6px;text-align:right"></td>
-            <td style="padding:4px"><input type="text" name="item_total_price" value="{{ item.total_price }}" class="form-control" style="font-size:12px;padding:4px 6px;text-align:right"></td>
-            <td style="padding:4px;text-align:center"><button type="button" onclick="this.closest('tr').remove()" style="background:none;border:none;color:var(--text-muted);cursor:pointer;font-size:16px">×</button></td>
+            <td style="padding:4px">
+              <input type="hidden" name="item_raw_name" value="{{ item.raw_name }}">
+              <input type="text" name="item_name" value="{{ item.display_name }}" class="form-control" style="font-size:12px;padding:4px 6px">
+              {% if item.product_matched and item.raw_name != item.display_name %}
+              <div class="product-hint" style="font-size:10px;color:#16a34a;margin-top:2px">✓ справочник · OCR: {{ item.raw_name }}</div>
+              {% elif not item.product_matched %}
+              <div class="product-hint" style="font-size:10px;color:#d97706;margin-top:2px;display:none">🆕 уточни название</div>
+              {% endif %}
+            </td>
+            <td style="padding:4px"><input type="text" name="item_qty" value="{{ item.qty or '' }}" class="form-control item-qty" style="font-size:12px;padding:4px 6px;text-align:right" oninput="recalcRow(this)"></td>
+            <td style="padding:4px"><input type="text" name="item_unit_price" value="{{ item.unit_price or '' }}" class="form-control item-price" style="font-size:12px;padding:4px 6px;text-align:right" oninput="recalcRow(this)"></td>
+            <td style="padding:4px"><input type="text" name="item_total_price" value="{{ item.total_price }}" class="form-control item-total" style="font-size:12px;padding:4px 6px;text-align:right" oninput="updateGrandTotal()"></td>
+            <td style="padding:4px;text-align:center"><button type="button" onclick="this.closest('tr').remove();updateGrandTotal()" style="background:none;border:none;color:var(--text-muted);cursor:pointer;font-size:16px">×</button></td>
           </tr>
           {% endfor %}
         </tbody>
@@ -68,50 +97,58 @@
   <!-- Форма подтверждения -->
   <div class="card">
     {% if receipt.ocr_status == 'confirmed' %}
-      <div class="alert alert-success">Квитанция проведена ✓</div>
-      <p style="font-size:14px;color:var(--text-muted)">Сумма: <strong>{{ "{:,.0f}".format(receipt.amount_confirmed) }} с</strong></p>
+      <div style="text-align:center;padding:24px 8px">
+        <div style="font-size:56px;line-height:1;margin-bottom:12px">✓</div>
+        <div style="font-size:20px;font-weight:700;color:#16a34a;margin-bottom:16px">Проведено!</div>
+        {% if confirmed_tx %}
+        <div style="font-size:15px;color:var(--text-muted);margin-bottom:4px">{{ confirmed_tx.category_name }}</div>
+        <div style="font-size:28px;font-weight:700;margin-bottom:4px">{{ "{:,.0f}".format(confirmed_tx.amount) }} с</div>
+        <div style="font-size:14px;color:var(--text-muted);margin-bottom:24px">{{ confirmed_tx.date }}</div>
+        {% endif %}
+        <div style="font-size:12px;color:var(--text-muted);margin-bottom:24px">Квитанция #{{ receipt.id }}</div>
+
+        <div style="display:flex;flex-direction:column;gap:10px">
+          <a href="/expenses/upload?org_id={{ current_org_id or '' }}"
+             class="btn btn-primary" style="min-height:52px;font-size:16px;display:flex;align-items:center;justify-content:center">
+            + Следующая квитанция
+          </a>
+          <a href="/expenses/?org_id={{ current_org_id or '' }}&status=unconfirmed"
+             class="btn btn-secondary" style="min-height:44px;display:flex;align-items:center;justify-content:center">
+            Непроведённые
+          </a>
+          <a href="/expenses/?org_id={{ current_org_id or '' }}"
+             class="btn btn-secondary" style="min-height:44px;display:flex;align-items:center;justify-content:center">
+            ← К списку
+          </a>
+        </div>
+      </div>
     {% elif receipt.ocr_status == 'rejected' %}
       <div class="alert alert-error">Квитанция отклонена</div>
     {% else %}
     <form method="post" action="/expenses/{{ receipt.id }}/confirm">
-      <input type="hidden" name="org_id" value="{{ current_org_id }}">
+      <input type="hidden" name="org_id" value="{{ current_org_id or '' }}">
 
       <div class="form-group">
         <label>Объект</label>
-        <input type="text" class="form-control" value="{{ receipt.org_name }}" disabled>
+        <select name="receipt_org_id" class="form-control">
+          {% for org in upload_orgs %}
+          <option value="{{ org.id }}" {% if org.id == receipt.org_id %}selected{% endif %}>{{ org.name }}</option>
+          {% endfor %}
+        </select>
+        {% if receipt.org_name not in upload_orgs | map(attribute='name') | list %}
+        <div style="font-size:11px;color:#d97706;margin-top:4px">⚠ Привязан к «{{ receipt.org_name }}» — уточни объект</div>
+        {% endif %}
       </div>
 
-      <!-- Сплиттер: только если "Оба садика" -->
-      {% if is_both_kinder %}
-      <div style="background:#fef3c7;border:1px solid #fcd34d;border-radius:8px;padding:16px;margin-bottom:18px">
-        <div style="font-size:13px;font-weight:600;margin-bottom:12px">⚡ Общая закупка на оба садика</div>
-        <div class="form-group" style="margin-bottom:10px">
-          <label>Общая сумма</label>
-          <input type="number" id="total-amount" class="form-control" step="0.01"
-                 value="{{ receipt.amount_detected or '' }}" placeholder="0.00" oninput="splitEqual()">
-        </div>
-        <button type="button" class="btn btn-secondary" onclick="splitEqual()" style="margin-bottom:12px;font-size:13px">
-          Разделить поровну
-        </button>
-        <div class="split-row">
-          <div class="form-group">
-            <label>Садик Сокулук, с</label>
-            <input type="number" name="amount_sokuluk" id="amt-sokuluk" class="form-control" step="0.01" required placeholder="0.00">
-          </div>
-          <div class="form-group">
-            <label>Садик Кожомкул, с</label>
-            <input type="number" name="amount_kojomkul" id="amt-kojomkul" class="form-control" step="0.01" required placeholder="0.00">
-          </div>
-        </div>
-      </div>
-      <input type="hidden" name="split_mode" value="both">
-      {% else %}
       <div class="form-group">
         <label>Сумма (сом)</label>
-        <input type="number" name="amount" class="form-control" step="0.01"
-               value="{{ receipt.amount_detected or '' }}" required placeholder="0.00">
+        <input type="number" name="amount" id="total-amount" class="form-control" step="0.01"
+               inputmode="decimal"
+               value="{{ receipt.amount_detected or '' }}" required placeholder="0.00"
+               style="font-size:28px;font-weight:700;text-align:center;padding:14px;
+                      border:2px solid var(--primary);border-radius:12px">
+        <div id="items-sum-hint" style="font-size:12px;color:var(--text-muted);text-align:center;margin-top:4px"></div>
       </div>
-      {% endif %}
 
       <div class="form-group">
         <label>Дата</label>
@@ -119,18 +156,38 @@
                value="{{ today }}" required>
       </div>
 
-      <div class="form-group">
-        <label>Категория</label>
-        <select name="category_id" class="form-control" required>
+      <!-- Режим: одна категория -->
+      <div id="single-cat-block" class="form-group">
+        <label style="display:flex;align-items:center;justify-content:space-between">
+          <span>Категория</span>
+          <button type="button" onclick="enableSplit()" style="font-size:11px;color:var(--primary);background:none;border:none;cursor:pointer;padding:0">разделить по категориям →</button>
+        </label>
+        <select name="category_id" id="single-cat-select" class="form-control"
+                {% if pre_category_id %}data-preselect="{{ pre_category_id }}"{% endif %}>
           <option value="">Выберите категорию</option>
+          {% set ns = namespace(parent_ids=[]) %}
+          {% for cat in categories %}{% if cat.parent_id is not none and cat.parent_id not in ns.parent_ids %}{% set ns.parent_ids = ns.parent_ids + [cat.parent_id] %}{% endif %}{% endfor %}
           {% for cat in categories %}
             {% if cat.parent_id is none %}
-            <option value="{{ cat.id }}">{{ cat.name }}</option>
+            <option value="{{ cat.id }}" {% if cat.id in ns.parent_ids %}disabled style="color:#9ca3af;font-weight:600"{% endif %}>{{ cat.name }}</option>
             {% else %}
             <option value="{{ cat.id }}">&nbsp;&nbsp;↳ {{ cat.name }}</option>
             {% endif %}
           {% endfor %}
         </select>
+      </div>
+
+      <!-- Режим: разбивка по категориям -->
+      <div id="split-block" style="display:none" class="form-group">
+        <label style="display:flex;align-items:center;justify-content:space-between">
+          <span>Разбивка по категориям</span>
+          <button type="button" onclick="disableSplit()" style="font-size:11px;color:var(--text-muted);background:none;border:none;cursor:pointer;padding:0">← одна категория</button>
+        </label>
+        <div id="split-rows" style="display:flex;flex-direction:column;gap:6px;margin-bottom:6px"></div>
+        <button type="button" onclick="addSplitRow()" style="font-size:12px;color:var(--primary);background:none;border:none;cursor:pointer;padding:4px 0">+ добавить категорию</button>
+        <div style="font-size:12px;margin-top:6px;color:var(--text-muted)">
+          Остаток: <span id="split-rest" style="font-weight:600;color:#dc2626">—</span> сом
+        </div>
       </div>
 
       <div class="form-group">
@@ -139,7 +196,8 @@
       </div>
 
       <div style="display:flex;gap:12px;margin-top:8px">
-        <button type="submit" name="action" value="confirm" class="btn btn-success" style="flex:1">✓ Провести</button>
+        <button type="submit" name="action" value="confirm" class="btn btn-success"
+                style="flex:1;min-height:48px;font-size:16px">✓ Провести</button>
         <button type="submit" name="action" value="reject" class="btn btn-danger">Отклонить</button>
       </div>
     </form>
@@ -152,13 +210,41 @@
 
 {% block scripts %}
 <script>
-function splitEqual() {
-  const total = parseFloat(document.getElementById('total-amount')?.value) || 0;
-  const half = (total / 2).toFixed(2);
-  const s = document.getElementById('amt-sokuluk');
-  const k = document.getElementById('amt-kojomkul');
-  if (s) s.value = half;
-  if (k) k.value = half;
+function _num(v) {
+  const n = parseFloat(String(v).replace(',', '.'));
+  return isNaN(n) ? null : n;
+}
+
+function recalcRow(input) {
+  const row = input.closest('tr');
+  const qtyInput   = row.querySelector('.item-qty');
+  const priceInput = row.querySelector('.item-price');
+  const totalInput = row.querySelector('.item-total');
+  const qty   = _num(qtyInput?.value);
+  let   price = _num(priceInput?.value);
+  const total = _num(totalInput?.value);
+
+  if (qty !== null && price !== null) {
+    // Кол-во × Цена → Сумма строки
+    if (totalInput) totalInput.value = (qty * price).toFixed(2);
+  } else if (qty !== null && price === null && total !== null && qty > 0) {
+    // Цена неизвестна — вычислить из Сумма / Кол-во и подставить
+    price = total / qty;
+    if (priceInput) priceInput.value = price.toFixed(2);
+    if (totalInput) totalInput.value = (qty * price).toFixed(2);
+  }
+  updateGrandTotal();
+}
+
+function updateGrandTotal() {
+  const totals = [...document.querySelectorAll('.item-total')]
+    .map(i => _num(i.value) || 0);
+  if (!totals.length) return;
+  const sum = totals.reduce((a, b) => a + b, 0);
+  const hint = document.getElementById('items-sum-hint');
+  const amountInput = document.getElementById('total-amount');
+  if (hint) hint.textContent = 'Сумма позиций: ' + sum.toLocaleString('ru-RU', {maximumFractionDigits:2}) + ' с';
+  if (amountInput) amountInput.value = sum.toFixed(2);
 }
 
 function addItemRow() {
@@ -169,12 +255,97 @@ function addItemRow() {
   row.style.borderBottom = '1px solid var(--border)';
   row.innerHTML = `
     <td style="padding:4px"><input type="text" name="item_name" value="" class="form-control" style="font-size:12px;padding:4px 6px"></td>
-    <td style="padding:4px"><input type="text" name="item_qty" value="" class="form-control" style="font-size:12px;padding:4px 6px;text-align:right"></td>
-    <td style="padding:4px"><input type="text" name="item_unit_price" value="" class="form-control" style="font-size:12px;padding:4px 6px;text-align:right"></td>
-    <td style="padding:4px"><input type="text" name="item_total_price" value="" class="form-control" style="font-size:12px;padding:4px 6px;text-align:right"></td>
-    <td style="padding:4px;text-align:center"><button type="button" onclick="this.closest('tr').remove()" style="background:none;border:none;color:var(--text-muted);cursor:pointer;font-size:16px">×</button></td>
+    <td style="padding:4px"><input type="text" name="item_qty" value="" class="form-control item-qty" style="font-size:12px;padding:4px 6px;text-align:right" oninput="recalcRow(this)"></td>
+    <td style="padding:4px"><input type="text" name="item_unit_price" value="" class="form-control item-price" style="font-size:12px;padding:4px 6px;text-align:right" oninput="recalcRow(this)"></td>
+    <td style="padding:4px"><input type="text" name="item_total_price" value="" class="form-control item-total" style="font-size:12px;padding:4px 6px;text-align:right" oninput="updateGrandTotal()"></td>
+    <td style="padding:4px;text-align:center"><button type="button" onclick="this.closest('tr').remove();updateGrandTotal()" style="background:none;border:none;color:var(--text-muted);cursor:pointer;font-size:16px">×</button></td>
   `;
   tbody.appendChild(row);
+}
+
+// Показать сумму позиций при загрузке
+updateGrandTotal();
+
+// Питание (1,2,3) + Хозяйство/Бытовая химия (4,5) — повторяемые позиции, нужен справочник
+const FOOD_CATEGORY_IDS = new Set([1, 2, 3, 4, 5]);
+
+function onCategoryChange(categoryId) {
+  const isFood = FOOD_CATEGORY_IDS.has(Number(categoryId));
+  const hasId  = !!categoryId;
+
+  // Подсказки справочника — только для питания/хозяйства
+  document.querySelectorAll('.product-hint').forEach(el => {
+    el.style.display = isFood ? '' : 'none';
+  });
+
+  // Таблица позиций — скрыть для не-питательных категорий (ремонт и др.)
+  const itemsCard = document.getElementById('items-card');
+  if (itemsCard) {
+    itemsCard.style.display = (!hasId || isFood) ? '' : 'none';
+  }
+}
+
+const catSelect = document.getElementById('single-cat-select');
+if (catSelect) {
+  const preselect = catSelect.dataset.preselect;
+  if (preselect) catSelect.value = preselect;
+  catSelect.addEventListener('change', e => onCategoryChange(e.target.value));
+  onCategoryChange(catSelect.value);
+}
+
+// ── Разбивка по категориям ──────────────────────────────────────────
+const CAT_OPTIONS_HTML = `{{ categories | map(attribute='id') | list }}`;
+// Строим HTML опций один раз из DOM единственного select
+function buildCatOptions() {
+  return [...document.getElementById('single-cat-select').options]
+    .map(o => `<option value="${o.value}" ${o.disabled ? 'disabled' : ''}>${o.text}</option>`)
+    .join('');
+}
+
+function addSplitRow(catId, amt) {
+  const row = document.createElement('div');
+  row.style.cssText = 'display:flex;gap:6px;align-items:center';
+  row.innerHTML = `
+    <select name="split_category_id" class="form-control" style="flex:1;font-size:13px" onchange="updateSplitRest()">
+      ${buildCatOptions()}
+    </select>
+    <input type="number" name="split_amount" class="form-control split-amt" step="0.01"
+           placeholder="сом" style="width:90px;font-size:13px;text-align:right" oninput="updateSplitRest()">
+    <button type="button" onclick="this.parentElement.remove();updateSplitRest()"
+            style="background:none;border:none;color:var(--text-muted);cursor:pointer;font-size:18px;line-height:1">×</button>
+  `;
+  if (catId) row.querySelector('select').value = catId;
+  if (amt)   row.querySelector('input').value  = amt;
+  document.getElementById('split-rows').appendChild(row);
+  updateSplitRest();
+}
+
+function updateSplitRest() {
+  const total = parseFloat(document.getElementById('total-amount')?.value) || 0;
+  const used  = [...document.querySelectorAll('.split-amt')]
+    .reduce((s, i) => s + (parseFloat(i.value) || 0), 0);
+  const rest = Math.round((total - used) * 100) / 100;
+  const el = document.getElementById('split-rest');
+  if (el) {
+    el.textContent = rest.toLocaleString('ru-RU', {maximumFractionDigits:2});
+    el.style.color = Math.abs(rest) < 0.01 ? '#16a34a' : '#dc2626';
+  }
+}
+
+function enableSplit() {
+  document.getElementById('single-cat-block').style.display = 'none';
+  document.getElementById('single-cat-select').removeAttribute('required');
+  document.getElementById('split-block').style.display = '';
+  if (!document.getElementById('split-rows').children.length) {
+    addSplitRow(); addSplitRow();
+  }
+  updateSplitRest();
+}
+
+function disableSplit() {
+  document.getElementById('split-block').style.display = 'none';
+  document.getElementById('single-cat-block').style.display = '';
+  document.getElementById('single-cat-select').setAttribute('required', '');
 }
 </script>
 {% endblock %}

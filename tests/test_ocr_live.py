@@ -4,7 +4,7 @@ sys.path.insert(0, ".")
 from dotenv import load_dotenv
 load_dotenv()
 
-path = r"media/receipts/5242699173746907002.jpg"
+path = r"media/receipts/5242699173746906977.jpg"
 
 # Direct call to get usage stats
 key = os.getenv("OPENROUTER_API_KEY")
