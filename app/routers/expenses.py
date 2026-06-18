@@ -16,6 +16,7 @@ from app.models import (
 )
 from app.services.ocr import compute_hash, analyze_receipt
 from app.services.products import match_product, get_or_create_product, ensure_alias
+from app.dependencies import get_current_user
 
 router = APIRouter(prefix="/expenses", tags=["expenses"])
 templates = Jinja2Templates(directory=str(Path(__file__).parent.parent / "templates"))
@@ -23,13 +24,7 @@ templates = Jinja2Templates(directory=str(Path(__file__).parent.parent / "templa
 MEDIA_DIR = Path(__file__).parent.parent.parent / "media" / "receipts"
 MEDIA_DIR.mkdir(parents=True, exist_ok=True)
 
-# ORG IDs — matches seed data
-ORG_KINDERGARTENS = 3  # "Садики" — родительский узел
-
-
-def get_mock_user(db: Session) -> User:
-    """Временно — возвращает первого пользователя. Заменить на auth."""
-    return db.query(User).filter(User.deleted_at.is_(None)).first()
+ORG_KINDERGARTENS = 3
 
 
 def get_accessible_orgs(user: User, db: Session) -> list[Organization]:
@@ -91,9 +86,9 @@ def list_expenses(
 ):
     org_id = int(org_id) if org_id and org_id.isdigit() else None
     category_id = int(category_id) if category_id and category_id.isdigit() else None
-    user = get_mock_user(db)
+    user = get_current_user(request, db)
     if not user:
-        return HTMLResponse("Нет пользователей в БД. Запустите: python app/seed.py", status_code=503)
+        return RedirectResponse("/login", status_code=302)
 
     accessible = get_accessible_orgs(user, db)
     current_org = resolve_org(org_id, user, db)
@@ -258,7 +253,7 @@ def list_expenses(
 
 @router.get("/upload", response_class=HTMLResponse)
 def upload_form(request: Request, org_id: int | None = None, db: Session = Depends(get_db)):
-    user = get_mock_user(db)
+    user = get_current_user(request, db)
     accessible = get_accessible_orgs(user, db)
     current_org = resolve_org(org_id, user, db)
 
@@ -280,7 +275,7 @@ async def handle_upload(
     file: UploadFile = File(...),
     db: Session = Depends(get_db),
 ):
-    user = get_mock_user(db)
+    user = get_current_user(request, db)
     accessible = get_accessible_orgs(user, db)
     current_org = resolve_org(org_id, user, db)
 
@@ -371,7 +366,7 @@ def confirm_form(
     receipt_id: int, request: Request,
     org_id: int | None = None, db: Session = Depends(get_db),
 ):
-    user = get_mock_user(db)
+    user = get_current_user(request, db)
     accessible = get_accessible_orgs(user, db)
     receipt = db.query(Receipt).get(receipt_id)
     if not receipt:
@@ -462,7 +457,7 @@ def handle_confirm(
     split_amount: List[str] = Form(default=[]),
     db: Session = Depends(get_db),
 ):
-    user = get_mock_user(db)
+    user = get_current_user(request, db)
     receipt = db.query(Receipt).get(receipt_id)
     if not receipt:
         return HTMLResponse("Квитанция не найдена", status_code=404)
@@ -585,7 +580,7 @@ def handle_confirm(
 
 @router.get("/add", response_class=HTMLResponse)
 def add_form(request: Request, org_id: int | None = None, db: Session = Depends(get_db)):
-    user = get_mock_user(db)
+    user = get_current_user(request, db)
     accessible = get_accessible_orgs(user, db)
     current_org = resolve_org(org_id, user, db)
     from app.models import Product
@@ -617,7 +612,7 @@ def handle_add(
     item_total_price: List[str] = Form(default=[]),
     db: Session = Depends(get_db),
 ):
-    user = get_mock_user(db)
+    user = get_current_user(request, db)
     accessible = get_accessible_orgs(user, db)
     current_org = resolve_org(org_id, user, db)
     category_id = int(category_id) if category_id and str(category_id).isdigit() else None
@@ -689,7 +684,7 @@ def handle_add(
 
 @router.get("/tx/{tx_id}/edit", response_class=HTMLResponse)
 def edit_tx_form(tx_id: int, request: Request, org_id: int | None = None, db: Session = Depends(get_db)):
-    user = get_mock_user(db)
+    user = get_current_user(request, db)
     tx = db.query(Transaction).get(tx_id)
     if not tx or tx.deleted_at:
         return HTMLResponse("Запись не найдена", status_code=404)
@@ -741,7 +736,7 @@ def handle_edit_tx(
     date_: str = Form(None, alias="date"),
     db: Session = Depends(get_db),
 ):
-    user = get_mock_user(db)
+    user = get_current_user(request, db)
     tx = db.query(Transaction).get(tx_id)
     if not tx or tx.deleted_at:
         return HTMLResponse("Запись не найдена", status_code=404)

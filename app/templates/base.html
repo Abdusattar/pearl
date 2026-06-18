@@ -159,6 +159,14 @@
     </select>
   </form>
   <span class="user">{{ current_user.name }}</span>
+  <form method="post" action="/logout" style="margin:0">
+    <button type="submit"
+            style="background:none;border:none;cursor:pointer;font-size:13px;color:#6b7280;padding:4px 8px;border-radius:6px"
+            onmouseover="this.style.background='#f5f6fa'"
+            onmouseout="this.style.background='none'">
+      Выйти
+    </button>
+  </form>
 </nav>
 
 <aside class="sidebar">

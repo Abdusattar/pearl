@@ -8,35 +8,11 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.models import Organization, Student, User
 from app.services.students import get_next_free_pin, deactivate_student
+from app.dependencies import get_current_user, get_accessible_orgs, resolve_org
 
 router = APIRouter(prefix="/students", tags=["students"])
 templates = Jinja2Templates(directory=str(Path(__file__).parent.parent / "templates"))
 
-ORG_KINDERGARTENS = 3
-
-
-def get_mock_user(db: Session) -> User:
-    return db.query(User).filter(User.deleted_at.is_(None)).first()
-
-
-def get_accessible_orgs(user: User, db: Session) -> list[Organization]:
-    all_orgs = db.query(Organization).all()
-    if user.role in ("owner", "director"):
-        return all_orgs
-    if user.role == "manager":
-        kinder_ids = {ORG_KINDERGARTENS}
-        kinder_ids |= {o.id for o in all_orgs if o.parent_id == ORG_KINDERGARTENS}
-        return [o for o in all_orgs if o.id in kinder_ids]
-    return [o for o in all_orgs if o.id == user.organization_id]
-
-
-def resolve_org(org_id: int | None, user: User, db: Session) -> Organization:
-    accessible = get_accessible_orgs(user, db)
-    if org_id:
-        org = next((o for o in accessible if o.id == org_id), None)
-        if org:
-            return org
-    return accessible[0] if accessible else None
 
 
 # ── LIST ──────────────────────────────────────────────────────────────────────
@@ -49,9 +25,9 @@ def list_students(
     db: Session = Depends(get_db),
 ):
     org_id = int(org_id) if org_id and org_id.isdigit() else None
-    user = get_mock_user(db)
+    user = get_current_user(request, db)
     if not user:
-        return HTMLResponse("Нет пользователей в БД.", status_code=503)
+        return RedirectResponse("/login", status_code=302)
 
     accessible = get_accessible_orgs(user, db)
     current_org = resolve_org(org_id, user, db)
@@ -95,9 +71,9 @@ def add_student_form(
     db: Session = Depends(get_db),
 ):
     org_id = int(org_id) if org_id and org_id.isdigit() else None
-    user = get_mock_user(db)
+    user = get_current_user(request, db)
     if not user:
-        return HTMLResponse("Нет пользователей в БД.", status_code=503)
+        return RedirectResponse("/login", status_code=302)
 
     accessible = get_accessible_orgs(user, db)
     current_org = resolve_org(org_id, user, db)
