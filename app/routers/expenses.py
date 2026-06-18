@@ -12,7 +12,7 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.models import (
     ExpenseCategory, Organization, Product, Receipt, ReceiptItem, ReceiptTransaction,
-    Transaction, User, AuditLog,
+    Transaction, User, AuditLog, WarehouseReceipt,
 )
 from app.services.ocr import compute_hash, analyze_receipt
 from app.services.products import match_product, get_or_create_product, ensure_alias
@@ -411,6 +411,10 @@ def confirm_form(
                     "category_name": cat.name if cat else "—",
                 }
 
+    all_cats = get_categories(db)
+    food_parent_ids = {c.id for c in all_cats if 'питан' in c.name.lower() or 'продукт' in c.name.lower()}
+    food_cat_ids = list(food_parent_ids | {c.id for c in all_cats if c.parent_id in food_parent_ids})
+
     return templates.TemplateResponse("expenses/confirm.html", {
         "request": request,
         "current_user": user,
@@ -428,7 +432,8 @@ def confirm_form(
             "org_name": org_map.get(receipt.organization_id, "—"),
         },
         "items": items,
-        "categories": get_categories(db),
+        "categories": all_cats,
+        "food_cat_ids": food_cat_ids,
         "today": date.today().isoformat(),
         "confirmed_tx": confirmed_tx,
         "pre_category_id": pre_category_id,
@@ -455,6 +460,7 @@ def handle_confirm(
     item_total_price: List[str] = Form(default=[]),
     split_category_id: List[str] = Form(default=[]),
     split_amount: List[str] = Form(default=[]),
+    add_to_warehouse: str = Form(default=""),
     db: Session = Depends(get_db),
 ):
     user = get_current_user(request, db)
@@ -508,6 +514,7 @@ def handle_confirm(
         if cat_id and _parse_amount(amt)
     ]
 
+    main_tx_id = None
     if splits:
         total_confirmed = sum(amt for _, amt in splits)
         for cat_id, amt in splits:
@@ -518,6 +525,8 @@ def handle_confirm(
             )
             db.add(tx)
             db.flush()
+            if main_tx_id is None:
+                main_tx_id = tx.id
             db.add(ReceiptTransaction(receipt_id=receipt.id, transaction_id=tx.id, amount=amt))
             audit(db, "transaction", tx.id, "insert", user.id, {"org_id": receipt.organization_id, "amount": amt})
     else:
@@ -528,6 +537,7 @@ def handle_confirm(
         )
         db.add(tx)
         db.flush()
+        main_tx_id = tx.id
         db.add(ReceiptTransaction(receipt_id=receipt.id, transaction_id=tx.id, amount=amount))
         audit(db, "transaction", tx.id, "insert", user.id, {"org_id": receipt.organization_id, "amount": amount})
         total_confirmed = amount
@@ -539,6 +549,7 @@ def handle_confirm(
     audit(db, "receipt", receipt.id, "update", user.id, {"status": "confirmed", "amount": total_confirmed})
 
     # Сохраняем отредактированные позиции (если были переданы)
+    want_warehouse = add_to_warehouse == "1"
     if item_name:
         db.query(ReceiptItem).filter(ReceiptItem.receipt_id == receipt_id).delete()
         def _safe_num(vals, i):
@@ -556,20 +567,35 @@ def handle_confirm(
             if total is None:
                 continue
 
-            # Определяем продукт и сохраняем алиас
             raw = item_raw_name[i].strip() if i < len(item_raw_name) else ""
             product = get_or_create_product(db, name)
             if raw:
                 ensure_alias(db, raw, product.id)
 
+            qty_val = _safe_num(item_qty, i)
+            price_val = _safe_num(item_unit_price, i)
+
             db.add(ReceiptItem(
                 receipt_id=receipt_id,
                 name=raw or name,
                 product_id=product.id,
-                qty=_safe_num(item_qty, i),
-                unit_price=_safe_num(item_unit_price, i),
+                qty=qty_val,
+                unit_price=price_val,
                 total_price=total,
             ))
+
+            # Автоматически добавить в склад если есть количество и цена
+            if want_warehouse and qty_val and qty_val > 0 and price_val and price_val > 0:
+                db.add(WarehouseReceipt(
+                    date=tx_date,
+                    product_id=product.id,
+                    quantity=qty_val,
+                    price_per_unit=price_val,
+                    total_cost=round(qty_val * price_val, 2),
+                    organization_id=receipt.organization_id,
+                    transaction_id=main_tx_id,
+                    created_by=user.id,
+                ))
 
     db.commit()
 
