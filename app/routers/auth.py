@@ -3,7 +3,7 @@ from pathlib import Path
 from fastapi import APIRouter, Depends, Form, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
-from passlib.context import CryptContext
+import bcrypt
 from sqlalchemy.orm import Session
 
 from app.database import get_db
@@ -11,7 +11,10 @@ from app.models import User
 
 router = APIRouter(tags=["auth"])
 templates = Jinja2Templates(directory=str(Path(__file__).parent.parent / "templates"))
-pwd = CryptContext(schemes=["bcrypt"], deprecated="auto")
+
+
+def verify_password(plain: str, hashed: str) -> bool:
+    return bcrypt.checkpw(plain.encode(), hashed.encode())
 
 
 @router.get("/login", response_class=HTMLResponse)
@@ -39,7 +42,7 @@ def login(
         error = "Пользователь не найден"
     elif not user.password_hash:
         error = "Пароль не установлен. Обратитесь к администратору."
-    elif not pwd.verify(password, user.password_hash):
+    elif not verify_password(password, user.password_hash):
         error = "Неверный пароль"
 
     if error:

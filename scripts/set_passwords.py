@@ -7,11 +7,9 @@ import sys
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from passlib.context import CryptContext
+import bcrypt
 from app.database import SessionLocal
 from app.models import User
-
-pwd = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 PASSWORDS = {
     "Абдусаттар": "000",
@@ -28,7 +26,7 @@ def main():
             if not user:
                 print(f"  ! Пользователь не найден: {name}")
                 continue
-            user.password_hash = pwd.hash(password)
+            user.password_hash = bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
             print(f"  ✓ {name} → пароль установлен")
         db.commit()
         print("\nГотово.")
