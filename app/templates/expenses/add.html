@@ -100,7 +100,7 @@
 
 {% block scripts %}
 <script>
-const FOOD_CATEGORY_IDS = new Set([1, 2, 3, 4, 5]);
+const FOOD_CATEGORY_IDS = new Set({{ food_cat_ids | tojson }});
 const orgSel = document.getElementById('org-select');
 const catSel = document.getElementById('cat-select');
 

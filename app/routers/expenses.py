@@ -611,13 +611,17 @@ def add_form(request: Request, org_id: int | None = None, db: Session = Depends(
     current_org = resolve_org(org_id, user, db)
     from app.models import Product
     products = db.query(Product).order_by(Product.name).all()
+    all_cats = get_categories(db)
+    food_parent_ids = {c.id for c in all_cats if 'питан' in c.name.lower() or 'продукт' in c.name.lower()}
+    food_cat_ids = list(food_parent_ids | {c.id for c in all_cats if c.parent_id in food_parent_ids})
     return templates.TemplateResponse("expenses/add.html", {
         "request": request,
         "current_user": user,
         "accessible_orgs": accessible,
         "current_org_id": current_org.id if current_org else None,
         "upload_orgs": get_upload_orgs(user, db),
-        "categories": get_categories(db),
+        "categories": all_cats,
+        "food_cat_ids": food_cat_ids,
         "products": products,
         "today": date.today().isoformat(),
         "error": None,
