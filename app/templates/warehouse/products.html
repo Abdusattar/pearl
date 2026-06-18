@@ -1,0 +1,74 @@
+{% extends "base.html" %}
+{% block title %}Продукты — Склад{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <h1>Каталог продуктов</h1>
+  <a href="/warehouse/?org_id={{ current_org_id }}" class="btn btn-secondary">← На склад</a>
+</div>
+
+<div style="display:grid;grid-template-columns:320px 1fr;gap:16px;align-items:start">
+
+  <div class="card">
+    <div style="font-weight:600;margin-bottom:16px">Новый продукт</div>
+    <form method="post" action="/warehouse/products/add">
+      <input type="hidden" name="org_id" value="{{ current_org_id }}">
+      <div class="form-group">
+        <label>Название</label>
+        <input type="text" name="name" class="form-control" placeholder="напр. Говядина" required>
+      </div>
+      <div class="form-group">
+        <label>Единица измерения</label>
+        <select name="unit" class="form-control">
+          {% for u in units %}
+          <option value="{{ u }}" {% if u == 'кг' %}selected{% endif %}>{{ u }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="form-group">
+        <label>Категория</label>
+        <select name="category" class="form-control">
+          {% for c in categories %}
+          <option value="{{ c }}">{{ c }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <button type="submit" class="btn btn-primary" style="width:100%">Добавить</button>
+    </form>
+  </div>
+
+  <div class="card">
+    {% if products %}
+    <table class="table">
+      <thead>
+        <tr>
+          <th>Название</th>
+          <th style="width:60px">Ед.</th>
+          <th style="width:120px">Категория</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% set ns = namespace(prev_cat="") %}
+        {% for p in products %}
+        {% set cat = p.category or "прочее" %}
+        {% if cat != ns.prev_cat %}
+        {% set ns.prev_cat = cat %}
+        <tr>
+          <td colspan="3" style="background:var(--bg);padding:6px 14px;font-size:11px;font-weight:700;text-transform:uppercase;color:var(--text-muted)">{{ cat }}</td>
+        </tr>
+        {% endif %}
+        <tr>
+          <td>{{ p.name }}</td>
+          <td style="color:var(--text-muted)">{{ p.unit or 'кг' }}</td>
+          <td style="color:var(--text-muted);font-size:13px">{{ p.category or '—' }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+    <div style="text-align:center;padding:32px;color:var(--text-muted)">Продуктов нет</div>
+    {% endif %}
+  </div>
+
+</div>
+{% endblock %}

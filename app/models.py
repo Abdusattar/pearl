@@ -132,6 +132,8 @@ class Product(Base):
     __tablename__ = "products"
     id         = Column(Integer, primary_key=True)
     name       = Column(String(100), nullable=False, unique=True)
+    unit       = Column(String(10), default="кг")   # кг, л, шт, г, уп
+    category   = Column(String(50))                  # мясо, молочные, крупы, овощи, прочее
     created_at = Column(DateTime, server_default=func.now())
 
     aliases = relationship("ProductAlias", back_populates="product")
@@ -158,6 +160,42 @@ class ReceiptItem(Base):
     total_price = Column(Numeric(12, 2), nullable=False)
 
     product = relationship("Product")
+
+
+class WarehouseReceipt(Base):
+    __tablename__ = "warehouse_receipts"
+    id              = Column(Integer, primary_key=True)
+    date            = Column(Date, nullable=False)
+    product_id      = Column(Integer, ForeignKey("products.id"), nullable=False)
+    quantity        = Column(Numeric(10, 3), nullable=False)
+    price_per_unit  = Column(Numeric(10, 2), nullable=False)
+    total_cost      = Column(Numeric(12, 2), nullable=False)
+    organization_id = Column(Integer, ForeignKey("organizations.id"), nullable=False)
+    supplier_name   = Column(String(200))
+    transaction_id  = Column(Integer, ForeignKey("transactions.id"), nullable=True)
+    created_by      = Column(Integer, ForeignKey("users.id"))
+    created_at      = Column(DateTime, server_default=func.now())
+    deleted_at      = Column(DateTime)
+
+    product      = relationship("Product")
+    organization = relationship("Organization")
+
+
+class WriteOff(Base):
+    __tablename__ = "write_offs"
+    id              = Column(Integer, primary_key=True)
+    date            = Column(Date, nullable=False)
+    product_id      = Column(Integer, ForeignKey("products.id"), nullable=False)
+    quantity        = Column(Numeric(10, 3), nullable=False)
+    organization_id = Column(Integer, ForeignKey("organizations.id"), nullable=False)
+    children_count  = Column(Integer)
+    reason          = Column(String(100), default="питание детей")
+    created_by      = Column(Integer, ForeignKey("users.id"))
+    created_at      = Column(DateTime, server_default=func.now())
+    deleted_at      = Column(DateTime)
+
+    product      = relationship("Product")
+    organization = relationship("Organization")
 
 
 class AuditLog(Base):

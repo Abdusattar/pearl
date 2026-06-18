@@ -1,0 +1,89 @@
+{% extends "base.html" %}
+{% block title %}Списание — Склад{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <h1>Списание (меню-требование)</h1>
+  <a href="/warehouse/?org_id={{ current_org_id }}" class="btn btn-secondary">← Назад</a>
+</div>
+
+<div class="card" style="max-width:520px">
+  {% if error %}
+  <div class="alert alert-error">{{ error }}</div>
+  {% endif %}
+
+  {% if not in_stock %}
+  <div style="text-align:center;padding:32px;color:var(--text-muted)">
+    Нет продуктов в наличии — сначала добавьте <a href="/warehouse/receipt/add?org_id={{ current_org_id }}">приход</a>
+  </div>
+  {% else %}
+
+  <form method="post" action="/warehouse/writeoff/add">
+    <input type="hidden" name="org_id" value="{{ current_org_id }}">
+
+    <div class="form-group">
+      <label>Дата</label>
+      <input type="date" name="writeoff_date" class="form-control" value="{{ today }}" required>
+    </div>
+
+    <div class="form-group">
+      <label>Продукт</label>
+      <select name="product_id" id="product_sel" class="form-control" onchange="onSelect(this)" required>
+        <option value="">— выберите продукт —</option>
+        {% for b in in_stock %}
+        <option value="{{ b.product.id }}"
+                data-balance="{{ b.balance }}"
+                data-unit="{{ b.product.unit or 'кг' }}">
+          {{ b.product.name }} — остаток {{ "%.3f"|format(b.balance)|replace('.000','') }} {{ b.product.unit or 'кг' }}
+        </option>
+        {% endfor %}
+      </select>
+    </div>
+
+    <div class="form-group">
+      <label>Количество (<span id="unit_lbl">ед.</span>)</label>
+      <div style="display:flex;align-items:center;gap:10px">
+        <input type="number" name="quantity" id="qty_input" class="form-control"
+               step="0.001" min="0.001" placeholder="0.000" required>
+        <span id="balance_hint" style="white-space:nowrap;font-size:13px;color:var(--text-muted)"></span>
+      </div>
+    </div>
+
+    <div class="form-group">
+      <label>Количество детей (необязательно)</label>
+      <input type="number" name="children_count" class="form-control" min="1" placeholder="напр. 28">
+      <div style="font-size:12px;color:var(--text-muted);margin-top:4px">Нужно для расчёта себестоимости питания на 1 ребёнка</div>
+    </div>
+
+    <div class="form-group">
+      <label>Причина</label>
+      <select name="reason" class="form-control">
+        <option value="питание детей" selected>Питание детей</option>
+        <option value="порча">Порча / списание</option>
+        <option value="инвентаризация">Инвентаризация</option>
+        <option value="прочее">Прочее</option>
+      </select>
+    </div>
+
+    <div style="display:flex;gap:10px;margin-top:8px">
+      <button type="submit" class="btn btn-primary">Сохранить списание</button>
+      <a href="/warehouse/?org_id={{ current_org_id }}" class="btn btn-secondary">Отмена</a>
+    </div>
+  </form>
+  {% endif %}
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+function onSelect(sel) {
+  const opt = sel.options[sel.selectedIndex];
+  const balance = parseFloat(opt.dataset.balance) || 0;
+  const unit = opt.dataset.unit || 'ед.';
+  document.getElementById('unit_lbl').textContent = unit;
+  document.getElementById('qty_input').max = balance;
+  document.getElementById('balance_hint').textContent =
+    balance > 0 ? 'на складе: ' + balance.toFixed(3).replace(/\.000$/, '') + ' ' + unit : '';
+}
+</script>
+{% endblock %}

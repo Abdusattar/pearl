@@ -1,0 +1,116 @@
+{% extends "base.html" %}
+{% block title %}Склад — Жемчужина{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <h1>Склад</h1>
+  <div style="display:flex;gap:10px">
+    <a href="/warehouse/receipt/add?org_id={{ current_org_id }}" class="btn btn-primary">+ Приход</a>
+    <a href="/warehouse/writeoff/add?org_id={{ current_org_id }}" class="btn btn-secondary">− Списание</a>
+    <a href="/warehouse/products/?org_id={{ current_org_id }}" class="btn btn-secondary">Продукты</a>
+  </div>
+</div>
+
+{% if balances %}
+<div class="card">
+  <table class="table">
+    <thead>
+      <tr>
+        <th>Продукт</th>
+        <th style="width:60px">Ед.</th>
+        <th style="width:80px;text-align:right">Приход</th>
+        <th style="width:80px;text-align:right">Расход</th>
+        <th style="width:90px;text-align:right;color:var(--primary)">Остаток</th>
+        <th style="width:90px;text-align:right">Ср.цена</th>
+        <th style="width:110px;text-align:right">Стоимость</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% set ns = namespace(prev_cat="") %}
+      {% for b in balances %}
+      {% set cat = b.product.category or "прочее" %}
+      {% if cat != ns.prev_cat %}
+      {% set ns.prev_cat = cat %}
+      <tr>
+        <td colspan="7" style="background:var(--bg);padding:6px 14px;font-size:11px;font-weight:700;text-transform:uppercase;color:var(--text-muted);letter-spacing:0.5px">
+          {{ cat }}
+        </td>
+      </tr>
+      {% endif %}
+      <tr>
+        <td style="font-weight:500">{{ b.product.name }}</td>
+        <td style="color:var(--text-muted);font-size:13px">{{ b.product.unit or 'кг' }}</td>
+        <td style="text-align:right;color:var(--text-muted);font-size:13px">{{ "%.2f"|format(b.received) }}</td>
+        <td style="text-align:right;color:var(--text-muted);font-size:13px">{{ "%.2f"|format(b.written) }}</td>
+        <td style="text-align:right;font-weight:700;color:{% if b.balance < 1 %}var(--danger){% elif b.balance < 3 %}#f59e0b{% else %}var(--text){% endif %}">
+          {{ "%.3f"|format(b.balance)|replace('.000','') }}
+        </td>
+        <td style="text-align:right;font-size:13px;color:var(--text-muted)">
+          {% if b.avg_price > 0 %}{{ "{:,.0f}".format(b.avg_price) }} с{% endif %}
+        </td>
+        <td style="text-align:right;font-size:13px">
+          {% if b.balance_value > 0 %}{{ "{:,.0f}".format(b.balance_value) }} с{% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+
+  <div class="totals">
+    <div class="total-item">Позиций: <strong>{{ balances|length }}</strong></div>
+    <div class="total-item">Стоимость склада: <strong>{{ "{:,.0f}".format(total_value) }} с</strong></div>
+  </div>
+</div>
+
+{% else %}
+<div class="card" style="text-align:center;padding:60px 20px;color:var(--text-muted)">
+  <div style="font-size:48px;margin-bottom:16px">📦</div>
+  <div style="font-size:16px;margin-bottom:24px">Склад пуст — добавьте первый приход</div>
+  <a href="/warehouse/receipt/add?org_id={{ current_org_id }}" class="btn btn-primary btn-lg">+ Добавить приход</a>
+</div>
+{% endif %}
+
+{% if recent_receipts or recent_writeoffs %}
+<div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:16px">
+
+  {% if recent_receipts %}
+  <div class="card">
+    <div style="font-weight:600;margin-bottom:14px;font-size:14px">Последние поступления</div>
+    {% for r in recent_receipts %}
+    <div style="display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--border);font-size:13px">
+      <div>
+        <div style="font-weight:500">{{ r.product.name }}</div>
+        <div style="color:var(--text-muted);font-size:12px">{{ r.date.strftime('%d.%m.%Y') }}{% if r.supplier_name %} · {{ r.supplier_name }}{% endif %}</div>
+      </div>
+      <div style="text-align:right">
+        <div style="color:var(--success);font-weight:600">+{{ "%.3f"|format(r.quantity)|replace('.000','') }} {{ r.product.unit or 'кг' }}</div>
+        <div style="color:var(--text-muted);font-size:12px">{{ "{:,.0f}".format(r.total_cost) }} с</div>
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+  {% endif %}
+
+  {% if recent_writeoffs %}
+  <div class="card">
+    <div style="font-weight:600;margin-bottom:14px;font-size:14px">Последние списания</div>
+    {% for w in recent_writeoffs %}
+    <div style="display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--border);font-size:13px">
+      <div>
+        <div style="font-weight:500">{{ w.product.name }}</div>
+        <div style="color:var(--text-muted);font-size:12px">
+          {{ w.date.strftime('%d.%m.%Y') }}{% if w.children_count %} · {{ w.children_count }} детей{% endif %}
+        </div>
+      </div>
+      <div style="text-align:right">
+        <div style="color:var(--danger);font-weight:600">−{{ "%.3f"|format(w.quantity)|replace('.000','') }} {{ w.product.unit or 'кг' }}</div>
+        <div style="color:var(--text-muted);font-size:12px">{{ w.reason }}</div>
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+  {% endif %}
+
+</div>
+{% endif %}
+{% endblock %}
