@@ -1,0 +1,17 @@
+.env
+.git
+__pycache__
+*.pyc
+*.pyo
+data/
+банки/
+logs/
+media/receipts/
+media/voice/
+media/photos/
+tests/
+scripts/
+wiki/
+context/
+.claude/
+*.md
