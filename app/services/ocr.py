@@ -6,7 +6,7 @@ import re
 from datetime import datetime
 from pathlib import Path
 
-import requests
+import httpx
 from dotenv import load_dotenv
 
 _LOG_FILE = Path(__file__).parent.parent.parent / "logs" / "openrouter_usage.jsonl"
@@ -84,7 +84,7 @@ def analyze_receipt(file_path: str) -> dict | None:
             "HTTP-Referer": "https://pearl.local",
             "X-Title": "Pearl Receipt OCR",
         }
-        resp = requests.post(_OR_URL, json=payload, headers=headers, timeout=60)
+        resp = httpx.post(_OR_URL, json=payload, headers=headers, timeout=60)
         resp.raise_for_status()
         resp_json = resp.json()
         _log_usage(_OR_MODEL, resp_json.get("usage", {}), file_path, ok=True)
