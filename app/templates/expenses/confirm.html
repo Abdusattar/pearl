@@ -54,60 +54,8 @@
   <!-- Правая колонка: позиции + форма -->
   <div style="display:flex;flex-direction:column;gap:16px">
 
-    {% if items and receipt.ocr_status not in ('confirmed', 'rejected', 'manual') %}
-    <div class="card" id="items-card">
-      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
-        <h3 style="margin:0;font-size:15px">Позиции чека</h3>
-        <span style="font-size:12px;color:var(--text-muted);background:#fef3c7;border:1px solid #fcd34d;border-radius:4px;padding:2px 8px">черновик OCR — проверь</span>
-      </div>
-      <table style="width:100%;border-collapse:collapse;font-size:13px">
-        <thead>
-          <tr style="border-bottom:2px solid var(--border);text-align:left">
-            <th style="padding:6px 4px;width:45%">Наименование</th>
-            <th style="padding:6px 4px;width:12%;text-align:right">Кол-во</th>
-            <th style="padding:6px 4px;width:18%;text-align:right">Цена</th>
-            <th style="padding:6px 4px;width:18%;text-align:right">Сумма</th>
-            <th style="padding:6px 4px;width:7%"></th>
-          </tr>
-        </thead>
-        <tbody id="items-body">
-          {% for item in items %}
-          <tr class="item-row" style="border-bottom:1px solid var(--border)">
-            <td style="padding:4px;position:relative">
-              <input type="hidden" name="item_raw_name" value="{{ item.raw_name }}">
-              <input type="hidden" name="item_product_id" value="{{ item.display_product_id or '' }}">
-              <input type="text" name="item_name"
-                     value="{{ item.display_name }}"
-                     class="form-control item-name-input"
-                     autocomplete="off"
-                     style="font-size:12px;padding:4px 6px{% if item.fuzzy_matched %};border-color:#f59e0b{% endif %}"
-                     data-raw="{{ item.raw_name | e }}">
-              <div class="autocomplete-dropdown" style="display:none;position:absolute;z-index:100;left:4px;right:4px;top:100%;background:#fff;border:1px solid var(--border);border-radius:6px;box-shadow:0 4px 12px rgba(0,0,0,.1);max-height:180px;overflow-y:auto"></div>
-              {% if item.product_matched %}
-              <div class="product-hint" style="font-size:10px;color:#16a34a;margin-top:2px">✓ справочник · OCR: {{ item.raw_name }}</div>
-              {% elif item.fuzzy_matched %}
-              <div class="product-hint" style="font-size:10px;color:#b45309;margin-top:2px">🔍 предположение · OCR: "{{ item.raw_name }}" — проверь</div>
-              {% elif item.candidates %}
-              <div class="product-hint" style="font-size:10px;color:#2563eb;margin-top:2px">🔍 OCR: {{ item.raw_name }} — выбери из списка</div>
-              {% else %}
-              <div class="product-hint" style="font-size:10px;color:#d97706;margin-top:2px">🆕 не найдено · OCR: "{{ item.raw_name }}"</div>
-              {% endif %}
-            </td>
-            <td style="padding:4px"><input type="text" name="item_qty" value="{{ item.qty or '' }}" class="form-control item-qty" style="font-size:12px;padding:4px 6px;text-align:right" oninput="recalcRow(this)"></td>
-            <td style="padding:4px"><input type="text" name="item_unit_price" value="{{ item.unit_price or '' }}" class="form-control item-price" style="font-size:12px;padding:4px 6px;text-align:right" oninput="recalcRow(this)"></td>
-            <td style="padding:4px"><input type="text" name="item_total_price" value="{{ item.total_price }}" class="form-control item-total" style="font-size:12px;padding:4px 6px;text-align:right" oninput="updateGrandTotal()"></td>
-            <td style="padding:4px;text-align:center"><button type="button" onclick="this.closest('tr').remove();updateGrandTotal()" style="background:none;border:none;color:var(--text-muted);cursor:pointer;font-size:16px">×</button></td>
-          </tr>
-          {% endfor %}
-        </tbody>
-      </table>
-      <button type="button" onclick="addItemRow()" style="margin-top:8px;font-size:12px;color:var(--primary);background:none;border:none;cursor:pointer;padding:4px 0">+ добавить строку</button>
-    </div>
-    {% endif %}
-
-  <!-- Форма подтверждения -->
-  <div class="card">
     {% if receipt.ocr_status == 'confirmed' %}
+    <div class="card">
       <div style="text-align:center;padding:24px 8px">
         <div style="font-size:56px;line-height:1;margin-bottom:12px">✓</div>
         <div style="font-size:20px;font-weight:700;color:#16a34a;margin-bottom:16px">Проведено!</div>
@@ -117,7 +65,6 @@
         <div style="font-size:14px;color:var(--text-muted);margin-bottom:24px">{{ confirmed_tx.date }}</div>
         {% endif %}
         <div style="font-size:12px;color:var(--text-muted);margin-bottom:24px">Квитанция #{{ receipt.id }}</div>
-
         <div style="display:flex;flex-direction:column;gap:10px">
           <a href="/expenses/upload?org_id={{ current_org_id or '' }}"
              class="btn btn-primary" style="min-height:52px;font-size:16px;display:flex;align-items:center;justify-content:center">
@@ -133,103 +80,156 @@
           </a>
         </div>
       </div>
+    </div>
+
     {% elif receipt.ocr_status == 'rejected' %}
+    <div class="card">
       <div class="alert alert-error">Квитанция отклонена</div>
+    </div>
+
     {% else %}
     <form method="post" action="/expenses/{{ receipt.id }}/confirm">
       <input type="hidden" name="org_id" value="{{ current_org_id or '' }}">
 
-      <div class="form-group">
-        <label>Объект</label>
-        <select name="receipt_org_id" class="form-control">
-          {% for org in upload_orgs %}
-          <option value="{{ org.id }}" {% if org.id == receipt.org_id %}selected{% endif %}>{{ org.name }}</option>
-          {% endfor %}
-        </select>
-        {% if receipt.org_name not in upload_orgs | map(attribute='name') | list %}
-        <div style="font-size:11px;color:#d97706;margin-top:4px">⚠ Привязан к «{{ receipt.org_name }}» — уточни объект</div>
-        {% endif %}
-      </div>
-
-      <div class="form-group">
-        <label>Сумма (сом)</label>
-        <input type="number" name="amount" id="total-amount" class="form-control" step="0.01"
-               inputmode="decimal"
-               value="{{ receipt.amount_detected or '' }}" required placeholder="0.00"
-               style="font-size:28px;font-weight:700;text-align:center;padding:14px;
-                      border:2px solid var(--primary);border-radius:12px">
-        <div id="items-sum-hint" style="font-size:12px;color:var(--text-muted);text-align:center;margin-top:4px"></div>
-      </div>
-
-      <div class="form-group">
-        <label>Дата</label>
-        <input type="date" name="date" class="form-control"
-               value="{{ today }}" required>
-      </div>
-
-      <!-- Режим: одна категория -->
-      <div id="single-cat-block" class="form-group">
-        <label style="display:flex;align-items:center;justify-content:space-between">
-          <span>Категория</span>
-          <button type="button" onclick="enableSplit()" style="font-size:11px;color:var(--primary);background:none;border:none;cursor:pointer;padding:0">разделить по категориям →</button>
-        </label>
-        <select name="category_id" id="single-cat-select" class="form-control"
-                {% if pre_category_id %}data-preselect="{{ pre_category_id }}"{% endif %}>
-          <option value="">Выберите категорию</option>
-          {% set ns = namespace(parent_ids=[]) %}
-          {% for cat in categories %}{% if cat.parent_id is not none and cat.parent_id not in ns.parent_ids %}{% set ns.parent_ids = ns.parent_ids + [cat.parent_id] %}{% endif %}{% endfor %}
-          {% for cat in categories %}
-            {% if cat.parent_id is none %}
-            <option value="{{ cat.id }}" {% if cat.id in ns.parent_ids %}disabled style="color:#9ca3af;font-weight:600"{% endif %}>{{ cat.name }}</option>
-            {% else %}
-            <option value="{{ cat.id }}">&nbsp;&nbsp;↳ {{ cat.name }}</option>
-            {% endif %}
-          {% endfor %}
-        </select>
-      </div>
-
-      <!-- Режим: разбивка по категориям -->
-      <div id="split-block" style="display:none" class="form-group">
-        <label style="display:flex;align-items:center;justify-content:space-between">
-          <span>Разбивка по категориям</span>
-          <button type="button" onclick="disableSplit()" style="font-size:11px;color:var(--text-muted);background:none;border:none;cursor:pointer;padding:0">← одна категория</button>
-        </label>
-        <div id="split-rows" style="display:flex;flex-direction:column;gap:6px;margin-bottom:6px"></div>
-        <button type="button" onclick="addSplitRow()" style="font-size:12px;color:var(--primary);background:none;border:none;cursor:pointer;padding:4px 0">+ добавить категорию</button>
-        <div style="font-size:12px;margin-top:6px;color:var(--text-muted)">
-          Остаток: <span id="split-rest" style="font-weight:600;color:#dc2626">—</span> сом
+      {% if items %}
+      <div class="card" id="items-card" style="margin-bottom:16px">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
+          <h3 style="margin:0;font-size:15px">Позиции чека</h3>
+          <span style="font-size:12px;color:var(--text-muted);background:#fef3c7;border:1px solid #fcd34d;border-radius:4px;padding:2px 8px">черновик OCR — проверь</span>
         </div>
+        <table style="width:100%;border-collapse:collapse;font-size:13px">
+          <thead>
+            <tr style="border-bottom:2px solid var(--border);text-align:left">
+              <th style="padding:6px 4px;width:45%">Наименование</th>
+              <th style="padding:6px 4px;width:12%;text-align:right">Кол-во</th>
+              <th style="padding:6px 4px;width:18%;text-align:right">Цена</th>
+              <th style="padding:6px 4px;width:18%;text-align:right">Сумма</th>
+              <th style="padding:6px 4px;width:7%"></th>
+            </tr>
+          </thead>
+          <tbody id="items-body">
+            {% for item in items %}
+            <tr class="item-row" style="border-bottom:1px solid var(--border)">
+              <td style="padding:4px;position:relative">
+                <input type="hidden" name="item_raw_name" value="{{ item.raw_name }}">
+                <input type="hidden" name="item_product_id" value="{{ item.display_product_id or '' }}">
+                <input type="text" name="item_name"
+                       value="{{ item.display_name }}"
+                       class="form-control item-name-input"
+                       autocomplete="off"
+                       style="font-size:12px;padding:4px 6px{% if item.fuzzy_matched %};border-color:#f59e0b{% endif %}"
+                       data-raw="{{ item.raw_name | e }}">
+                <div class="autocomplete-dropdown" style="display:none;position:absolute;z-index:100;left:4px;right:4px;top:100%;background:#fff;border:1px solid var(--border);border-radius:6px;box-shadow:0 4px 12px rgba(0,0,0,.1);max-height:180px;overflow-y:auto"></div>
+                {% if item.product_matched %}
+                <div class="product-hint" style="font-size:10px;color:#16a34a;margin-top:2px">✓ справочник · OCR: {{ item.raw_name }}</div>
+                {% elif item.fuzzy_matched %}
+                <div class="product-hint" style="font-size:10px;color:#b45309;margin-top:2px">🔍 предположение · OCR: "{{ item.raw_name }}" — проверь</div>
+                {% elif item.candidates %}
+                <div class="product-hint" style="font-size:10px;color:#2563eb;margin-top:2px">🔍 OCR: {{ item.raw_name }} — выбери из списка</div>
+                {% else %}
+                <div class="product-hint" style="font-size:10px;color:#d97706;margin-top:2px">🆕 не найдено · OCR: "{{ item.raw_name }}"</div>
+                {% endif %}
+              </td>
+              <td style="padding:4px"><input type="text" name="item_qty" value="{{ item.qty or '' }}" class="form-control item-qty" style="font-size:12px;padding:4px 6px;text-align:right" oninput="recalcRow(this)"></td>
+              <td style="padding:4px"><input type="text" name="item_unit_price" value="{{ item.unit_price or '' }}" class="form-control item-price" style="font-size:12px;padding:4px 6px;text-align:right" oninput="recalcRow(this)"></td>
+              <td style="padding:4px"><input type="text" name="item_total_price" value="{{ item.total_price }}" class="form-control item-total" style="font-size:12px;padding:4px 6px;text-align:right" oninput="updateGrandTotal()"></td>
+              <td style="padding:4px;text-align:center"><button type="button" onclick="this.closest('tr').remove();updateGrandTotal()" style="background:none;border:none;color:var(--text-muted);cursor:pointer;font-size:16px">×</button></td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+        <button type="button" onclick="addItemRow()" style="margin-top:8px;font-size:12px;color:var(--primary);background:none;border:none;cursor:pointer;padding:4px 0">+ добавить строку</button>
       </div>
+      {% endif %}
 
-      <!-- Склад: появляется только для категорий Питания -->
-      <div id="warehouse-block" style="display:none;margin-bottom:18px">
-        <div style="background:#f0fdf4;border:1px solid #86efac;border-radius:8px;padding:12px 14px">
-          <label style="display:flex;align-items:flex-start;gap:10px;cursor:pointer">
-            <input type="checkbox" name="add_to_warehouse" value="1" id="warehouse-cb"
-                   checked style="margin-top:3px;width:16px;height:16px;flex-shrink:0">
-            <div>
-              <div style="font-weight:600;font-size:13px;color:#166534">Добавить в склад</div>
-              <div id="warehouse-hint" style="font-size:12px;color:#166534;margin-top:3px">
-                Позиции с количеством поступят в складской учёт
-              </div>
-            </div>
+      <div class="card">
+        <div class="form-group">
+          <label>Объект</label>
+          <select name="receipt_org_id" class="form-control">
+            {% for org in upload_orgs %}
+            <option value="{{ org.id }}" {% if org.id == receipt.org_id %}selected{% endif %}>{{ org.name }}</option>
+            {% endfor %}
+          </select>
+          {% if receipt.org_name not in upload_orgs | map(attribute='name') | list %}
+          <div style="font-size:11px;color:#d97706;margin-top:4px">⚠ Привязан к «{{ receipt.org_name }}» — уточни объект</div>
+          {% endif %}
+        </div>
+
+        <div class="form-group">
+          <label>Сумма (сом)</label>
+          <input type="number" name="amount" id="total-amount" class="form-control" step="0.01"
+                 inputmode="decimal"
+                 value="{{ receipt.amount_detected or '' }}" required placeholder="0.00"
+                 style="font-size:28px;font-weight:700;text-align:center;padding:14px;
+                        border:2px solid var(--primary);border-radius:12px">
+          <div id="items-sum-hint" style="font-size:12px;color:var(--text-muted);text-align:center;margin-top:4px"></div>
+        </div>
+
+        <div class="form-group">
+          <label>Дата</label>
+          <input type="date" name="date" class="form-control" value="{{ today }}" required>
+        </div>
+
+        <div id="single-cat-block" class="form-group">
+          <label style="display:flex;align-items:center;justify-content:space-between">
+            <span>Категория</span>
+            <button type="button" onclick="enableSplit()" style="font-size:11px;color:var(--primary);background:none;border:none;cursor:pointer;padding:0">разделить по категориям →</button>
           </label>
+          <select name="category_id" id="single-cat-select" class="form-control"
+                  {% if pre_category_id %}data-preselect="{{ pre_category_id }}"{% endif %}>
+            <option value="">Выберите категорию</option>
+            {% set ns = namespace(parent_ids=[]) %}
+            {% for cat in categories %}{% if cat.parent_id is not none and cat.parent_id not in ns.parent_ids %}{% set ns.parent_ids = ns.parent_ids + [cat.parent_id] %}{% endif %}{% endfor %}
+            {% for cat in categories %}
+              {% if cat.parent_id is none %}
+              <option value="{{ cat.id }}" {% if cat.id in ns.parent_ids %}disabled style="color:#9ca3af;font-weight:600"{% endif %}>{{ cat.name }}</option>
+              {% else %}
+              <option value="{{ cat.id }}">&nbsp;&nbsp;↳ {{ cat.name }}</option>
+              {% endif %}
+            {% endfor %}
+          </select>
         </div>
-      </div>
 
-      <div class="form-group">
-        <label>Описание (необязательно)</label>
-        <input type="text" name="description" class="form-control" placeholder="Например: Магазин Народный">
-      </div>
+        <div id="split-block" style="display:none" class="form-group">
+          <label style="display:flex;align-items:center;justify-content:space-between">
+            <span>Разбивка по категориям</span>
+            <button type="button" onclick="disableSplit()" style="font-size:11px;color:var(--text-muted);background:none;border:none;cursor:pointer;padding:0">← одна категория</button>
+          </label>
+          <div id="split-rows" style="display:flex;flex-direction:column;gap:6px;margin-bottom:6px"></div>
+          <button type="button" onclick="addSplitRow()" style="font-size:12px;color:var(--primary);background:none;border:none;cursor:pointer;padding:4px 0">+ добавить категорию</button>
+          <div style="font-size:12px;margin-top:6px;color:var(--text-muted)">
+            Остаток: <span id="split-rest" style="font-weight:600;color:#dc2626">—</span> сом
+          </div>
+        </div>
 
-      <div style="display:flex;gap:12px;margin-top:8px">
-        <button type="submit" name="action" value="confirm" class="btn btn-success"
-                style="flex:1;min-height:48px;font-size:16px">✓ Провести</button>
-        <button type="submit" name="action" value="reject" class="btn btn-danger">Отклонить</button>
+        <div id="warehouse-block" style="display:none;margin-bottom:18px">
+          <div style="background:#f0fdf4;border:1px solid #86efac;border-radius:8px;padding:12px 14px">
+            <label style="display:flex;align-items:flex-start;gap:10px;cursor:pointer">
+              <input type="checkbox" name="add_to_warehouse" value="1" id="warehouse-cb"
+                     checked style="margin-top:3px;width:16px;height:16px;flex-shrink:0">
+              <div>
+                <div style="font-weight:600;font-size:13px;color:#166534">Добавить в склад</div>
+                <div id="warehouse-hint" style="font-size:12px;color:#166534;margin-top:3px">
+                  Позиции с количеством поступят в складской учёт
+                </div>
+              </div>
+            </label>
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label>Описание (необязательно)</label>
+          <input type="text" name="description" class="form-control" placeholder="Например: Магазин Народный">
+        </div>
+
+        <div style="display:flex;gap:12px;margin-top:8px">
+          <button type="submit" name="action" value="confirm" class="btn btn-success"
+                  style="flex:1;min-height:48px;font-size:16px">✓ Провести</button>
+          <button type="submit" name="action" value="reject" class="btn btn-danger">Отклонить</button>
+        </div>
       </div>
     </form>
     {% endif %}
-  </div>
 
   </div><!-- /правая колонка -->
 </div>
