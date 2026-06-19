@@ -16,7 +16,7 @@ from app.models import (
     Transaction, User, AuditLog, WarehouseReceipt,
 )
 from app.services.ocr import compute_hash, analyze_receipt
-from app.services.products import match_product, get_or_create_product, ensure_alias
+from app.services.products import match_product, rank_candidates, get_or_create_product, ensure_alias
 from app.dependencies import get_current_user
 
 router = APIRouter(prefix="/expenses", tags=["expenses"])
@@ -379,12 +379,14 @@ def confirm_form(
 
     items = []
     for it in raw_items:
-        matched = match_product(db, it.name)
+        candidates = rank_candidates(db, it.name)
+        exact = match_product(db, it.name)
         items.append({
             "id": it.id,
             "raw_name": it.name,
-            "display_name": matched.name if matched else it.name,
-            "product_matched": matched is not None,
+            "display_name": exact.name if exact else it.name,
+            "product_matched": exact is not None,
+            "candidates": candidates,
             "qty": it.qty,
             "unit_price": it.unit_price,
             "total_price": it.total_price,
@@ -482,6 +484,7 @@ def handle_confirm(
     date_: str = Form(None, alias="date"),
     item_name: List[str] = Form(default=[]),
     item_raw_name: List[str] = Form(default=[]),
+    item_product_id: List[str] = Form(default=[]),
     item_qty: List[str] = Form(default=[]),
     item_unit_price: List[str] = Form(default=[]),
     item_total_price: List[str] = Form(default=[]),
@@ -595,7 +598,14 @@ def handle_confirm(
                 continue
 
             raw = item_raw_name[i].strip() if i < len(item_raw_name) else ""
-            product = get_or_create_product(db, name)
+            # Если пользователь выбрал продукт из autocomplete — берём его напрямую
+            pid_str = item_product_id[i].strip() if i < len(item_product_id) else ""
+            if pid_str and pid_str.isdigit():
+                product = db.query(Product).get(int(pid_str))
+                if not product:
+                    product = get_or_create_product(db, name)
+            else:
+                product = get_or_create_product(db, name)
             if raw:
                 ensure_alias(db, raw, product.id)
 

@@ -73,13 +73,23 @@
         <tbody id="items-body">
           {% for item in items %}
           <tr class="item-row" style="border-bottom:1px solid var(--border)">
-            <td style="padding:4px">
+            <td style="padding:4px;position:relative">
               <input type="hidden" name="item_raw_name" value="{{ item.raw_name }}">
-              <input type="text" name="item_name" value="{{ item.display_name }}" class="form-control" style="font-size:12px;padding:4px 6px">
-              {% if item.product_matched and item.raw_name != item.display_name %}
+              <input type="hidden" name="item_product_id" value="{{ item.candidates[0].id if item.candidates else '' }}">
+              <input type="text" name="item_name"
+                     value="{{ item.display_name }}"
+                     class="form-control item-name-input"
+                     autocomplete="off"
+                     style="font-size:12px;padding:4px 6px"
+                     data-candidates="{{ item.candidates | tojson | e }}"
+                     data-raw="{{ item.raw_name | e }}">
+              <div class="autocomplete-dropdown" style="display:none;position:absolute;z-index:100;left:4px;right:4px;top:100%;background:#fff;border:1px solid var(--border);border-radius:6px;box-shadow:0 4px 12px rgba(0,0,0,.1);max-height:180px;overflow-y:auto"></div>
+              {% if item.product_matched %}
               <div class="product-hint" style="font-size:10px;color:#16a34a;margin-top:2px">✓ справочник · OCR: {{ item.raw_name }}</div>
-              {% elif not item.product_matched %}
-              <div class="product-hint" style="font-size:10px;color:#d97706;margin-top:2px">🆕 уточни название</div>
+              {% elif item.candidates %}
+              <div class="product-hint" style="font-size:10px;color:#2563eb;margin-top:2px">🔍 OCR: {{ item.raw_name }} — выбери из списка</div>
+              {% else %}
+              <div class="product-hint" style="font-size:10px;color:#d97706;margin-top:2px">🆕 уточни название · OCR: {{ item.raw_name }}</div>
               {% endif %}
             </td>
             <td style="padding:4px"><input type="text" name="item_qty" value="{{ item.qty or '' }}" class="form-control item-qty" style="font-size:12px;padding:4px 6px;text-align:right" oninput="recalcRow(this)"></td>
@@ -282,6 +292,52 @@ function addItemRow() {
 
 // Показать сумму позиций при загрузке
 updateGrandTotal();
+
+// ── Autocomplete для позиций ────────────────────────────────────────
+document.querySelectorAll('.item-name-input').forEach(input => {
+  const dropdown = input.nextElementSibling;
+  let candidates = [];
+  try { candidates = JSON.parse(input.dataset.candidates || '[]'); } catch(e) {}
+
+  function showDropdown(filter) {
+    const q = filter.toLowerCase();
+    const filtered = q.length < 1
+      ? candidates
+      : candidates.filter(c => c.name.toLowerCase().includes(q));
+    if (!filtered.length) { dropdown.style.display = 'none'; return; }
+    dropdown.innerHTML = filtered.map(c => `
+      <div class="ac-item" data-id="${c.id}" data-name="${c.name}"
+           style="padding:7px 10px;cursor:pointer;font-size:13px;display:flex;justify-content:space-between;align-items:center;gap:6px">
+        <span>${c.name}</span>
+        <span style="font-size:10px;color:var(--text-muted);flex-shrink:0">${c.score < 100 ? '~' + c.score + '%' : '✓'}</span>
+      </div>`).join('');
+    dropdown.style.display = '';
+    dropdown.querySelectorAll('.ac-item').forEach(item => {
+      item.addEventListener('mousedown', e => {
+        e.preventDefault();
+        selectCandidate(item.dataset.id, item.dataset.name);
+      });
+      item.addEventListener('mouseover', () => item.style.background = '#f3f4f6');
+      item.addEventListener('mouseout',  () => item.style.background = '');
+    });
+  }
+
+  function selectCandidate(id, name) {
+    input.value = name;
+    const hiddenId = input.closest('td').querySelector('[name=item_product_id]');
+    if (hiddenId) hiddenId.value = id;
+    const hint = input.closest('td').querySelector('.product-hint');
+    if (hint) {
+      hint.textContent = '✓ справочник · OCR: ' + (input.dataset.raw || '');
+      hint.style.color = '#16a34a';
+    }
+    dropdown.style.display = 'none';
+  }
+
+  input.addEventListener('focus', () => showDropdown(input.value));
+  input.addEventListener('input', () => showDropdown(input.value));
+  input.addEventListener('blur',  () => setTimeout(() => { dropdown.style.display = 'none'; }, 150));
+});
 
 const FOOD_CATEGORY_IDS = new Set({{ food_cat_ids | tojson }});
 const WAREHOUSE_CAT_IDS = new Set({{ warehouse_cat_ids | tojson }});
