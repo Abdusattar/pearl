@@ -66,6 +66,15 @@ def rank_candidates(db: Session, raw: str, limit: int = 5) -> list[dict]:
             if score >= FUZZY_THRESHOLD:
                 result.append({"id": pid, "name": name, "score": round(score, 1)})
 
+    # partial_ratio fallback — ловит OCR-ошибки которые WRatio пропустил
+    found_ids = {c["id"] for c in result}
+    leftover = {p.id: p.name for p in remaining if p.id not in found_ids}
+    if leftover:
+        matches = process.extract(raw, leftover, scorer=fuzz.partial_ratio, limit=limit)
+        for name, score, pid in matches:
+            if score >= FUZZY_THRESHOLD:
+                result.append({"id": pid, "name": name, "score": round(score, 1)})
+
     # Дедупликация по id, сохраняем порядок
     seen = set()
     deduped = []
