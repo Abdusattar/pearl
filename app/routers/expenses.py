@@ -1,4 +1,5 @@
 import shutil
+from collections import Counter
 from datetime import date, datetime
 from pathlib import Path
 from typing import List, Optional
@@ -396,6 +397,30 @@ def confirm_form(
         existing_tx = db.query(Transaction).get(existing_rt.transaction_id)
         if existing_tx:
             pre_category_id = existing_tx.category_id
+
+    # Авто-предложение категории по истории matched products
+    if not pre_category_id and raw_items and receipt.ocr_status not in ("confirmed", "rejected"):
+        cat_votes = Counter()
+        for it in raw_items:
+            matched = match_product(db, it.name)
+            if not matched:
+                continue
+            row = (
+                db.query(Transaction.category_id)
+                .join(ReceiptTransaction, ReceiptTransaction.transaction_id == Transaction.id)
+                .join(ReceiptItem, ReceiptItem.receipt_id == ReceiptTransaction.receipt_id)
+                .filter(
+                    ReceiptItem.product_id == matched.id,
+                    Transaction.category_id.isnot(None),
+                    ReceiptItem.receipt_id != receipt_id,
+                )
+                .order_by(Transaction.id.desc())
+                .first()
+            )
+            if row:
+                cat_votes[row[0]] += 1
+        if cat_votes:
+            pre_category_id = cat_votes.most_common(1)[0][0]
 
     # Для экрана успеха — подтянуть транзакцию
     confirmed_tx = None

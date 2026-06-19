@@ -79,7 +79,7 @@
               {% if item.product_matched and item.raw_name != item.display_name %}
               <div class="product-hint" style="font-size:10px;color:#16a34a;margin-top:2px">✓ справочник · OCR: {{ item.raw_name }}</div>
               {% elif not item.product_matched %}
-              <div class="product-hint" style="font-size:10px;color:#d97706;margin-top:2px;display:none">🆕 уточни название</div>
+              <div class="product-hint" style="font-size:10px;color:#d97706;margin-top:2px">🆕 уточни название</div>
               {% endif %}
             </td>
             <td style="padding:4px"><input type="text" name="item_qty" value="{{ item.qty or '' }}" class="form-control item-qty" style="font-size:12px;padding:4px 6px;text-align:right" oninput="recalcRow(this)"></td>
