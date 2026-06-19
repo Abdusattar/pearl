@@ -281,35 +281,38 @@ function addItemRow() {
   row.className = 'item-row';
   row.style.borderBottom = '1px solid var(--border)';
   row.innerHTML = `
-    <td style="padding:4px"><input type="text" name="item_name" value="" class="form-control" style="font-size:12px;padding:4px 6px"></td>
+    <td style="padding:4px;position:relative">
+      <input type="hidden" name="item_raw_name" value="">
+      <input type="hidden" name="item_product_id" value="">
+      <input type="text" name="item_name" value="" class="form-control item-name-input" autocomplete="off" style="font-size:12px;padding:4px 6px" data-raw="" data-candidates="[]">
+      <div class="autocomplete-dropdown" style="display:none;position:absolute;z-index:100;left:4px;right:4px;top:100%;background:#fff;border:1px solid var(--border);border-radius:6px;box-shadow:0 4px 12px rgba(0,0,0,.1);max-height:180px;overflow-y:auto"></div>
+    </td>
     <td style="padding:4px"><input type="text" name="item_qty" value="" class="form-control item-qty" style="font-size:12px;padding:4px 6px;text-align:right" oninput="recalcRow(this)"></td>
     <td style="padding:4px"><input type="text" name="item_unit_price" value="" class="form-control item-price" style="font-size:12px;padding:4px 6px;text-align:right" oninput="recalcRow(this)"></td>
     <td style="padding:4px"><input type="text" name="item_total_price" value="" class="form-control item-total" style="font-size:12px;padding:4px 6px;text-align:right" oninput="updateGrandTotal()"></td>
     <td style="padding:4px;text-align:center"><button type="button" onclick="this.closest('tr').remove();updateGrandTotal()" style="background:none;border:none;color:var(--text-muted);cursor:pointer;font-size:16px">×</button></td>
   `;
   tbody.appendChild(row);
+  const newInput = row.querySelector('.item-name-input');
+  if (newInput) initAutocomplete(newInput);
 }
 
 // Показать сумму позиций при загрузке
 updateGrandTotal();
 
 // ── Autocomplete для позиций ────────────────────────────────────────
-document.querySelectorAll('.item-name-input').forEach(input => {
-  const dropdown = input.nextElementSibling;
-  let candidates = [];
-  try { candidates = JSON.parse(input.dataset.candidates || '[]'); } catch(e) {}
+function initAutocomplete(input) {
+  const dropdown = input.parentElement.querySelector('.autocomplete-dropdown');
+  if (!dropdown) return;
+  let debounceTimer = null;
 
-  function showDropdown(filter) {
-    const q = filter.toLowerCase();
-    const filtered = q.length < 1
-      ? candidates
-      : candidates.filter(c => c.name.toLowerCase().includes(q));
-    if (!filtered.length) { dropdown.style.display = 'none'; return; }
-    dropdown.innerHTML = filtered.map(c => `
-      <div class="ac-item" data-id="${c.id}" data-name="${c.name}"
+  function renderDropdown(items) {
+    if (!items.length) { dropdown.style.display = 'none'; return; }
+    dropdown.innerHTML = items.map(c => `
+      <div class="ac-item" data-id="${c.id}" data-name="${c.name.replace(/"/g,'&quot;')}"
            style="padding:7px 10px;cursor:pointer;font-size:13px;display:flex;justify-content:space-between;align-items:center;gap:6px">
         <span>${c.name}</span>
-        <span style="font-size:10px;color:var(--text-muted);flex-shrink:0">${c.score < 100 ? '~' + c.score + '%' : '✓'}</span>
+        <span style="font-size:10px;color:var(--text-muted);flex-shrink:0">${c.score < 100 ? '~' + Math.round(c.score) + '%' : '✓'}</span>
       </div>`).join('');
     dropdown.style.display = '';
     dropdown.querySelectorAll('.ac-item').forEach(item => {
@@ -320,6 +323,14 @@ document.querySelectorAll('.item-name-input').forEach(input => {
       item.addEventListener('mouseover', () => item.style.background = '#f3f4f6');
       item.addEventListener('mouseout',  () => item.style.background = '');
     });
+  }
+
+  function fetchCandidates(q) {
+    if (!q.trim()) { dropdown.style.display = 'none'; return; }
+    fetch('/expenses/products/search?q=' + encodeURIComponent(q))
+      .then(r => r.json())
+      .then(items => renderDropdown(items))
+      .catch(() => { dropdown.style.display = 'none'; });
   }
 
   function selectCandidate(id, name) {
@@ -334,10 +345,15 @@ document.querySelectorAll('.item-name-input').forEach(input => {
     dropdown.style.display = 'none';
   }
 
-  input.addEventListener('focus', () => showDropdown(input.value));
-  input.addEventListener('input', () => showDropdown(input.value));
-  input.addEventListener('blur',  () => setTimeout(() => { dropdown.style.display = 'none'; }, 150));
-});
+  input.addEventListener('focus', () => fetchCandidates(input.value));
+  input.addEventListener('input', () => {
+    clearTimeout(debounceTimer);
+    debounceTimer = setTimeout(() => fetchCandidates(input.value), 180);
+  });
+  input.addEventListener('blur', () => setTimeout(() => { dropdown.style.display = 'none'; }, 180));
+}
+
+document.querySelectorAll('.item-name-input').forEach(initAutocomplete);
 
 const FOOD_CATEGORY_IDS = new Set({{ food_cat_ids | tojson }});
 const WAREHOUSE_CAT_IDS = new Set({{ warehouse_cat_ids | tojson }});
