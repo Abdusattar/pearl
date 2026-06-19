@@ -74,6 +74,18 @@ def audit(db: Session, entity_type: str, entity_id: int, action: str,
     ))
 
 
+# ── PRODUCT SEARCH API ────────────────────────────────────────────────────────
+
+from fastapi.responses import JSONResponse
+
+@router.get("/products/search")
+def search_products(q: str = "", db: Session = Depends(get_db)):
+    if not q.strip():
+        return JSONResponse([])
+    candidates = rank_candidates(db, q.strip(), limit=6)
+    return JSONResponse(candidates)
+
+
 # ── LIST ──────────────────────────────────────────────────────────────────────
 
 @router.get("/", response_class=HTMLResponse)
@@ -381,11 +393,14 @@ def confirm_form(
     for it in raw_items:
         candidates = rank_candidates(db, it.name)
         exact = match_product(db, it.name)
+        top = candidates[0] if candidates and not exact else None
         items.append({
             "id": it.id,
             "raw_name": it.name,
-            "display_name": exact.name if exact else it.name,
+            "display_name": exact.name if exact else (top["name"] if top else it.name),
+            "display_product_id": exact.id if exact else (top["id"] if top else None),
             "product_matched": exact is not None,
+            "fuzzy_matched": top is not None and not exact,
             "candidates": candidates,
             "qty": it.qty,
             "unit_price": it.unit_price,

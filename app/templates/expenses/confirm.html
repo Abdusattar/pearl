@@ -75,21 +75,22 @@
           <tr class="item-row" style="border-bottom:1px solid var(--border)">
             <td style="padding:4px;position:relative">
               <input type="hidden" name="item_raw_name" value="{{ item.raw_name }}">
-              <input type="hidden" name="item_product_id" value="{{ item.candidates[0].id if item.candidates else '' }}">
+              <input type="hidden" name="item_product_id" value="{{ item.display_product_id or '' }}">
               <input type="text" name="item_name"
                      value="{{ item.display_name }}"
                      class="form-control item-name-input"
                      autocomplete="off"
-                     style="font-size:12px;padding:4px 6px"
-                     data-candidates="{{ item.candidates | tojson | e }}"
+                     style="font-size:12px;padding:4px 6px{% if item.fuzzy_matched %};border-color:#f59e0b{% endif %}"
                      data-raw="{{ item.raw_name | e }}">
               <div class="autocomplete-dropdown" style="display:none;position:absolute;z-index:100;left:4px;right:4px;top:100%;background:#fff;border:1px solid var(--border);border-radius:6px;box-shadow:0 4px 12px rgba(0,0,0,.1);max-height:180px;overflow-y:auto"></div>
               {% if item.product_matched %}
               <div class="product-hint" style="font-size:10px;color:#16a34a;margin-top:2px">✓ справочник · OCR: {{ item.raw_name }}</div>
+              {% elif item.fuzzy_matched %}
+              <div class="product-hint" style="font-size:10px;color:#b45309;margin-top:2px">🔍 предположение · OCR: "{{ item.raw_name }}" — проверь</div>
               {% elif item.candidates %}
               <div class="product-hint" style="font-size:10px;color:#2563eb;margin-top:2px">🔍 OCR: {{ item.raw_name }} — выбери из списка</div>
               {% else %}
-              <div class="product-hint" style="font-size:10px;color:#d97706;margin-top:2px">🆕 уточни название · OCR: {{ item.raw_name }}</div>
+              <div class="product-hint" style="font-size:10px;color:#d97706;margin-top:2px">🆕 не найдено · OCR: "{{ item.raw_name }}"</div>
               {% endif %}
             </td>
             <td style="padding:4px"><input type="text" name="item_qty" value="{{ item.qty or '' }}" class="form-control item-qty" style="font-size:12px;padding:4px 6px;text-align:right" oninput="recalcRow(this)"></td>
