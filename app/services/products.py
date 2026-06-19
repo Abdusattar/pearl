@@ -23,9 +23,11 @@ def rank_candidates(db: Session, raw: str, limit: int = 5) -> list[dict]:
     """
     Возвращает до `limit` кандидатов из справочника отсортированных по схожести.
     Каждый кандидат: {"id": int, "name": str, "score": float}
-    Сначала ищет точный alias, затем fuzzy по именам продуктов.
+    Приоритет: точный alias → prefix match → substring → fuzzy WRatio.
     """
     key = _key(raw)
+    if not key:
+        return []
 
     # Точный alias — ставим первым с score=100
     alias = db.query(ProductAlias).filter(
@@ -38,17 +40,28 @@ def rank_candidates(db: Session, raw: str, limit: int = 5) -> list[dict]:
     if alias:
         result.append({"id": alias.product_id, "name": alias.product.name, "score": 100})
 
-    # Fuzzy по именам продуктов
     all_products = db.query(Product).all()
-    choices = {p.id: p.name for p in all_products if p.id != exact_id}
+    remaining = [p for p in all_products if p.id != exact_id]
 
-    if choices and raw.strip():
-        matches = process.extract(
-            raw,
-            choices,
-            scorer=fuzz.WRatio,
-            limit=limit,
-        )
+    # Prefix match: имя начинается с запроса
+    prefix_ids = set()
+    for p in remaining:
+        if p.name.lower().startswith(key):
+            result.append({"id": p.id, "name": p.name, "score": 95})
+            prefix_ids.add(p.id)
+
+    # Substring match: запрос входит в имя, но не prefix
+    substring_ids = set()
+    for p in remaining:
+        if p.id not in prefix_ids and key in p.name.lower():
+            result.append({"id": p.id, "name": p.name, "score": 85})
+            substring_ids.add(p.id)
+
+    # Fuzzy WRatio для остальных
+    skip_ids = prefix_ids | substring_ids | ({exact_id} if exact_id else set())
+    choices = {p.id: p.name for p in remaining if p.id not in skip_ids}
+    if choices:
+        matches = process.extract(raw, choices, scorer=fuzz.WRatio, limit=limit)
         for name, score, pid in matches:
             if score >= FUZZY_THRESHOLD:
                 result.append({"id": pid, "name": name, "score": round(score, 1)})
