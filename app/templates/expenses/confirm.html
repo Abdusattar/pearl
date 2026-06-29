@@ -95,11 +95,14 @@
     <form method="post" action="/expenses/{{ receipt.id }}/confirm">
       <input type="hidden" name="org_id" value="{{ current_org_id or '' }}">
 
-      {% if items %}
       <div class="card" id="items-card" style="margin-bottom:16px">
         <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
           <h3 style="margin:0;font-size:15px">Позиции чека</h3>
+          {% if items %}
           <span style="font-size:12px;color:var(--text-muted);background:#fef3c7;border:1px solid #fcd34d;border-radius:4px;padding:2px 8px">черновик OCR — проверь</span>
+          {% else %}
+          <span style="font-size:12px;color:#dc2626;background:#fee2e2;border:1px solid #fca5a5;border-radius:4px;padding:2px 8px">OCR не распознал — введи вручную</span>
+          {% endif %}
         </div>
         <table id="items-table" style="width:100%;border-collapse:collapse;font-size:13px">
           <thead id="items-thead">
@@ -153,7 +156,6 @@
         </table>
         <button type="button" onclick="addItemRow()" style="margin-top:8px;font-size:12px;color:var(--primary);background:none;border:none;cursor:pointer;padding:4px 0">+ добавить строку</button>
       </div>
-      {% endif %}
 
       <div class="card">
         <div class="form-group">
