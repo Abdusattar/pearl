@@ -131,11 +131,12 @@ class ReceiptTransaction(Base):
 
 class Product(Base):
     __tablename__ = "products"
-    id         = Column(Integer, primary_key=True)
-    name       = Column(String(100), nullable=False, unique=True)
-    unit       = Column(String(10), default="кг")   # кг, л, шт, г, уп
-    category   = Column(String(50))                  # мясо, молочные, крупы, овощи, прочее
-    created_at = Column(DateTime, server_default=func.now())
+    id          = Column(Integer, primary_key=True)
+    name        = Column(String(100), nullable=False, unique=True)
+    unit        = Column(String(10), default="кг")   # кг, л, шт, г, уп
+    category    = Column(String(50))                  # мясо, молочные, крупы, овощи, прочее
+    is_standard = Column(Boolean, default=False, nullable=False)
+    created_at  = Column(DateTime, server_default=func.now())
 
     aliases = relationship("ProductAlias", back_populates="product")
 

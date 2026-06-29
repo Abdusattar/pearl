@@ -16,7 +16,8 @@ from app.models import (
     Transaction, User, AuditLog, WarehouseReceipt,
 )
 from app.services.ocr import compute_hash, analyze_receipt
-from app.services.products import match_product, rank_candidates, get_or_create_product, ensure_alias
+from app.services.products import match_product, rank_candidates, get_or_create_product, ensure_alias, maybe_promote
+from app.services.normalize import normalize_items
 from app.dependencies import get_current_user
 
 router = APIRouter(prefix="/expenses", tags=["expenses"])
@@ -377,7 +378,7 @@ async def handle_upload(
 @router.get("/{receipt_id}/confirm", response_class=HTMLResponse)
 def confirm_form(
     receipt_id: int, request: Request,
-    org_id: int | None = None, db: Session = Depends(get_db),
+    org_id: int | None = None, err: str | None = None, db: Session = Depends(get_db),
 ):
     user = get_current_user(request, db)
     accessible = get_accessible_orgs(user, db)
@@ -389,19 +390,66 @@ def confirm_form(
     current_org = resolve_org(org_id, user, db)
     raw_items = db.query(ReceiptItem).filter(ReceiptItem.receipt_id == receipt_id).all()
 
+    # AI-нормализация: сопоставить OCR-строки с эталонным каталогом
+    ocr_payload = [
+        {"name": it.name, "qty": it.qty, "unit_price": it.unit_price, "total_price": it.total_price}
+        for it in raw_items
+    ]
+    normalized = normalize_items(db, ocr_payload) if ocr_payload else []
+
     items = []
-    for it in raw_items:
-        candidates = rank_candidates(db, it.name)
+    for it, norm in zip(raw_items, normalized):
         exact = match_product(db, it.name)
-        top = candidates[0] if candidates and not exact else None
+        ai_pid = norm.get("matched_product_id")
+        ai_name = norm.get("matched_name")
+        match_type = norm.get("match_type", "none")     # ai_standard | ai_provisional | none
+        ai_is_standard = norm.get("is_standard", False)
+
+        if exact:
+            # Точный alias → зелёный
+            display_name = exact.name
+            display_product_id = exact.id
+            product_matched = True
+            fuzzy_matched = False
+            provisional_matched = False
+        elif ai_pid and ai_is_standard:
+            # AI нашёл эталонный → жёлтый
+            display_name = ai_name
+            display_product_id = ai_pid
+            product_matched = False
+            fuzzy_matched = True
+            provisional_matched = False
+        elif ai_pid and not ai_is_standard:
+            # AI нашёл временный → оранжевый
+            display_name = ai_name
+            display_product_id = ai_pid
+            product_matched = False
+            fuzzy_matched = False
+            provisional_matched = True
+        else:
+            # Не нашёл ничего → красный
+            display_name = it.name
+            display_product_id = None
+            product_matched = False
+            fuzzy_matched = False
+            provisional_matched = False
+
+        display_name = display_name[:1].upper() + display_name[1:] if display_name else display_name
+        # unit: берём из продукта если найден, иначе пустая строка (пользователь укажет)
+        is_standard_match = product_matched or fuzzy_matched
+        matched_product = db.get(Product, display_product_id) if display_product_id else None
+        display_unit = matched_product.unit if matched_product else ""
         items.append({
             "id": it.id,
             "raw_name": it.name,
-            "display_name": exact.name if exact else (top["name"] if top else it.name),
-            "display_product_id": exact.id if exact else (top["id"] if top else None),
-            "product_matched": exact is not None,
-            "fuzzy_matched": top is not None and not exact,
-            "candidates": candidates,
+            "display_name": display_name,
+            "display_product_id": display_product_id,
+            "product_matched": product_matched,
+            "fuzzy_matched": fuzzy_matched,
+            "provisional_matched": provisional_matched,
+            "is_standard_match": is_standard_match,
+            "unit": display_unit,
+            "candidates": [],
             "qty": it.qty,
             "unit_price": it.unit_price,
             "total_price": it.total_price,
@@ -415,29 +463,52 @@ def confirm_form(
         if existing_tx:
             pre_category_id = existing_tx.category_id
 
-    # Авто-предложение категории по истории matched products
-    if not pre_category_id and raw_items and receipt.ocr_status not in ("confirmed", "rejected"):
-        cat_votes = Counter()
-        for it in raw_items:
-            matched = match_product(db, it.name)
-            if not matched:
+    # Авто-предложение категории
+    if not pre_category_id and receipt.ocr_status not in ("confirmed", "rejected"):
+        FOOD_PRODUCT_CATS = {"мясо", "овощи", "зелень", "крупы", "молочные", "специи", "масла", "фрукты", "хлеб"}
+
+        # 1. По категории распознанных продуктов (exact alias + AI — уже в items)
+        # Порог: еда должна составлять >= 40% от всех позиций чека
+        food_count = 0
+        for item in items:
+            pid = item.get("display_product_id")
+            if not pid:
                 continue
-            row = (
-                db.query(Transaction.category_id)
-                .join(ReceiptTransaction, ReceiptTransaction.transaction_id == Transaction.id)
-                .join(ReceiptItem, ReceiptItem.receipt_id == ReceiptTransaction.receipt_id)
-                .filter(
-                    ReceiptItem.product_id == matched.id,
-                    Transaction.category_id.isnot(None),
-                    ReceiptItem.receipt_id != receipt_id,
+            p = db.get(Product, pid)
+            if p and p.is_standard and (p.category or "").lower() in FOOD_PRODUCT_CATS:
+                food_count += 1
+        total_items = len(items)
+        food_ratio = food_count / total_items if total_items > 0 else 0
+        if food_ratio >= 0.4:
+            food_cat = db.query(ExpenseCategory).filter(
+                ExpenseCategory.name == "Продукты питания"
+            ).first()
+            if food_cat:
+                pre_category_id = food_cat.id
+
+        # 2. Фолбэк: история прошлых чеков (для временных продуктов без категории)
+        if not pre_category_id and raw_items:
+            cat_votes = Counter()
+            for it in raw_items:
+                matched = match_product(db, it.name)
+                if not matched:
+                    continue
+                row = (
+                    db.query(Transaction.category_id)
+                    .join(ReceiptTransaction, ReceiptTransaction.transaction_id == Transaction.id)
+                    .join(ReceiptItem, ReceiptItem.receipt_id == ReceiptTransaction.receipt_id)
+                    .filter(
+                        ReceiptItem.product_id == matched.id,
+                        Transaction.category_id.isnot(None),
+                        ReceiptItem.receipt_id != receipt_id,
+                    )
+                    .order_by(Transaction.id.desc())
+                    .first()
                 )
-                .order_by(Transaction.id.desc())
-                .first()
-            )
-            if row:
-                cat_votes[row[0]] += 1
-        if cat_votes:
-            pre_category_id = cat_votes.most_common(1)[0][0]
+                if row:
+                    cat_votes[row[0]] += 1
+            if cat_votes:
+                pre_category_id = cat_votes.most_common(1)[0][0]
 
     # Для экрана успеха — подтянуть транзакцию
     confirmed_tx = None
@@ -481,7 +552,7 @@ def confirm_form(
         "today": date.today().isoformat(),
         "confirmed_tx": confirmed_tx,
         "pre_category_id": pre_category_id,
-        "error": None,
+        "error": "Выбери категорию расхода" if err == "cat" else "Укажи количество и цену для всех позиций" if err == "qty" else "Укажи единицу измерения для всех позиций" if err == "unit" else None,
         "success": None,
     })
 
@@ -500,6 +571,7 @@ def handle_confirm(
     item_name: List[str] = Form(default=[]),
     item_raw_name: List[str] = Form(default=[]),
     item_product_id: List[str] = Form(default=[]),
+    item_unit: List[str] = Form(default=[]),
     item_qty: List[str] = Form(default=[]),
     item_unit_price: List[str] = Form(default=[]),
     item_total_price: List[str] = Form(default=[]),
@@ -559,6 +631,12 @@ def handle_confirm(
         if cat_id and _parse_amount(amt)
     ]
 
+    if not category_id and not splits:
+        return RedirectResponse(
+            f"/expenses/{receipt_id}/confirm?org_id={org_id or ''}&err=cat",
+            status_code=303,
+        )
+
     main_tx_id = None
     if splits:
         total_confirmed = sum(amt for _, amt in splits)
@@ -593,16 +671,57 @@ def handle_confirm(
     receipt.confirmed_at = datetime.now()
     audit(db, "receipt", receipt.id, "update", user.id, {"status": "confirmed", "amount": total_confirmed})
 
+    # Категории, для которых позиции НЕ детализируются и НЕ промоутируются в эталон
+    NO_PROMOTE_NAMES = {"ремонт", "транспорт", "прочее"}
+    def _is_promote_eligible(cat_id):
+        if not cat_id:
+            return False
+        cat = db.query(ExpenseCategory).get(cat_id)
+        if not cat:
+            return False
+        name_low = cat.name.lower()
+        if name_low in NO_PROMOTE_NAMES:
+            return False
+        if cat.parent_id:
+            parent = db.query(ExpenseCategory).get(cat.parent_id)
+            if parent and parent.name.lower() in NO_PROMOTE_NAMES:
+                return False
+        return True
+
+    promote_eligible = _is_promote_eligible(category_id)
+
     # Сохраняем отредактированные позиции (если были переданы)
     want_warehouse = add_to_warehouse == "1"
     if item_name:
-        db.query(ReceiptItem).filter(ReceiptItem.receipt_id == receipt_id).delete()
         def _safe_num(vals, i):
             try:
                 v = vals[i].strip() if i < len(vals) else ""
                 return float(v.replace(",", ".")) if v else None
             except (ValueError, AttributeError):
                 return None
+
+        # Валидация: позиция с суммой должна иметь кол-во и цену
+        for i, name in enumerate(item_name):
+            if not name.strip():
+                continue
+            total = _safe_num(item_total_price, i)
+            if total is None:
+                continue
+            qty_val = _safe_num(item_qty, i)
+            price_val = _safe_num(item_unit_price, i)
+            unit_val = item_unit[i].strip() if i < len(item_unit) else ""
+            if qty_val is None or price_val is None:
+                return RedirectResponse(
+                    f"/expenses/{receipt_id}/confirm?org_id={org_id or ''}&err=qty",
+                    status_code=303,
+                )
+            if not unit_val:
+                return RedirectResponse(
+                    f"/expenses/{receipt_id}/confirm?org_id={org_id or ''}&err=unit",
+                    status_code=303,
+                )
+
+        db.query(ReceiptItem).filter(ReceiptItem.receipt_id == receipt_id).delete()
 
         for i, name in enumerate(item_name):
             name = name.strip()
@@ -613,16 +732,20 @@ def handle_confirm(
                 continue
 
             raw = item_raw_name[i].strip() if i < len(item_raw_name) else ""
-            # Если пользователь выбрал продукт из autocomplete — берём его напрямую
             pid_str = item_product_id[i].strip() if i < len(item_product_id) else ""
             if pid_str and pid_str.isdigit():
-                product = db.query(Product).get(int(pid_str))
+                product = db.get(Product, int(pid_str))
                 if not product:
                     product = get_or_create_product(db, name)
             else:
                 product = get_or_create_product(db, name)
             if raw:
                 ensure_alias(db, raw, product.id)
+
+            # Обновить unit для временных продуктов (у эталонов unit уже верный)
+            submitted_unit = item_unit[i].strip() if i < len(item_unit) else ""
+            if submitted_unit and not product.is_standard and product.unit != submitted_unit:
+                product.unit = submitted_unit
 
             qty_val = _safe_num(item_qty, i)
             price_val = _safe_num(item_unit_price, i)
@@ -635,6 +758,11 @@ def handle_confirm(
                 unit_price=price_val,
                 total_price=total,
             ))
+            db.flush()
+
+            # Авто-промоут временного продукта если категория позволяет
+            if promote_eligible and not product.is_standard:
+                maybe_promote(db, product, threshold=3)
 
             # Автоматически добавить в склад если есть количество и цена
             if want_warehouse and qty_val and qty_val > 0 and price_val and price_val > 0:

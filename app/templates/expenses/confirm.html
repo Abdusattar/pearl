@@ -100,10 +100,11 @@
         <table style="width:100%;border-collapse:collapse;font-size:13px">
           <thead>
             <tr style="border-bottom:2px solid var(--border);text-align:left">
-              <th style="padding:6px 4px;width:45%">Наименование</th>
-              <th style="padding:6px 4px;width:12%;text-align:right">Кол-во</th>
-              <th style="padding:6px 4px;width:18%;text-align:right">Цена</th>
-              <th style="padding:6px 4px;width:18%;text-align:right">Сумма</th>
+              <th style="padding:6px 4px;width:38%">Наименование</th>
+              <th style="padding:6px 4px;width:10%">Ед.</th>
+              <th style="padding:6px 4px;width:10%;text-align:right">Кол-во</th>
+              <th style="padding:6px 4px;width:16%;text-align:right">Цена</th>
+              <th style="padding:6px 4px;width:16%;text-align:right">Сумма</th>
               <th style="padding:6px 4px;width:7%"></th>
             </tr>
           </thead>
@@ -117,18 +118,26 @@
                        value="{{ item.display_name }}"
                        class="form-control item-name-input"
                        autocomplete="off"
-                       style="font-size:12px;padding:4px 6px{% if item.fuzzy_matched %};border-color:#f59e0b{% endif %}"
+                       style="font-size:12px;padding:4px 6px;border-width:2px;{% if item.product_matched %}border-style:solid;border-color:#16a34a{% elif item.fuzzy_matched %}border-style:solid;border-color:#f59e0b{% elif item.provisional_matched %}border-style:solid;border-color:#3b82f6{% else %}border-style:solid;border-color:#dc2626{% endif %}"
                        data-raw="{{ item.raw_name | e }}">
                 <div class="autocomplete-dropdown" style="display:none;position:absolute;z-index:100;left:4px;right:4px;top:100%;background:#fff;border:1px solid var(--border);border-radius:6px;box-shadow:0 4px 12px rgba(0,0,0,.1);max-height:180px;overflow-y:auto"></div>
                 {% if item.product_matched %}
-                <div class="product-hint" style="font-size:10px;color:#16a34a;margin-top:2px">✓ справочник · OCR: {{ item.raw_name }}</div>
+                <div class="product-hint" style="font-size:10px;color:#16a34a;margin-top:2px">✓ эталон точно · {{ item.raw_name }}</div>
                 {% elif item.fuzzy_matched %}
-                <div class="product-hint" style="font-size:10px;color:#b45309;margin-top:2px">🔍 предположение · OCR: "{{ item.raw_name }}" — проверь</div>
-                {% elif item.candidates %}
-                <div class="product-hint" style="font-size:10px;color:#2563eb;margin-top:2px">🔍 OCR: {{ item.raw_name }} — выбери из списка</div>
+                <div class="product-hint" style="font-size:10px;color:#b45309;margin-top:2px">? эталон, проверь · OCR: "{{ item.raw_name }}"</div>
+                {% elif item.provisional_matched %}
+                <div class="product-hint" style="font-size:10px;color:#2563eb;margin-top:2px">~ временный, накапливается · OCR: "{{ item.raw_name }}"</div>
                 {% else %}
-                <div class="product-hint" style="font-size:10px;color:#d97706;margin-top:2px">🆕 не найдено · OCR: "{{ item.raw_name }}"</div>
+                <div class="product-hint" style="font-size:10px;color:#dc2626;margin-top:2px">✗ не найдено · OCR: "{{ item.raw_name }}"</div>
                 {% endif %}
+              </td>
+              <td style="padding:4px">
+                <select name="item_unit" class="form-control" style="font-size:12px;padding:3px 4px" required>
+                  <option value="">—</option>
+                  {% for u in ['кг','л','шт','уп','г','бут'] %}
+                  <option value="{{ u }}" {% if item.unit == u %}selected{% endif %}>{{ u }}</option>
+                  {% endfor %}
+                </select>
               </td>
               <td style="padding:4px"><input type="text" name="item_qty" value="{{ item.qty or '' }}" class="form-control item-qty" style="font-size:12px;padding:4px 6px;text-align:right" oninput="recalcRow(this)"></td>
               <td style="padding:4px"><input type="text" name="item_unit_price" value="{{ item.unit_price or '' }}" class="form-control item-price" style="font-size:12px;padding:4px 6px;text-align:right" oninput="recalcRow(this)"></td>
@@ -175,7 +184,7 @@
             <span>Категория</span>
             <button type="button" onclick="enableSplit()" style="font-size:11px;color:var(--primary);background:none;border:none;cursor:pointer;padding:0">разделить по категориям →</button>
           </label>
-          <select name="category_id" id="single-cat-select" class="form-control"
+          <select name="category_id" id="single-cat-select" class="form-control" required
                   {% if pre_category_id %}data-preselect="{{ pre_category_id }}"{% endif %}>
             <option value="">Выберите категорию</option>
             {% set ns = namespace(parent_ids=[]) %}
@@ -184,7 +193,7 @@
               {% if cat.parent_id is none %}
               <option value="{{ cat.id }}" {% if cat.id in ns.parent_ids %}disabled style="color:#9ca3af;font-weight:600"{% endif %}>{{ cat.name }}</option>
               {% else %}
-              <option value="{{ cat.id }}">&nbsp;&nbsp;↳ {{ cat.name }}</option>
+              <option value="{{ cat.id }}" {% if cat.id == pre_category_id %}selected{% endif %}>&nbsp;&nbsp;↳ {{ cat.name }}</option>
               {% endif %}
             {% endfor %}
           </select>

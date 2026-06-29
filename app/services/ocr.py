@@ -61,7 +61,7 @@ def analyze_receipt(file_path: str) -> dict | None:
         with open(file_path, "rb") as f:
             img_bytes = f.read()
         b64 = base64.b64encode(img_bytes).decode()
-        ext = file_path.rsplit(".", 1)[-1].lower()
+        ext = str(file_path).rsplit(".", 1)[-1].lower()
         mime = "image/jpeg" if ext in ("jpg", "jpeg") else f"image/{ext}"
 
         payload = {
@@ -92,7 +92,11 @@ def analyze_receipt(file_path: str) -> dict | None:
         text = resp_json["choices"][0]["message"]["content"].strip()
         text = re.sub(r"^```(?:json)?\s*|\s*```$", "", text, flags=re.DOTALL).strip()
 
-        data = json.loads(text)
+        # Gemini иногда добавляет текст после JSON — raw_decode берёт первый объект
+        idx = text.find("{")
+        if idx == -1:
+            raise ValueError("JSON object not found in OCR response")
+        data, _ = json.JSONDecoder().raw_decode(text, idx)
         amount = _safe_num(data.get("amount"))
         items = []
         for it in data.get("items") or []:
