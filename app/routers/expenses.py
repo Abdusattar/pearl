@@ -958,3 +958,38 @@ def handle_edit_tx(
     audit(db, "transaction", tx.id, "update", user.id, {"amount": amount})
     db.commit()
     return RedirectResponse(f"/expenses/?org_id={org_id or tx.organization_id}", status_code=303)
+
+
+# ── DELETE RECEIPT ─────────────────────────────────────────────────────────────
+
+@router.post("/{receipt_id}/delete")
+def delete_receipt(
+    receipt_id: int,
+    request: Request,
+    org_id: int | None = Form(None),
+    db: Session = Depends(get_db),
+):
+    user = get_current_user(request, db)
+    receipt = db.query(Receipt).get(receipt_id)
+    if not receipt:
+        return HTMLResponse("Квитанция не найдена", status_code=404)
+
+    # Удалить связанные транзакции и склад
+    rts = db.query(ReceiptTransaction).filter(ReceiptTransaction.receipt_id == receipt_id).all()
+    for rt in rts:
+        db.query(WarehouseReceipt).filter(WarehouseReceipt.transaction_id == rt.transaction_id).delete()
+        db.query(Transaction).filter(Transaction.id == rt.transaction_id).delete()
+    db.query(ReceiptTransaction).filter(ReceiptTransaction.receipt_id == receipt_id).delete()
+    db.query(ReceiptItem).filter(ReceiptItem.receipt_id == receipt_id).delete()
+
+    # Удалить файл фото
+    if receipt.file_path and receipt.file_path != "manual":
+        photo = MEDIA_DIR.parent / receipt.file_path
+        if photo.exists():
+            photo.unlink()
+
+    audit(db, "receipt", receipt.id, "delete", user.id, {})
+    db.delete(receipt)
+    db.commit()
+
+    return RedirectResponse(f"/expenses/?org_id={org_id or ''}", status_code=303)
