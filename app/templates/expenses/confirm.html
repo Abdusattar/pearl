@@ -64,7 +64,8 @@
         <div style="font-size:28px;font-weight:700;margin-bottom:4px">{{ "{:,.0f}".format(confirmed_tx.amount) }} с</div>
         <div style="font-size:14px;color:var(--text-muted);margin-bottom:24px">{{ confirmed_tx.date }}</div>
         {% endif %}
-        <div style="font-size:12px;color:var(--text-muted);margin-bottom:24px">Квитанция #{{ receipt.id }}</div>
+        <div style="font-size:12px;color:var(--text-muted);margin-bottom:4px">Квитанция #{{ receipt.id }}</div>
+        <div style="font-size:13px;color:var(--text-muted);margin-bottom:24px">Провёл: {{ receipt.created_by_name }}</div>
         <div style="display:flex;flex-direction:column;gap:10px">
           <a href="/expenses/upload?org_id={{ current_org_id or '' }}"
              class="btn btn-primary" style="min-height:52px;font-size:16px;display:flex;align-items:center;justify-content:center">

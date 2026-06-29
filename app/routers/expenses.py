@@ -529,6 +529,8 @@ def confirm_form(
     food_cat_ids = list(food_parent_ids | {c.id for c in all_cats if c.parent_id in food_parent_ids})
     warehouse_cat_ids = [c.id for c in all_cats if c.warehouse_eligible]
 
+    creator = db.get(User, receipt.created_by) if receipt.created_by else None
+
     return templates.TemplateResponse("expenses/confirm.html", {
         "request": request,
         "current_user": user,
@@ -544,6 +546,7 @@ def confirm_form(
             "ocr_status": receipt.ocr_status,
             "org_id": receipt.organization_id,
             "org_name": org_map.get(receipt.organization_id, "—"),
+            "created_by_name": creator.name if creator else "—",
         },
         "items": items,
         "categories": all_cats,
