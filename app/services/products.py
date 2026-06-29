@@ -85,15 +85,24 @@ def rank_candidates(db: Session, raw: str, limit: int = 5, standard_only: bool =
 
 
 def get_or_create_product(db: Session, name: str) -> Product:
-    """Возвращает существующий продукт или создаёт временный (is_standard=False)."""
+    """Возвращает существующий продукт или создаёт временный (is_standard=False).
+    Перед созданием проверяет alias и fuzzy-совпадение со стандартными.
+    """
     name = name.strip()
-    product = db.query(Product).filter(
-        func.lower(Product.name) == name.lower()
-    ).first()
-    if not product:
-        product = Product(name=name, is_standard=False)
-        db.add(product)
-        db.flush()
+    product = db.query(Product).filter(func.lower(Product.name) == name.lower()).first()
+    if product:
+        return product
+    alias = db.query(ProductAlias).filter(func.lower(ProductAlias.raw_text) == _key(name)).first()
+    if alias:
+        return alias.product
+    candidates = rank_candidates(db, name, limit=1, standard_only=True)
+    if candidates and candidates[0]["score"] >= 85:
+        matched = db.get(Product, candidates[0]["id"])
+        if matched:
+            return matched
+    product = Product(name=name, is_standard=False)
+    db.add(product)
+    db.flush()
     return product
 
 
@@ -117,6 +126,15 @@ def maybe_promote(db: Session, product: Product, threshold: int = 3) -> bool:
     from app.models import ReceiptItem
     count = db.query(ReceiptItem).filter(ReceiptItem.product_id == product.id).count()
     if count >= threshold:
+        # Перед промоутом скопировать category/unit из ближайшего стандарта, если не заданы
+        if not product.category:
+            candidates = rank_candidates(db, product.name, limit=1, standard_only=True)
+            if candidates and candidates[0]["score"] >= 80:
+                std = db.get(Product, candidates[0]["id"])
+                if std:
+                    product.category = std.category
+                    if not product.unit:
+                        product.unit = std.unit
         product.is_standard = True
         return True
     return False
