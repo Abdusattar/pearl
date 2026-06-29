@@ -39,11 +39,18 @@ _OR_MODEL = "google/gemini-2.5-flash-lite"
 _OR_URL = "https://openrouter.ai/api/v1/chat/completions"
 
 _USER_PROMPT = (
-    "Look at this handwritten receipt image. Read every filled row in the table exactly as written — "
-    "do not guess or invent names. Return ONLY valid JSON, no markdown.\n"
-    "Format: {\"amount\": <total number or null>, "
-    "\"items\": [{\"name\": \"<exact text from image>\", \"qty\": <number or null>, "
-    "\"unit_price\": <number or null>, \"total_price\": <number>}]}"
+    "Look at this receipt image — it may be handwritten, printed, or a mix. "
+    "Extract all product line items. Return ONLY valid JSON, no markdown.\n\n"
+    "Rules:\n"
+    "1. If you see format 'NAME  N×P' or 'NAME  NxP' (quantity × price), parse as: "
+    "name=NAME, qty=N, unit_price=P, total_price=N*P (compute it).\n"
+    "2. If total_price is not written but qty and unit_price are known, compute total_price = qty * unit_price.\n"
+    "3. If the same delivery appears twice (e.g. 4810 + 4810 = 9620), list the items twice.\n"
+    "4. Ignore phone numbers, supplier/person names, and pure arithmetic lines.\n"
+    "5. Read product names exactly as written — do not translate or normalize.\n\n"
+    "Format: {\"amount\": <grand total number or null>, "
+    "\"items\": [{\"name\": \"<exact text>\", \"qty\": <number or null>, "
+    "\"unit_price\": <number or null>, \"total_price\": <number or null>}]}"
 )
 
 
@@ -101,10 +108,13 @@ def analyze_receipt(file_path: str) -> dict | None:
         items = []
         for it in data.get("items") or []:
             total = _safe_num(it.get("total_price"))
-            if total is None:
-                continue
             qty = _safe_num(it.get("qty"))
             unit_price = _safe_num(it.get("unit_price"))
+            # Вычислить total если Gemini его не вернул, но есть qty × unit_price
+            if total is None and qty and unit_price:
+                total = round(qty * unit_price, 2)
+            if total is None:
+                continue
             if unit_price is None and qty and qty > 0:
                 unit_price = round(total / qty, 2)
             items.append({
