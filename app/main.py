@@ -13,6 +13,10 @@ MEDIA_DIR = Path(__file__).parent.parent / "media"
 MEDIA_DIR.mkdir(exist_ok=True)
 app.mount("/media", StaticFiles(directory=str(MEDIA_DIR)), name="media")
 
+STATIC_DIR = Path(__file__).parent / "static"
+STATIC_DIR.mkdir(exist_ok=True)
+app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
+
 templates = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
 
 from app.routers import expenses, students, optima, auth, income, warehouse
