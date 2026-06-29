@@ -13,7 +13,7 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.models import (
     ExpenseCategory, Organization, Product, Receipt, ReceiptItem, ReceiptTransaction,
-    Transaction, User, AuditLog, WarehouseReceipt,
+    Transaction, User, AuditLog, WarehouseReceipt, Supplier,
 )
 from app.services.ocr import compute_hash, analyze_receipt
 from app.services.products import match_product, rank_candidates, get_or_create_product, ensure_alias, maybe_promote
@@ -73,6 +73,28 @@ def audit(db: Session, entity_type: str, entity_id: int, action: str,
         entity_type=entity_type, entity_id=entity_id,
         action=action, user_id=user_id, new_data=new_data,
     ))
+
+
+def resolve_supplier(db: Session, supplier_id_raw: str, new_name: str, new_phone: str) -> int | None:
+    """Возвращает supplier_id: из существующего или создаёт нового."""
+    if not supplier_id_raw:
+        return None
+    if supplier_id_raw != "new":
+        try:
+            return int(supplier_id_raw)
+        except (ValueError, TypeError):
+            return None
+    name = (new_name or "").strip()
+    if not name:
+        return None
+    existing = db.query(Supplier).filter(Supplier.name == name).first()
+    if existing:
+        return existing.id
+    phone_val = (new_phone or "").strip() or None
+    s = Supplier(name=name, phone=phone_val)
+    db.add(s)
+    db.flush()
+    return s.id
 
 
 # ── PRODUCT SEARCH API ────────────────────────────────────────────────────────
@@ -530,6 +552,7 @@ def confirm_form(
     warehouse_cat_ids = [c.id for c in all_cats if c.warehouse_eligible]
 
     creator = db.get(User, receipt.created_by) if receipt.created_by else None
+    all_suppliers = db.query(Supplier).order_by(Supplier.name).all()
 
     return templates.TemplateResponse("expenses/confirm.html", {
         "request": request,
@@ -552,6 +575,7 @@ def confirm_form(
         "categories": all_cats,
         "food_cat_ids": food_cat_ids,
         "warehouse_cat_ids": warehouse_cat_ids,
+        "suppliers": all_suppliers,
         "today": date.today().isoformat(),
         "confirmed_tx": confirmed_tx,
         "pre_category_id": pre_category_id,
@@ -581,6 +605,9 @@ def handle_confirm(
     split_category_id: List[str] = Form(default=[]),
     split_amount: List[str] = Form(default=[]),
     add_to_warehouse: str = Form(default=""),
+    supplier_id: str = Form(default=""),
+    new_supplier_name: str = Form(default=""),
+    new_supplier_phone: str = Form(default=""),
     db: Session = Depends(get_db),
 ):
     user = get_current_user(request, db)
@@ -640,13 +667,15 @@ def handle_confirm(
             status_code=303,
         )
 
+    sid = resolve_supplier(db, supplier_id, new_supplier_name, new_supplier_phone)
+
     main_tx_id = None
     if splits:
         total_confirmed = sum(amt for _, amt in splits)
         for cat_id, amt in splits:
             tx = Transaction(
                 organization_id=receipt.organization_id, type="expense", amount=amt,
-                category_id=cat_id, description=description, date=tx_date,
+                category_id=cat_id, supplier_id=sid, description=description, date=tx_date,
                 created_by=user.id,
             )
             db.add(tx)
@@ -658,7 +687,7 @@ def handle_confirm(
     else:
         tx = Transaction(
             organization_id=receipt.organization_id, type="expense", amount=amount,
-            category_id=category_id, description=description, date=tx_date,
+            category_id=category_id, supplier_id=sid, description=description, date=tx_date,
             created_by=user.id,
         )
         db.add(tx)
@@ -797,6 +826,7 @@ def add_form(request: Request, org_id: int | None = None, db: Session = Depends(
     all_cats = get_categories(db)
     food_parent_ids = {c.id for c in all_cats if 'питан' in c.name.lower()}
     food_cat_ids = list(food_parent_ids | {c.id for c in all_cats if c.parent_id in food_parent_ids})
+    all_suppliers = db.query(Supplier).order_by(Supplier.name).all()
     return templates.TemplateResponse("expenses/add.html", {
         "request": request,
         "current_user": user,
@@ -806,6 +836,7 @@ def add_form(request: Request, org_id: int | None = None, db: Session = Depends(
         "categories": all_cats,
         "food_cat_ids": food_cat_ids,
         "products": products,
+        "suppliers": all_suppliers,
         "today": date.today().isoformat(),
         "error": None,
     })
@@ -823,6 +854,9 @@ def handle_add(
     item_qty: List[str] = Form(default=[]),
     item_unit_price: List[str] = Form(default=[]),
     item_total_price: List[str] = Form(default=[]),
+    supplier_id: str = Form(default=""),
+    new_supplier_name: str = Form(default=""),
+    new_supplier_phone: str = Form(default=""),
     db: Session = Depends(get_db),
 ):
     user = get_current_user(request, db)
@@ -837,14 +871,18 @@ def handle_add(
             "current_org_id": org_id,
             "upload_orgs": get_upload_orgs(user, db),
             "categories": get_categories(db),
+            "suppliers": db.query(Supplier).order_by(Supplier.name).all(),
+            "products": [],
+            "food_cat_ids": [],
             "today": date.today().isoformat(),
             "error": "Объект не найден",
         })
 
     tx_date = date.fromisoformat(date_) if date_ else date.today()
+    sid = resolve_supplier(db, supplier_id, new_supplier_name, new_supplier_phone)
     tx = Transaction(
         organization_id=org_id, type="expense", amount=amount,
-        category_id=category_id, description=description, date=tx_date,
+        category_id=category_id, supplier_id=sid, description=description, date=tx_date,
         created_by=user.id,
     )
     db.add(tx)

@@ -1,0 +1,71 @@
+{% extends "base.html" %}
+{% set active_page = "suppliers" %}
+
+{% block title %}Поставщики — Жемчужина{% endblock %}
+
+{% block content %}
+<style>
+@media (max-width: 768px) {
+  .page-header { flex-wrap: wrap; gap: 8px; }
+  .page-header h1 { width: 100%; }
+}
+</style>
+
+<div class="page-header">
+  <h1>Поставщики</h1>
+</div>
+
+<div class="card" style="max-width:560px;margin-bottom:20px">
+  <h3 style="font-size:15px;margin-bottom:14px">Добавить поставщика</h3>
+  <form method="post" action="/suppliers/" style="display:flex;flex-direction:column;gap:10px">
+    <input type="hidden" name="org_id" value="{{ current_org_id or '' }}">
+    <div class="split-row">
+      <div class="form-group" style="margin-bottom:0">
+        <label>Название *</label>
+        <input type="text" name="name" class="form-control" required placeholder="Рынок Дордой, ИП Турат...">
+      </div>
+      <div class="form-group" style="margin-bottom:0">
+        <label>Телефон (необязательно)</label>
+        <input type="tel" name="phone" class="form-control" placeholder="+996 700 000 000">
+      </div>
+    </div>
+    <button type="submit" class="btn btn-primary" style="align-self:flex-start">+ Добавить</button>
+  </form>
+</div>
+
+<div class="card">
+  {% if suppliers %}
+  <table class="table">
+    <thead>
+      <tr>
+        <th>Название</th>
+        <th>Телефон</th>
+        <th></th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for s in suppliers %}
+      <tr>
+        <td data-label="Название" style="font-weight:500">{{ s.name }}</td>
+        <td data-label="Телефон">{{ s.phone or '—' }}</td>
+        <td class="actions">
+          <form method="post" action="/suppliers/{{ s.id }}/delete" style="display:inline"
+                onsubmit="return confirm('Удалить поставщика «{{ s.name }}»?')">
+            <input type="hidden" name="org_id" value="{{ current_org_id or '' }}">
+            <button type="submit"
+                    style="background:none;border:none;color:#dc2626;cursor:pointer;font-size:16px;padding:4px 6px"
+                    title="Удалить">🗑</button>
+          </form>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <div style="text-align:center;padding:32px;color:var(--text-muted)">
+    <div style="font-size:36px;margin-bottom:10px">🏪</div>
+    <div>Поставщиков пока нет. Добавь первого.</div>
+  </div>
+  {% endif %}
+</div>
+{% endblock %}

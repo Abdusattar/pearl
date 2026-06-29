@@ -233,8 +233,23 @@
         </div>
 
         <div class="form-group">
+          <label>Поставщик</label>
+          <select name="supplier_id" id="supplier-select" class="form-control" onchange="toggleNewSupplier(this)">
+            <option value="">— Не указан —</option>
+            {% for s in suppliers %}
+            <option value="{{ s.id }}">{{ s.name }}{% if s.phone %} ({{ s.phone }}){% endif %}</option>
+            {% endfor %}
+            <option value="new">+ Добавить нового...</option>
+          </select>
+          <div id="new-supplier-fields" style="display:none;margin-top:8px;display:none;flex-direction:column;gap:8px">
+            <input type="text" name="new_supplier_name" class="form-control" placeholder="Название поставщика *">
+            <input type="tel" name="new_supplier_phone" class="form-control" placeholder="Телефон (необязательно)">
+          </div>
+        </div>
+
+        <div class="form-group">
           <label>Описание (необязательно)</label>
-          <input type="text" name="description" class="form-control" placeholder="Например: Магазин Народный">
+          <input type="text" name="description" class="form-control" placeholder="Комментарий...">
         </div>
 
         <div style="display:flex;gap:12px;margin-top:8px">
@@ -252,6 +267,17 @@
 
 {% block scripts %}
 <script>
+function toggleNewSupplier(sel) {
+  const block = document.getElementById('new-supplier-fields');
+  if (sel.value === 'new') {
+    block.style.display = 'flex';
+    block.querySelector('[name="new_supplier_name"]').required = true;
+  } else {
+    block.style.display = 'none';
+    block.querySelector('[name="new_supplier_name"]').required = false;
+  }
+}
+
 function _num(v) {
   const n = parseFloat(String(v).replace(',', '.'));
   return isNaN(n) ? null : n;

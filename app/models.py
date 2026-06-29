@@ -99,6 +99,14 @@ class Receipt(Base):
     created_at       = Column(DateTime, server_default=func.now())
 
 
+class Supplier(Base):
+    __tablename__ = "suppliers"
+    id         = Column(Integer, primary_key=True)
+    name       = Column(String(200), nullable=False)
+    phone      = Column(String(20), unique=True, nullable=True)
+    created_at = Column(DateTime, server_default=func.now())
+
+
 class Transaction(Base):
     __tablename__ = "transactions"
     __table_args__ = (
@@ -112,6 +120,7 @@ class Transaction(Base):
     type            = Column(String(10), nullable=False)  # income|expense
     amount          = Column(Numeric(12, 2), nullable=False)
     category_id     = Column(Integer, ForeignKey("expense_categories.id"))
+    supplier_id     = Column(Integer, ForeignKey("suppliers.id"), nullable=True)
     student_id      = Column(Integer, ForeignKey("students.id"))
     description     = Column(Text)
     date            = Column(Date, nullable=False)
