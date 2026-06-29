@@ -18,10 +18,13 @@
     border-bottom: 1px solid var(--border); gap: 4px; }
   #items-body td { padding: 2px; }
   #items-body td:first-child { width: 100%; }
-  #items-body td:nth-child(2), #items-body td:nth-child(3),
-  #items-body td:nth-child(4) { flex: 1; }
-  #items-body td:last-child { width: auto; }
+  #items-body td:nth-child(2) { flex: 0 0 56px; }
+  #items-body td:nth-child(3),
+  #items-body td:nth-child(4),
+  #items-body td:nth-child(5) { flex: 1; min-width: 0; }
+  #items-body td:last-child { flex: 0 0 auto; align-self: center; }
   #items-body thead { display: none; }
+  .product-hint { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 }
 </style>
 
@@ -297,6 +300,13 @@ function addItemRow() {
       <input type="hidden" name="item_product_id" value="">
       <input type="text" name="item_name" value="" class="form-control item-name-input" autocomplete="off" style="font-size:12px;padding:4px 6px" data-raw="" data-candidates="[]">
       <div class="autocomplete-dropdown" style="display:none;position:absolute;z-index:100;left:4px;right:4px;top:100%;background:#fff;border:1px solid var(--border);border-radius:6px;box-shadow:0 4px 12px rgba(0,0,0,.1);max-height:180px;overflow-y:auto"></div>
+    </td>
+    <td style="padding:4px">
+      <select name="item_unit" class="form-control" style="font-size:12px;padding:3px 4px" required>
+        <option value="">—</option>
+        <option value="кг">кг</option><option value="л">л</option><option value="шт">шт</option>
+        <option value="уп">уп</option><option value="г">г</option><option value="бут">бут</option>
+      </select>
     </td>
     <td style="padding:4px"><input type="text" name="item_qty" value="" class="form-control item-qty" style="font-size:12px;padding:4px 6px;text-align:right" oninput="recalcRow(this)"></td>
     <td style="padding:4px"><input type="text" name="item_unit_price" value="" class="form-control item-price" style="font-size:12px;padding:4px 6px;text-align:right" oninput="recalcRow(this)"></td>
