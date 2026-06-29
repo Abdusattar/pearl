@@ -52,6 +52,7 @@
         <th>Дата</th>
         <th>Объект</th>
         <th>Категория</th>
+        <th>Поставщик</th>
         <th>Сумма</th>
         <th>Статус</th>
         <th></th>
@@ -63,6 +64,7 @@
         <td data-label="Дата">{{ r.date_display }}</td>
         <td data-label="Объект">{{ r.org_name }}</td>
         <td data-label="Категория">{{ r.category_name or '—' }}</td>
+        <td data-label="Поставщик" style="color:var(--text-muted);font-size:13px">{{ r.supplier_name or '—' }}</td>
         <td data-label="Сумма">
           {% if r.amount_confirmed %}
             <strong>{{ "{:,.0f}".format(r.amount_confirmed) }} с</strong>

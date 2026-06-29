@@ -184,6 +184,7 @@ def list_expenses(
     ).count()
 
     org_map = {o.id: o.name for o in db.query(Organization).all()}
+    supplier_map = {s.id: s.name for s in db.query(Supplier).all()}
     cat_map = {}
 
     def _cat_name(category_id_val):
@@ -199,11 +200,13 @@ def list_expenses(
         rt = db.query(ReceiptTransaction).filter(ReceiptTransaction.receipt_id == r.id).first()
         tx_cat = None
         tx_id = None
+        tx_supplier = None
         if rt:
             tx = db.query(Transaction).get(rt.transaction_id)
             if tx:
                 tx_cat = _cat_name(tx.category_id)
                 tx_id = tx.id
+                tx_supplier = supplier_map.get(tx.supplier_id)
         if r.ocr_status == "manual":
             href = f"/expenses/tx/{tx_id}/edit?org_id={current_org_id}" if tx_id else None
         else:
@@ -217,6 +220,7 @@ def list_expenses(
             "date_display": r.created_at.strftime('%d.%m.%Y'),
             "org_name": org_map.get(r.organization_id, "—"),
             "category_name": tx_cat,
+            "supplier_name": tx_supplier,
             "amount_detected": r.amount_detected,
             "amount_confirmed": r.amount_confirmed,
             "ocr_status": r.ocr_status,
@@ -252,6 +256,7 @@ def list_expenses(
                 "date_display": tx.date.strftime('%d.%m.%Y') if tx.date else "—",
                 "org_name": org_map.get(tx.organization_id, "—"),
                 "category_name": _cat_name(tx.category_id),
+                "supplier_name": supplier_map.get(tx.supplier_id),
                 "amount_detected": None,
                 "amount_confirmed": tx.amount,
                 "ocr_status": "manual",
