@@ -41,25 +41,25 @@
       {% set txn = row.Transaction %}
       {% set student = row.Student %}
       <tr>
-        <td style="color:var(--text-muted);font-size:13px">
+        <td data-label="Дата" style="color:var(--text-muted);font-size:13px">
           {{ txn.date.strftime('%d.%m.%Y') }}
         </td>
-        <td>
+        <td data-label="PIN">
           {% if student %}
           <span style="font-family:monospace;font-weight:700;color:var(--primary)">
             {{ student.pin }}
           </span>
           {% else %}—{% endif %}
         </td>
-        <td>
+        <td data-label="ФИО">
           {% if student %}{{ student.name }}{% else %}
           <span style="color:var(--text-muted)">{{ txn.description or '—' }}</span>
           {% endif %}
         </td>
-        <td style="text-align:right;font-weight:600">
+        <td data-label="Сумма" style="text-align:right;font-weight:600">
           {{ "{:,.0f}".format(txn.amount) }} с
         </td>
-        <td style="text-align:center">
+        <td data-label="Источник" style="text-align:center">
           {% if txn.external_txn_id %}
           <span class="badge badge-confirmed">Optima</span>
           {% else %}

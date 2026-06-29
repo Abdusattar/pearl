@@ -59,10 +59,10 @@
     <tbody>
       {% for r in receipts %}
       <tr {% if r.href %}data-href="{{ r.href }}" style="cursor:pointer"{% endif %}>
-        <td>{{ r.date_display }}</td>
-        <td>{{ r.org_name }}</td>
-        <td>{{ r.category_name or '—' }}</td>
-        <td>
+        <td data-label="Дата">{{ r.date_display }}</td>
+        <td data-label="Объект">{{ r.org_name }}</td>
+        <td data-label="Категория">{{ r.category_name or '—' }}</td>
+        <td data-label="Сумма">
           {% if r.amount_confirmed %}
             <strong>{{ "{:,.0f}".format(r.amount_confirmed) }} с</strong>
           {% elif r.amount_detected %}
@@ -71,7 +71,7 @@
             —
           {% endif %}
         </td>
-        <td>
+        <td data-label="Статус">
           {% if r.row_type == 'manual' or r.ocr_status == 'manual' %}
             <span class="badge" style="background:#e0e7ff;color:#3730a3">Вручную</span>
           {% else %}
@@ -85,8 +85,8 @@
             </span>
           {% endif %}
         </td>
-        <td style="text-align:right;white-space:nowrap">
-          <span style="color:var(--text-muted);font-size:18px;margin-right:8px">›</span>
+        <td class="actions">
+          <span style="color:var(--text-muted);font-size:18px;margin-right:4px">›</span>
           <form method="post" action="/expenses/{{ r.id }}/delete" style="display:inline"
                 onsubmit="return confirm('Удалить квитанцию и фото?')">
             <input type="hidden" name="org_id" value="{{ current_org_id or '' }}">

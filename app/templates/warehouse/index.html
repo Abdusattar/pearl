@@ -38,17 +38,17 @@
       </tr>
       {% endif %}
       <tr>
-        <td style="font-weight:500">{{ b.product.name }}</td>
-        <td style="color:var(--text-muted);font-size:13px">{{ b.product.unit or 'кг' }}</td>
-        <td style="text-align:right;color:var(--text-muted);font-size:13px">{{ "%.2f"|format(b.received) }}</td>
-        <td style="text-align:right;color:var(--text-muted);font-size:13px">{{ "%.2f"|format(b.written) }}</td>
-        <td style="text-align:right;font-weight:700;color:{% if b.balance < 1 %}var(--danger){% elif b.balance < 3 %}#f59e0b{% else %}var(--text){% endif %}">
+        <td data-label="Продукт" style="font-weight:500">{{ b.product.name }}</td>
+        <td data-label="Ед." style="color:var(--text-muted);font-size:13px">{{ b.product.unit or 'кг' }}</td>
+        <td data-label="Приход" style="text-align:right;color:var(--text-muted);font-size:13px">{{ "%.2f"|format(b.received) }}</td>
+        <td data-label="Расход" style="text-align:right;color:var(--text-muted);font-size:13px">{{ "%.2f"|format(b.written) }}</td>
+        <td data-label="Остаток" style="text-align:right;font-weight:700;color:{% if b.balance < 1 %}var(--danger){% elif b.balance < 3 %}#f59e0b{% else %}var(--text){% endif %}">
           {{ "%.3f"|format(b.balance)|replace('.000','') }}
         </td>
-        <td style="text-align:right;font-size:13px;color:var(--text-muted)">
+        <td data-label="Ср.цена" style="text-align:right;font-size:13px;color:var(--text-muted)">
           {% if b.avg_price > 0 %}{{ "{:,.0f}".format(b.avg_price) }} с{% endif %}
         </td>
-        <td style="text-align:right;font-size:13px">
+        <td data-label="Стоимость" style="text-align:right;font-size:13px">
           {% if b.balance_value > 0 %}{{ "{:,.0f}".format(b.balance_value) }} с{% endif %}
         </td>
       </tr>

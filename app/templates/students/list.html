@@ -40,23 +40,23 @@
     <tbody>
       {% for s in students %}
       <tr>
-        <td>
+        <td data-label="PIN">
           <span style="font-family:monospace;font-weight:700;font-size:15px;color:var(--primary)">
             {{ s.pin }}
           </span>
         </td>
-        <td>{{ s.name }}</td>
-        <td style="color:var(--text-muted);font-size:13px">
+        <td data-label="ФИО">{{ s.name }}</td>
+        <td data-label="Группа" style="color:var(--text-muted);font-size:13px">
           — {# группы будут позже #}
         </td>
-        <td style="color:var(--text-muted);font-size:13px">
+        <td data-label="Оплата" style="color:var(--text-muted);font-size:13px">
           {% if s.extra and s.extra.monthly_fee %}
             {{ "{:,.0f}".format(s.extra.monthly_fee) }} с
           {% else %}
             —
           {% endif %}
         </td>
-        <td>
+        <td class="actions">
           <form method="post" action="/students/{{ s.id }}/deactivate"
                 onsubmit="return confirm('Перевести {{ s.name }} в выбывшие? PIN {{ s.pin }} освободится.')">
             <button type="submit" class="btn btn-secondary"
