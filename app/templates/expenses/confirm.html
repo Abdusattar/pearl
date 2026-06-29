@@ -238,7 +238,7 @@
         </div>
 
         <div style="display:flex;gap:12px;margin-top:8px">
-          <button type="submit" name="action" value="confirm" class="btn btn-success"
+          <button type="submit" name="action" value="confirm" id="btn-confirm" class="btn btn-success"
                   style="flex:1;min-height:48px;font-size:16px">✓ Провести</button>
           <button type="submit" name="action" value="reject" class="btn btn-danger">Отклонить</button>
         </div>
@@ -482,5 +482,13 @@ function disableSplit() {
   document.getElementById('single-cat-block').style.display = '';
   document.getElementById('single-cat-select').setAttribute('required', '');
 }
+
+// Loading state на кнопке Провести
+document.querySelector('form')?.addEventListener('submit', function(e) {
+  const btn = document.getElementById('btn-confirm');
+  if (!btn || e.submitter?.value !== 'confirm') return;
+  btn.disabled = true;
+  btn.textContent = '⏳ Обработка...';
+});
 </script>
 {% endblock %}

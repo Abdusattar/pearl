@@ -132,10 +132,28 @@
   /* SPLIT */
   .split-row { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
 
+  /* BOTTOM NAV (mobile) */
+  .bottom-nav {
+    display: none;
+    position: fixed; bottom: 0; left: 0; right: 0;
+    background: var(--surface); border-top: 1px solid var(--border);
+    z-index: 200; padding-bottom: env(safe-area-inset-bottom);
+  }
+  .bottom-nav ul { display: flex; list-style: none; margin: 0; padding: 0; }
+  .bottom-nav li { flex: 1; }
+  .bottom-nav a {
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    padding: 8px 4px 6px; text-decoration: none; font-size: 10px;
+    color: var(--text-muted); gap: 3px; min-height: 52px;
+  }
+  .bottom-nav a.active { color: var(--primary); }
+  .bottom-nav a span.nav-icon { font-size: 20px; line-height: 1; }
+
   /* RESPONSIVE */
   @media (max-width: 768px) {
     .sidebar { display: none; }
-    .main { margin-left: 0; padding: 16px; }
+    .bottom-nav { display: block; }
+    .main { margin-left: 0; padding: 16px; padding-bottom: 72px; }
     .split-row { grid-template-columns: 1fr; }
     .upload-zone { padding: 30px 16px; }
     .btn-camera { width: 100%; justify-content: center; padding: 18px; font-size: 16px; }
@@ -183,6 +201,26 @@
 <main class="main">
   {% block content %}{% endblock %}
 </main>
+
+<nav class="bottom-nav">
+  <ul>
+    <li><a href="/expenses/" class="{% if active_page == 'expenses' %}active{% endif %}">
+      <span class="nav-icon">💸</span>Расходы
+    </a></li>
+    <li><a href="/income/" class="{% if active_page == 'income' %}active{% endif %}">
+      <span class="nav-icon">💰</span>Приход
+    </a></li>
+    <li><a href="/students/" class="{% if active_page == 'students' %}active{% endif %}">
+      <span class="nav-icon">👦</span>Ученики
+    </a></li>
+    <li><a href="/warehouse/" class="{% if active_page == 'warehouse' %}active{% endif %}">
+      <span class="nav-icon">📦</span>Склад
+    </a></li>
+    <li><a href="/reports/" class="{% if active_page == 'reports' %}active{% endif %}">
+      <span class="nav-icon">📊</span>Отчёты
+    </a></li>
+  </ul>
+</nav>
 
 <script>
 // Org switcher preserves other query params
