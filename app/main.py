@@ -19,7 +19,7 @@ app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
 templates = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
 
-from app.routers import expenses, students, optima, auth, income, warehouse, suppliers, services
+from app.routers import expenses, students, optima, auth, income, warehouse, suppliers, services, reports
 app.include_router(auth.router)
 app.include_router(expenses.router)
 app.include_router(students.router)
@@ -28,6 +28,7 @@ app.include_router(warehouse.router)
 app.include_router(optima.router)
 app.include_router(suppliers.router)
 app.include_router(services.router)
+app.include_router(reports.router)
 
 
 @app.get("/")

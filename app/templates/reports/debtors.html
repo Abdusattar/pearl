@@ -1,0 +1,80 @@
+{% extends "base.html" %}
+{% block title %}Долги и переплаты — Жемчужина{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <h1>Долги и переплаты</h1>
+</div>
+
+<div class="card" style="margin-bottom:16px;display:flex;gap:24px;flex-wrap:wrap">
+  <div>
+    <div style="font-size:12px;color:var(--text-muted)">Общий долг</div>
+    <div style="font-size:22px;font-weight:700;color:#dc2626">{{ "{:,.0f}".format(total_debt) }} с</div>
+  </div>
+  <div>
+    <div style="font-size:12px;color:var(--text-muted)">Общая переплата</div>
+    <div style="font-size:22px;font-weight:700;color:#16a34a">{{ "{:,.0f}".format(total_overpaid) }} с</div>
+  </div>
+</div>
+
+<div class="card">
+  <div class="filters">
+    <form method="get" style="display:flex;gap:10px;flex-wrap:wrap;width:100%">
+      <input type="hidden" name="org_id" value="{{ current_org_id }}">
+      {% if available_groups %}
+      <select name="group_id" class="form-control" style="width:auto" onchange="this.form.submit()">
+        <option value="">Все группы</option>
+        {% for g in available_groups %}
+        <option value="{{ g.id }}" {% if g.id == current_group_id %}selected{% endif %}>{{ g.name }}</option>
+        {% endfor %}
+      </select>
+      {% endif %}
+      {% if current_group_id %}
+        <a href="/reports/?org_id={{ current_org_id }}" class="btn btn-secondary">Сбросить</a>
+      {% endif %}
+    </form>
+  </div>
+
+  {% if students %}
+  <table class="table">
+    <thead>
+      <tr>
+        <th style="width:70px">PIN</th>
+        <th>ФИО ребёнка</th>
+        <th>Группа</th>
+        <th style="text-align:right">Баланс</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for s in students %}
+      {% set balance = balances.get(s.id, 0) %}
+      <tr>
+        <td data-label="PIN">
+          <span style="font-family:monospace;font-weight:700;font-size:15px;color:var(--primary)">
+            {{ s.pin }}
+          </span>
+        </td>
+        <td data-label="ФИО">
+          <a href="/students/{{ s.id }}/edit">{{ s.name }}</a>
+        </td>
+        <td data-label="Группа" style="color:var(--text-muted);font-size:13px">
+          {{ groups_by_student.get(s.id, "—") }}
+        </td>
+        <td data-label="Баланс" style="text-align:right;font-weight:600">
+          {% if balance > 0 %}
+            <span style="color:#dc2626">−{{ "{:,.0f}".format(balance) }}</span>
+          {% elif balance < 0 %}
+            <span style="color:#16a34a">+{{ "{:,.0f}".format(-balance) }}</span>
+          {% else %}
+            <span style="color:var(--text-muted)">0</span>
+          {% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <div style="text-align:center;padding:40px 20px;color:var(--text-muted)">Детей нет</div>
+  {% endif %}
+</div>
+{% endblock %}

@@ -12,7 +12,7 @@ from app.services.students import (
     get_next_free_pin, deactivate_student, update_student, archive_stale_students,
 )
 from app.services.billing import (
-    generate_monthly_charges, get_balances, get_balance, add_manual_charge, set_student_services,
+    generate_monthly_charges, get_balance, add_manual_charge, set_student_services,
 )
 from app.dependencies import get_current_user, get_accessible_orgs, resolve_org
 
@@ -92,15 +92,12 @@ def list_students(
         .all()
     )
 
-    balances = get_balances(db, [s.id for s in students])
-
     return templates.TemplateResponse("students/list.html", {
         "request": request,
         "students": students,
         "available_groups": available_groups,
         "current_group_id": group_id_int,
         "groups_by_student": groups_by_student,
-        "balances": balances,
         "q": q or "",
         "accessible_orgs": accessible,
         "current_org_id": current_org.id if current_org else None,
