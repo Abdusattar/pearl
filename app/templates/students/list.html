@@ -34,6 +34,7 @@
         <th>ФИО ребёнка</th>
         <th>Группа</th>
         <th>Оплата / мес</th>
+        <th>Баланс</th>
         <th style="width:100px"></th>
       </tr>
     </thead>
@@ -54,6 +55,16 @@
             {{ "{:,.0f}".format(s.extra.monthly_fee) }} с
           {% else %}
             —
+          {% endif %}
+        </td>
+        <td data-label="Баланс" style="font-size:13px">
+          {% set balance = balances.get(s.id, 0) %}
+          {% if balance > 0 %}
+            <span style="color:#dc2626;font-weight:600">Долг {{ "{:,.0f}".format(balance) }} с</span>
+          {% elif balance < 0 %}
+            <span style="color:#16a34a;font-weight:600">Переплата {{ "{:,.0f}".format(-balance) }} с</span>
+          {% else %}
+            <span style="color:var(--text-muted)">0 с</span>
           {% endif %}
         </td>
         <td class="actions" style="display:flex;gap:6px">

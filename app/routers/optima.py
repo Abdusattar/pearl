@@ -3,7 +3,7 @@
 Optima сама шлёт GET-запросы сюда при каждом платеже через терминал/приложение.
 
 Поток:
-  1. command=check  → проверить PIN, вернуть ФИО ребёнка
+  1. command=check  → проверить PIN, вернуть ФИО ребёнка и группу/класс
   2. command=pay    → записать платёж в БД, вернуть наш ID транзакции
 
 Доступ: только с IP Optima (79.142.16.0/20) — настроить на уровне nginx/firewall при деплое.
@@ -18,7 +18,7 @@ from fastapi.responses import Response
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.models import Student, Transaction
+from app.models import Student, Transaction, Enrollment, Group
 
 router = APIRouter(prefix="/optima", tags=["optima"])
 log = logging.getLogger(__name__)
@@ -78,7 +78,14 @@ def optima_payment(
 
     # ── CHECK ────────────────────────────────────────────────────────────────
     if command == "check":
-        return _xml(txn_id, OK, student.name, sum_val=sum)
+        group = (
+            db.query(Group.name)
+            .join(Enrollment, Enrollment.group_id == Group.id)
+            .filter(Enrollment.student_id == student.id, Enrollment.end_date.is_(None))
+            .scalar()
+        )
+        comment = f"{student.name} — {group}" if group else student.name
+        return _xml(txn_id, OK, comment, sum_val=sum)
 
     # ── PAY ──────────────────────────────────────────────────────────────────
     if command == "pay":

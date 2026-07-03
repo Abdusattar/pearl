@@ -1,3 +1,4 @@
+from datetime import date, datetime
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, Form, Request
@@ -6,9 +7,12 @@ from fastapi.templating import Jinja2Templates
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.models import Organization, Student, User, Group, Enrollment
+from app.models import Organization, Student, User, Group, Enrollment, Service, StudentService, Charge
 from app.services.students import (
     get_next_free_pin, deactivate_student, update_student, archive_stale_students,
+)
+from app.services.billing import (
+    generate_monthly_charges, get_balances, get_balance, add_manual_charge, set_student_services,
 )
 from app.dependencies import get_current_user, get_accessible_orgs, resolve_org
 
@@ -32,6 +36,7 @@ def list_students(
         return RedirectResponse("/login", status_code=302)
 
     archive_stale_students(db)
+    generate_monthly_charges(db)
     db.commit()
 
     accessible = get_accessible_orgs(user, db)
@@ -69,10 +74,13 @@ def list_students(
         )
         groups_by_student = {sid: gname for sid, gname in rows}
 
+    balances = get_balances(db, [s.id for s in students])
+
     return templates.TemplateResponse("students/list.html", {
         "request": request,
         "students": students,
         "groups_by_student": groups_by_student,
+        "balances": balances,
         "q": q or "",
         "accessible_orgs": accessible,
         "current_org_id": current_org.id if current_org else None,
@@ -180,10 +188,31 @@ def _edit_context(db: Session, student: Student, error: str | None = None):
         .filter(Enrollment.student_id == student.id, Enrollment.end_date.is_(None))
         .first()
     )
+    services = (
+        db.query(Service)
+        .filter(Service.organization_id == student.organization_id, Service.deleted_at.is_(None))
+        .order_by(Service.name)
+        .all()
+    )
+    active_service_ids = {
+        ss.service_id for ss in db.query(StudentService).filter(
+            StudentService.student_id == student.id, StudentService.end_date.is_(None)
+        )
+    }
+    charges = (
+        db.query(Charge)
+        .filter(Charge.student_id == student.id)
+        .order_by(Charge.date.desc())
+        .all()
+    )
     return {
         "student": student,
         "groups": groups,
         "current_group_id": current_enrollment.group_id if current_enrollment else None,
+        "services": services,
+        "active_service_ids": active_service_ids,
+        "balance": get_balance(db, student.id),
+        "charges": charges,
         "current_org_id": student.organization_id,
         "active_page": "students",
         "error": error,
@@ -215,6 +244,8 @@ def edit_student(
     request: Request,
     name: str = Form(...),
     group_id: str = Form(""),
+    monthly_fee: str = Form(""),
+    service_ids: list[int] = Form(default=[]),
     db: Session = Depends(get_db),
 ):
     user = get_current_user(request, db)
@@ -236,9 +267,51 @@ def edit_student(
 
     gid = int(group_id) if group_id.isdigit() else None
     update_student(db, student_id, name, gid)
+
+    extra = dict(student.extra or {})
+    if monthly_fee.strip():
+        try:
+            extra["monthly_fee"] = float(monthly_fee.strip())
+        except ValueError:
+            pass
+    else:
+        extra.pop("monthly_fee", None)
+    student.extra = extra or None
+
+    set_student_services(db, student_id, service_ids)
     db.commit()
 
     return RedirectResponse(f"/students/?org_id={student.organization_id}", status_code=303)
+
+
+# ── РУЧНОЕ НАЧИСЛЕНИЕ (корректировка долга) ─────────────────────────────────────
+
+@router.post("/{student_id}/charge")
+def create_charge(
+    student_id: int,
+    request: Request,
+    amount: str = Form(...),
+    description: str = Form(...),
+    db: Session = Depends(get_db),
+):
+    user = get_current_user(request, db)
+    if not user:
+        return RedirectResponse("/login", status_code=302)
+
+    student = db.query(Student).filter(Student.id == student_id).first()
+    if not student:
+        return RedirectResponse("/students/", status_code=302)
+
+    try:
+        amount_val = float(amount)
+    except ValueError:
+        amount_val = 0
+
+    if amount_val:
+        add_manual_charge(db, student_id, amount_val, description.strip() or "Корректировка", date.today())
+        db.commit()
+
+    return RedirectResponse(f"/students/{student_id}/edit", status_code=303)
 
 
 # ── DEACTIVATE ────────────────────────────────────────────────────────────────

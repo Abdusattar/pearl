@@ -209,6 +209,43 @@ class WriteOff(Base):
     organization = relationship("Organization")
 
 
+class Service(Base):
+    """Доп. услуга с фиксированной ценой (проезд, секция и т.п.).
+    Учёба сюда не входит — у неё индивидуальный тариф на Student.extra.monthly_fee."""
+    __tablename__ = "services"
+    id              = Column(Integer, primary_key=True)
+    organization_id = Column(Integer, ForeignKey("organizations.id"), nullable=False)
+    name            = Column(String(100), nullable=False)
+    price           = Column(Numeric(10, 2), nullable=False)
+    created_at      = Column(DateTime, server_default=func.now())
+    deleted_at      = Column(DateTime)
+
+
+class StudentService(Base):
+    """Подключение услуги ребёнку — с историей (start_date/end_date), как Enrollment."""
+    __tablename__ = "student_services"
+    id         = Column(Integer, primary_key=True)
+    student_id = Column(Integer, ForeignKey("students.id"), nullable=False)
+    service_id = Column(Integer, ForeignKey("services.id"), nullable=False)
+    start_date = Column(Date, nullable=False)
+    end_date   = Column(Date)
+    created_at = Column(DateTime, server_default=func.now())
+
+    service = relationship("Service")
+
+
+class Charge(Base):
+    """Начисление ребёнку (ежемесячная учёба+услуги, либо ручная корректировка).
+    Баланс = сумма Charge - сумма Transaction(type=income) по этому student_id."""
+    __tablename__ = "charges"
+    id          = Column(Integer, primary_key=True)
+    student_id  = Column(Integer, ForeignKey("students.id"), nullable=False)
+    amount      = Column(Numeric(12, 2), nullable=False)
+    description = Column(Text)
+    date        = Column(Date, nullable=False)
+    created_at  = Column(DateTime, server_default=func.now())
+
+
 class AuditLog(Base):
     __tablename__ = "audit_log"
     id          = Column(Integer, primary_key=True)

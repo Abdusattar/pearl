@@ -7,7 +7,7 @@
   <a href="/students/?org_id={{ current_org_id }}" class="btn btn-secondary">← Назад</a>
 </div>
 
-<div class="card" style="max-width:480px">
+<div class="card" style="max-width:560px;margin-bottom:20px">
   {% if error %}
   <div class="alert alert-error" style="margin-bottom:18px">{{ error }}</div>
   {% endif %}
@@ -43,9 +43,79 @@
       </select>
     </div>
 
+    <div class="form-group">
+      <label for="monthly_fee">Тариф за учёбу, сом/мес</label>
+      <input type="number" id="monthly_fee" name="monthly_fee" class="form-control"
+             value="{{ student.extra.monthly_fee if student.extra and student.extra.monthly_fee else '' }}"
+             placeholder="7500">
+    </div>
+
+    {% if services %}
+    <div class="form-group">
+      <label>Доп. услуги</label>
+      <div style="display:flex;flex-direction:column;gap:6px">
+        {% for s in services %}
+        <label style="display:flex;align-items:center;gap:8px;font-weight:400;cursor:pointer">
+          <input type="checkbox" name="service_ids" value="{{ s.id }}"
+                 {% if s.id in active_service_ids %}checked{% endif %}>
+          {{ s.name }} — {{ "{:,.0f}".format(s.price) }} с/мес
+        </label>
+        {% endfor %}
+      </div>
+    </div>
+    {% endif %}
+
     <button type="submit" class="btn btn-primary btn-lg" style="width:100%">
       Сохранить
     </button>
+  </form>
+</div>
+
+<div class="card" style="max-width:560px;margin-bottom:20px">
+  <h3 style="font-size:15px;margin-bottom:10px">Баланс</h3>
+  {% if balance > 0 %}
+    <div style="font-size:20px;font-weight:700;color:#dc2626">Долг: {{ "{:,.0f}".format(balance) }} с</div>
+  {% elif balance < 0 %}
+    <div style="font-size:20px;font-weight:700;color:#16a34a">Переплата: {{ "{:,.0f}".format(-balance) }} с</div>
+  {% else %}
+    <div style="font-size:20px;font-weight:700;color:var(--text-muted)">Баланс: 0 с</div>
+  {% endif %}
+
+  <details style="margin-top:14px">
+    <summary style="cursor:pointer;font-size:13px;color:var(--text-muted)">История начислений ({{ charges|length }})</summary>
+    <table class="table" style="margin-top:10px">
+      <thead><tr><th>Дата</th><th>Сумма</th><th>Описание</th></tr></thead>
+      <tbody>
+        {% for c in charges %}
+        <tr>
+          <td data-label="Дата">{{ c.date.strftime("%d.%m.%Y") }}</td>
+          <td data-label="Сумма">{{ "{:,.0f}".format(c.amount) }} с</td>
+          <td data-label="Описание">{{ c.description or '—' }}</td>
+        </tr>
+        {% else %}
+        <tr><td colspan="3" style="text-align:center;color:var(--text-muted)">Начислений ещё не было</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </details>
+</div>
+
+<div class="card" style="max-width:560px">
+  <h3 style="font-size:15px;margin-bottom:14px">Ручная корректировка</h3>
+  <form method="post" action="/students/{{ student.id }}/charge" style="display:flex;flex-direction:column;gap:10px">
+    <div class="split-row">
+      <div class="form-group" style="margin-bottom:0">
+        <label>Сумма (сом) *</label>
+        <input type="number" name="amount" class="form-control" required
+               placeholder="Положительная — долг, отрицательная — переплата/списание">
+      </div>
+      <div class="form-group" style="margin-bottom:0">
+        <label>Описание *</label>
+        <input type="text" name="description" class="form-control" required
+               placeholder="Долг на начало года, скидка...">
+      </div>
+    </div>
+    <button type="submit" class="btn btn-secondary" style="align-self:flex-start">Добавить начисление</button>
   </form>
 </div>
 {% endblock %}
