@@ -23,7 +23,7 @@ from app.models import Student, Transaction
 router = APIRouter(prefix="/optima", tags=["optima"])
 log = logging.getLogger(__name__)
 
-PIN_RE = re.compile(r'^\d{3}$')
+PIN_RE = re.compile(r'^\d{4}$')
 
 # Коды завершения согласно протоколу (Приложение А)
 OK              = 0

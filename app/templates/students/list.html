@@ -47,7 +47,7 @@
         </td>
         <td data-label="ФИО">{{ s.name }}</td>
         <td data-label="Группа" style="color:var(--text-muted);font-size:13px">
-          — {# группы будут позже #}
+          {{ groups_by_student.get(s.id, "—") }}
         </td>
         <td data-label="Оплата" style="color:var(--text-muted);font-size:13px">
           {% if s.extra and s.extra.monthly_fee %}
@@ -56,9 +56,13 @@
             —
           {% endif %}
         </td>
-        <td class="actions">
+        <td class="actions" style="display:flex;gap:6px">
+          <a href="/students/{{ s.id }}/edit" class="btn btn-secondary"
+             style="padding:5px 10px;font-size:12px">
+            Изменить
+          </a>
           <form method="post" action="/students/{{ s.id }}/deactivate"
-                onsubmit="return confirm('Перевести {{ s.name }} в выбывшие? PIN {{ s.pin }} освободится.')">
+                onsubmit="return confirm('Перевести {{ s.name }} в выбывшие?')">
             <button type="submit" class="btn btn-secondary"
                     style="padding:5px 10px;font-size:12px;color:var(--text-muted)">
               Выбыл
