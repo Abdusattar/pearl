@@ -28,6 +28,7 @@ def list_students(
     request: Request,
     org_id: str | None = None,
     q: str | None = None,
+    group_id: str | None = None,
     db: Session = Depends(get_db),
 ):
     org_id = int(org_id) if org_id and org_id.isdigit() else None
@@ -42,22 +43,32 @@ def list_students(
     accessible = get_accessible_orgs(user, db)
     current_org = resolve_org(org_id, user, db)
 
+    # Рекурсивно собираем все дочерние орги (внуки тоже)
+    all_orgs = db.query(Organization).all()
+    def descendants(oid):
+        ids = {oid}
+        for o in all_orgs:
+            if o.parent_id == oid:
+                ids |= descendants(o.id)
+        return ids
+
+    org_ids = descendants(current_org.id) if current_org else {o.id for o in accessible}
+
     query = db.query(Student).filter(Student.status == "active")
     if current_org:
-        # Рекурсивно собираем все дочерние орги (внуки тоже)
-        all_orgs = db.query(Organization).all()
-        def descendants(org_id):
-            ids = {org_id}
-            for o in all_orgs:
-                if o.parent_id == org_id:
-                    ids |= descendants(o.id)
-            return ids
-        org_ids = descendants(current_org.id)
         query = query.filter(Student.organization_id.in_(org_ids))
     if q:
         query = query.filter(
             Student.name.ilike(f"%{q}%") | Student.pin.ilike(f"%{q}%")
         )
+
+    group_id_int = int(group_id) if group_id and group_id.isdigit() else None
+    if group_id_int:
+        query = query.filter(Student.id.in_(
+            db.query(Enrollment.student_id).filter(
+                Enrollment.group_id == group_id_int, Enrollment.end_date.is_(None)
+            )
+        ))
 
     students = query.order_by(Student.pin).all()
 
@@ -74,11 +85,20 @@ def list_students(
         )
         groups_by_student = {sid: gname for sid, gname in rows}
 
+    available_groups = (
+        db.query(Group)
+        .filter(Group.organization_id.in_(org_ids))
+        .order_by(Group.name)
+        .all()
+    )
+
     balances = get_balances(db, [s.id for s in students])
 
     return templates.TemplateResponse("students/list.html", {
         "request": request,
         "students": students,
+        "available_groups": available_groups,
+        "current_group_id": group_id_int,
         "groups_by_student": groups_by_student,
         "balances": balances,
         "q": q or "",

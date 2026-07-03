@@ -19,8 +19,16 @@
         class="form-control"
         style="max-width:300px"
       >
+      {% if available_groups %}
+      <select name="group_id" class="form-control" style="width:auto" onchange="this.form.submit()">
+        <option value="">Все группы</option>
+        {% for g in available_groups %}
+        <option value="{{ g.id }}" {% if g.id == current_group_id %}selected{% endif %}>{{ g.name }}</option>
+        {% endfor %}
+      </select>
+      {% endif %}
       <button type="submit" class="btn btn-secondary">Найти</button>
-      {% if q %}
+      {% if q or current_group_id %}
         <a href="/students/?org_id={{ current_org_id }}" class="btn btn-secondary">Сбросить</a>
       {% endif %}
     </form>
@@ -57,14 +65,14 @@
             —
           {% endif %}
         </td>
-        <td data-label="Баланс" style="font-size:13px">
+        <td data-label="Баланс" style="font-size:13px;font-weight:600">
           {% set balance = balances.get(s.id, 0) %}
           {% if balance > 0 %}
-            <span style="color:#dc2626;font-weight:600">Долг {{ "{:,.0f}".format(balance) }} с</span>
+            <span style="color:#dc2626">−{{ "{:,.0f}".format(balance) }}</span>
           {% elif balance < 0 %}
-            <span style="color:#16a34a;font-weight:600">Переплата {{ "{:,.0f}".format(-balance) }} с</span>
+            <span style="color:#16a34a">+{{ "{:,.0f}".format(-balance) }}</span>
           {% else %}
-            <span style="color:var(--text-muted)">0 с</span>
+            <span style="color:var(--text-muted)">0</span>
           {% endif %}
         </td>
         <td class="actions" style="display:flex;gap:6px">
