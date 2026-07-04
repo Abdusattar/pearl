@@ -23,31 +23,50 @@ def get_student_by_pin(db: Session, pin: str) -> Student | None:
     return db.query(Student).filter(Student.pin == pin, Student.status == "active").first()
 
 
-def deactivate_student(db: Session, student_id: int) -> Student:
-    """Перевод в статус выбыл. PIN не переиспользуется — навсегда закреплён за ребёнком."""
+def compose_name(last_name: str, first_name: str, patronymic: str | None) -> str:
+    """Фамилия Имя [Отчество] — порядок как исторически принят в системе."""
+    parts = [last_name.strip(), first_name.strip()]
+    if patronymic and patronymic.strip():
+        parts.append(patronymic.strip())
+    return " ".join(p for p in parts if p)
+
+
+def update_student(
+    db: Session,
+    student_id: int,
+    last_name: str,
+    first_name: str,
+    patronymic: str,
+    group_id: int | None,
+    status: str | None = None,
+    parent_name: str | None = None,
+    parent_contact: str | None = None,
+) -> Student:
+    """Правка ФИО, группы, статуса и данных родителя. Смена группы закрывает
+    текущий Enrollment и открывает новый — история переводов между группами
+    сохраняется. Статус меняется в обе стороны (Активен ↔ Выбыл); PIN при этом
+    не меняется — навсегда закреплён за ребёнком. При переводе в «Выбыл» текущая
+    группа закрывается, новая не открывается."""
     student = db.query(Student).filter(Student.id == student_id).first()
     if not student:
         raise ValueError(f"Студент {student_id} не найден")
-    student.status = "inactive"
-    db.query(Enrollment).filter(
-        Enrollment.student_id == student_id, Enrollment.end_date.is_(None)
-    ).update({"end_date": date.today()})
-    db.flush()
-    return student
-
-
-def update_student(db: Session, student_id: int, name: str, group_id: int | None) -> Student:
-    """Правка ФИО и/или группы. Смена группы закрывает текущий Enrollment
-    и открывает новый — история переводов между группами сохраняется."""
-    student = db.query(Student).filter(Student.id == student_id).first()
-    if not student:
-        raise ValueError(f"Студент {student_id} не найден")
-    student.name = name.strip()
+    student.last_name = last_name.strip()
+    student.first_name = first_name.strip()
+    student.patronymic = (patronymic or "").strip() or None
+    student.name = compose_name(last_name, first_name, patronymic)
+    student.parent_name = (parent_name or "").strip() or None
+    student.parent_contact = (parent_contact or "").strip() or None
+    if status in ("active", "inactive"):
+        student.status = status
 
     current = db.query(Enrollment).filter(
         Enrollment.student_id == student_id, Enrollment.end_date.is_(None)
     ).first()
-    if group_id and (not current or current.group_id != group_id):
+
+    if student.status != "active":
+        if current:
+            current.end_date = date.today()
+    elif group_id and (not current or current.group_id != group_id):
         if current:
             current.end_date = date.today()
         db.add(Enrollment(student_id=student_id, group_id=group_id, start_date=date.today()))

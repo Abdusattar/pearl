@@ -32,13 +32,27 @@ def create_tables():
 
 @pytest.fixture()
 def db():
-    """Session with automatic rollback after each test."""
+    """Session with automatic rollback after each test.
+
+    Wraps the test in an outer transaction + a SAVEPOINT that's restarted
+    after every session.commit() — so code under test (e.g. route handlers)
+    can call db.commit() freely without ending the outer transaction early
+    and leaking rows into the dev DB. Standard SQLAlchemy test recipe.
+    """
     connection = engine.connect()
-    transaction = connection.begin()
+    outer_transaction = connection.begin()
     session = TestingSession(bind=connection)
+    nested = connection.begin_nested()
+
+    @event.listens_for(session, "after_transaction_end")
+    def _restart_savepoint(sess, trans):
+        nonlocal nested
+        if not nested.is_active:
+            nested = connection.begin_nested()
+
     yield session
     session.close()
-    transaction.rollback()
+    outer_transaction.rollback()
     connection.close()
 
 

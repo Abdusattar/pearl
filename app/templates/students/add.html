@@ -29,9 +29,21 @@
     </div>
 
     <div class="form-group">
-      <label for="name">ФИО ребёнка *</label>
-      <input type="text" id="name" name="name" class="form-control"
-             placeholder="Иванов Иван" autofocus required>
+      <label for="last_name">Фамилия ребёнка *</label>
+      <input type="text" id="last_name" name="last_name" class="form-control"
+             placeholder="Иванов" autofocus required>
+    </div>
+
+    <div class="form-group">
+      <label for="first_name">Имя ребёнка *</label>
+      <input type="text" id="first_name" name="first_name" class="form-control"
+             placeholder="Иван" required>
+    </div>
+
+    <div class="form-group">
+      <label for="patronymic">Отчество</label>
+      <input type="text" id="patronymic" name="patronymic" class="form-control"
+             placeholder="необязательно, если есть">
     </div>
 
     <div class="form-group">
@@ -47,20 +59,23 @@
     </div>
 
     <div class="form-group">
-      <label for="monthly_fee">Ежемесячная оплата (сом)</label>
-      <input type="number" id="monthly_fee" name="monthly_fee" class="form-control"
-             placeholder="7500">
+      <label for="parent_name">Имя родителя</label>
+      <input type="text" id="parent_name" name="parent_name" class="form-control"
+             placeholder="Айгуль">
     </div>
 
     <div class="form-group">
-      <label for="parent_contact">Контакт родителя</label>
+      <label for="parent_contact">Телефон родителя</label>
       <input type="text" id="parent_contact" name="parent_contact" class="form-control"
-             placeholder="+996 700 000 000 или Telegram">
+             placeholder="+996 700 000 000">
     </div>
 
     <button type="submit" class="btn btn-primary btn-lg" style="width:100%">
       Добавить ребёнка
     </button>
+    <div style="font-size:12px;color:var(--text-muted);margin-top:8px;text-align:center">
+      Тариф и доп.услуги — сразу после, на карточке ребёнка
+    </div>
   </form>
 </div>
 {% endblock %}

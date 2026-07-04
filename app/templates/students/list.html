@@ -27,6 +27,11 @@
         {% endfor %}
       </select>
       {% endif %}
+      <select name="status" class="form-control" style="width:auto" onchange="this.form.submit()">
+        <option value="active" {% if status == 'active' %}selected{% endif %}>Активные</option>
+        <option value="inactive" {% if status == 'inactive' %}selected{% endif %}>Выбывшие</option>
+        <option value="all" {% if status == 'all' %}selected{% endif %}>Все</option>
+      </select>
       <button type="submit" class="btn btn-secondary">Найти</button>
       {% if q or current_group_id %}
         <a href="/students/?org_id={{ current_org_id }}" class="btn btn-secondary">Сбросить</a>
@@ -41,12 +46,12 @@
         <th style="width:70px">PIN</th>
         <th>ФИО ребёнка</th>
         <th>Группа</th>
-        <th style="width:100px"></th>
+        <th style="width:90px">Статус</th>
       </tr>
     </thead>
     <tbody>
       {% for s in students %}
-      <tr>
+      <tr data-href="/students/{{ s.id }}/edit" style="cursor:pointer">
         <td data-label="PIN">
           <span style="font-family:monospace;font-weight:700;font-size:15px;color:var(--primary)">
             {{ s.pin }}
@@ -56,18 +61,12 @@
         <td data-label="Группа" style="color:var(--text-muted);font-size:13px">
           {{ groups_by_student.get(s.id, "—") }}
         </td>
-        <td class="actions" style="display:flex;gap:6px">
-          <a href="/students/{{ s.id }}/edit" class="btn btn-secondary"
-             style="padding:5px 10px;font-size:12px">
-            Изменить
-          </a>
-          <form method="post" action="/students/{{ s.id }}/deactivate"
-                onsubmit="return confirm('Перевести {{ s.name }} в выбывшие?')">
-            <button type="submit" class="btn btn-secondary"
-                    style="padding:5px 10px;font-size:12px;color:var(--text-muted)">
-              Выбыл
-            </button>
-          </form>
+        <td data-label="Статус">
+          {% if s.status == 'active' %}
+          <span class="badge badge-confirmed">Активен</span>
+          {% else %}
+          <span class="badge badge-pending">Выбыл</span>
+          {% endif %}
         </td>
       </tr>
       {% endfor %}
@@ -76,7 +75,7 @@
 
   <div style="padding-top:16px;border-top:1px solid var(--border);margin-top:4px;
               font-size:13px;color:var(--text-muted)">
-    Активных: <strong>{{ students|length }}</strong>
+    Показано: <strong>{{ students|length }}</strong>
     {% if q %} — по запросу «{{ q }}»{% endif %}
   </div>
 
@@ -90,4 +89,16 @@
   </div>
   {% endif %}
 </div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+document.querySelectorAll('tr[data-href]').forEach(function(row) {
+  row.addEventListener('click', function(e) {
+    if (!e.target.closest('a, button')) {
+      window.location = row.dataset.href;
+    }
+  });
+});
+</script>
 {% endblock %}

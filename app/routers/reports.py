@@ -20,6 +20,7 @@ def debtors_report(
     request: Request,
     org_id: str | None = None,
     group_id: str | None = None,
+    only_debtors: bool = False,
     db: Session = Depends(get_db),
 ):
     org_id = int(org_id) if org_id and org_id.isdigit() else None
@@ -71,6 +72,9 @@ def debtors_report(
 
     balances = get_balances(db, [s.id for s in students])
 
+    if only_debtors:
+        students = [s for s in students if balances.get(s.id, 0) > 0]
+
     available_groups = (
         db.query(Group)
         .filter(Group.organization_id.in_(org_ids))
@@ -88,6 +92,7 @@ def debtors_report(
         "balances": balances,
         "available_groups": available_groups,
         "current_group_id": group_id_int,
+        "only_debtors": only_debtors,
         "total_debt": total_debt,
         "total_overpaid": total_overpaid,
         "accessible_orgs": accessible,

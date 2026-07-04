@@ -1,15 +1,23 @@
 {% extends "base.html" %}
-{% block title %}Доходы — Жемчужина{% endblock %}
+{% block title %}Оплаты — Жемчужина{% endblock %}
 
 {% block content %}
 <div class="page-header">
-  <h1>Доходы{% if month_label %} — {{ month_label }}{% endif %}</h1>
+  <h1>Оплаты{% if month_label %} — {{ month_label }}{% endif %}</h1>
 </div>
 
 <div class="card">
   <div class="filters">
     <form method="get" style="display:flex;gap:10px;flex-wrap:wrap">
       <input type="hidden" name="org_id" value="{{ current_org_id }}">
+      <input
+        type="text"
+        name="q"
+        value="{{ q }}"
+        placeholder="Поиск по имени или PIN..."
+        class="form-control"
+        style="max-width:260px"
+      >
       <select name="month" class="form-control" style="width:auto" onchange="this.form.submit()">
         {% for m in available_months %}
         {% set parts = m.split('-') %}
@@ -22,6 +30,10 @@
         <option value="">— нет данных —</option>
         {% endif %}
       </select>
+      <button type="submit" class="btn btn-secondary">Найти</button>
+      {% if q %}
+        <a href="/income/?org_id={{ current_org_id }}&month={{ month }}" class="btn btn-secondary">Сбросить</a>
+      {% endif %}
     </form>
   </div>
 
@@ -33,6 +45,7 @@
         <th style="width:70px">PIN</th>
         <th>ФИО ребёнка</th>
         <th style="width:120px;text-align:right">Сумма</th>
+        <th style="width:120px;text-align:right">Баланс сейчас</th>
         <th style="width:80px;text-align:center">Источник</th>
       </tr>
     </thead>
@@ -40,7 +53,8 @@
       {% for row in rows %}
       {% set txn = row.Transaction %}
       {% set student = row.Student %}
-      <tr>
+      {% set balance = balances.get(student.id) if student else None %}
+      <tr {% if student %}data-href="/students/{{ student.id }}/history?source=income" style="cursor:pointer"{% endif %}>
         <td data-label="Дата" style="color:var(--text-muted);font-size:13px">
           {{ txn.date.strftime('%d.%m.%Y') }}
         </td>
@@ -58,6 +72,17 @@
         </td>
         <td data-label="Сумма" style="text-align:right;font-weight:600">
           {{ "{:,.0f}".format(txn.amount) }} с
+        </td>
+        <td data-label="Баланс сейчас" style="text-align:right;font-size:13px">
+          {% if balance is none %}
+          <span style="color:var(--text-muted)">—</span>
+          {% elif balance > 0 %}
+          <span style="color:#dc2626">−{{ "{:,.0f}".format(balance) }}</span>
+          {% elif balance < 0 %}
+          <span style="color:#16a34a">+{{ "{:,.0f}".format(-balance) }}</span>
+          {% else %}
+          <span style="color:var(--text-muted)">0</span>
+          {% endif %}
         </td>
         <td data-label="Источник" style="text-align:center">
           {% if txn.external_txn_id %}
@@ -90,4 +115,16 @@
   </div>
   {% endif %}
 </div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+document.querySelectorAll('tr[data-href]').forEach(function(row) {
+  row.addEventListener('click', function(e) {
+    if (!e.target.closest('a, button')) {
+      window.location = row.dataset.href;
+    }
+  });
+});
+</script>
 {% endblock %}

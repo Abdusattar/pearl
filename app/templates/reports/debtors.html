@@ -29,7 +29,12 @@
         {% endfor %}
       </select>
       {% endif %}
-      {% if current_group_id %}
+      <label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer;white-space:nowrap">
+        <input type="checkbox" name="only_debtors" value="true" {% if only_debtors %}checked{% endif %}
+               onchange="this.form.submit()">
+        Только с долгом
+      </label>
+      {% if current_group_id or only_debtors %}
         <a href="/reports/?org_id={{ current_org_id }}" class="btn btn-secondary">Сбросить</a>
       {% endif %}
     </form>
@@ -55,7 +60,7 @@
           </span>
         </td>
         <td data-label="ФИО">
-          <a href="/students/{{ s.id }}/edit">{{ s.name }}</a>
+          <a href="/students/{{ s.id }}/history">{{ s.name }}</a>
         </td>
         <td data-label="Группа" style="color:var(--text-muted);font-size:13px">
           {{ groups_by_student.get(s.id, "—") }}
@@ -74,7 +79,9 @@
     </tbody>
   </table>
   {% else %}
-  <div style="text-align:center;padding:40px 20px;color:var(--text-muted)">Детей нет</div>
+  <div style="text-align:center;padding:40px 20px;color:var(--text-muted)">
+    {% if only_debtors %}Должников нет{% else %}Детей нет{% endif %}
+  </div>
   {% endif %}
 </div>
 {% endblock %}

@@ -7,28 +7,86 @@
   <a href="/students/?org_id={{ current_org_id }}" class="btn btn-secondary">← Назад</a>
 </div>
 
+{% if error %}
+<div class="alert alert-error" style="max-width:560px;margin-bottom:18px">{{ error }}</div>
+{% endif %}
+
+<div style="max-width:560px;margin-bottom:20px">
+  <a href="/students/{{ student.id }}/history" class="btn btn-secondary">Баланс и история платежей →</a>
+</div>
+
 <div class="card" style="max-width:560px;margin-bottom:20px">
-  {% if error %}
-  <div class="alert alert-error" style="margin-bottom:18px">{{ error }}</div>
+  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
+    <h3 style="font-size:15px;margin:0">Личные данные</h3>
+    <button type="button" id="personal-edit-btn" class="btn btn-secondary"
+            style="padding:4px 10px;font-size:12px" onclick="toggleBlock('personal', true)">
+      Изменить
+    </button>
+  </div>
+
+  {% if saved == 'personal' %}
+  <div class="alert alert-success">Сохранено</div>
   {% endif %}
 
-  <form method="post" action="/students/{{ student.id }}/edit">
+  <div class="form-group">
+    <label>PIN</label>
+    <div style="padding:10px 14px;background:var(--bg);border:1px solid var(--border);
+                border-radius:8px;font-family:monospace;font-size:18px;
+                font-weight:700;color:var(--primary);letter-spacing:2px">
+      {{ student.pin }}
+    </div>
+    <div style="font-size:12px;color:var(--text-muted);margin-top:4px">
+      PIN не меняется — закреплён за ребёнком навсегда
+    </div>
+  </div>
+
+  <div id="personal-view">
     <div class="form-group">
-      <label>PIN</label>
-      <div style="padding:10px 14px;background:var(--bg);border:1px solid var(--border);
-                  border-radius:8px;font-family:monospace;font-size:18px;
-                  font-weight:700;color:var(--primary);letter-spacing:2px">
-        {{ student.pin }}
+      <label>ФИО ребёнка</label>
+      <div>{{ student.name }}</div>
+    </div>
+    <div class="form-group">
+      <label>Группа</label>
+      <div>{{ current_group_name or "— без группы —" }}</div>
+    </div>
+    <div class="form-group">
+      <label>Статус</label>
+      <div>
+        {% if student.status == 'active' %}
+        <span class="badge badge-confirmed">Активен</span>
+        {% else %}
+        <span class="badge badge-pending">Выбыл</span>
+        {% endif %}
       </div>
-      <div style="font-size:12px;color:var(--text-muted);margin-top:4px">
-        PIN не меняется — закреплён за ребёнком навсегда
-      </div>
+    </div>
+    <div class="form-group">
+      <label>Имя родителя</label>
+      <div>{{ student.parent_name or "— не указано —" }}</div>
+    </div>
+    <div class="form-group" style="margin-bottom:0">
+      <label>Телефон родителя</label>
+      <div>{{ student.parent_contact or "— не указан —" }}</div>
+    </div>
+  </div>
+
+  <form method="post" action="/students/{{ student.id }}/edit" id="personal-form" style="display:none"
+        onsubmit="return confirm('Сохранить изменения?')">
+    <div class="form-group">
+      <label for="last_name">Фамилия ребёнка *</label>
+      <input type="text" id="last_name" name="last_name" class="form-control"
+             value="{{ student.last_name or '' }}" required>
     </div>
 
     <div class="form-group">
-      <label for="name">ФИО ребёнка *</label>
-      <input type="text" id="name" name="name" class="form-control"
-             value="{{ student.name }}" autofocus required>
+      <label for="first_name">Имя ребёнка *</label>
+      <input type="text" id="first_name" name="first_name" class="form-control"
+             value="{{ student.first_name or '' }}" required>
+    </div>
+
+    <div class="form-group">
+      <label for="patronymic">Отчество</label>
+      <input type="text" id="patronymic" name="patronymic" class="form-control"
+             value="{{ student.patronymic or '' }}" placeholder="необязательно, если есть">
     </div>
 
     <div class="form-group">
@@ -43,6 +101,61 @@
       </select>
     </div>
 
+    <div class="form-group">
+      <label for="status">Статус</label>
+      <select id="status" name="status" class="form-control">
+        <option value="active" {% if student.status == 'active' %}selected{% endif %}>Активен</option>
+        <option value="inactive" {% if student.status == 'inactive' %}selected{% endif %}>Выбыл</option>
+      </select>
+    </div>
+
+    <div class="form-group">
+      <label for="parent_name">Имя родителя</label>
+      <input type="text" id="parent_name" name="parent_name" class="form-control"
+             value="{{ student.parent_name or '' }}">
+    </div>
+
+    <div class="form-group" style="margin-bottom:0">
+      <label for="parent_contact">Телефон родителя</label>
+      <input type="text" id="parent_contact" name="parent_contact" class="form-control"
+             value="{{ student.parent_contact or '' }}" placeholder="+996 700 000 000">
+    </div>
+
+    <div style="display:flex;gap:10px;margin-top:18px">
+      <button type="submit" class="btn btn-primary" style="flex:1">Сохранить</button>
+      <button type="button" class="btn btn-secondary" onclick="toggleBlock('personal', false)">Отмена</button>
+    </div>
+  </form>
+</div>
+
+<div class="card" style="max-width:560px;margin-bottom:20px">
+  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
+    <h3 style="font-size:15px;margin:0">Оплата</h3>
+    <button type="button" id="billing-edit-btn" class="btn btn-secondary"
+            style="padding:4px 10px;font-size:12px" onclick="toggleBlock('billing', true)">
+      Изменить
+    </button>
+  </div>
+
+  {% if saved == 'billing' %}
+  <div class="alert alert-success">Сохранено</div>
+  {% endif %}
+
+  <div id="billing-view">
+    <div class="form-group">
+      <label>Тариф за учёбу, сом/мес</label>
+      <div>{{ "{:,.0f}".format(student.extra.monthly_fee) if student.extra and student.extra.monthly_fee else "— не задан —" }}</div>
+    </div>
+    {% if services %}
+    <div class="form-group" style="margin-bottom:0">
+      <label>Доп. услуги</label>
+      <div>{{ active_services|map(attribute='name')|join(', ') if active_services else "— нет —" }}</div>
+    </div>
+    {% endif %}
+  </div>
+
+  <form method="post" action="/students/{{ student.id }}/billing" id="billing-form" style="display:none"
+        onsubmit="return confirm('Сохранить изменения?')">
     <div class="form-group">
       <label for="monthly_fee">Тариф за учёбу, сом/мес</label>
       <input type="number" id="monthly_fee" name="monthly_fee" class="form-control"
@@ -65,57 +178,21 @@
     </div>
     {% endif %}
 
-    <button type="submit" class="btn btn-primary btn-lg" style="width:100%">
-      Сохранить
-    </button>
-  </form>
-</div>
-
-<div class="card" style="max-width:560px;margin-bottom:20px">
-  <h3 style="font-size:15px;margin-bottom:10px">Баланс</h3>
-  {% if balance > 0 %}
-    <div style="font-size:20px;font-weight:700;color:#dc2626">Долг: {{ "{:,.0f}".format(balance) }} с</div>
-  {% elif balance < 0 %}
-    <div style="font-size:20px;font-weight:700;color:#16a34a">Переплата: {{ "{:,.0f}".format(-balance) }} с</div>
-  {% else %}
-    <div style="font-size:20px;font-weight:700;color:var(--text-muted)">Баланс: 0 с</div>
-  {% endif %}
-
-  <details style="margin-top:14px">
-    <summary style="cursor:pointer;font-size:13px;color:var(--text-muted)">История начислений ({{ charges|length }})</summary>
-    <table class="table" style="margin-top:10px">
-      <thead><tr><th>Дата</th><th>Сумма</th><th>Описание</th></tr></thead>
-      <tbody>
-        {% for c in charges %}
-        <tr>
-          <td data-label="Дата">{{ c.date.strftime("%d.%m.%Y") }}</td>
-          <td data-label="Сумма">{{ "{:,.0f}".format(c.amount) }} с</td>
-          <td data-label="Описание">{{ c.description or '—' }}</td>
-        </tr>
-        {% else %}
-        <tr><td colspan="3" style="text-align:center;color:var(--text-muted)">Начислений ещё не было</td></tr>
-        {% endfor %}
-      </tbody>
-    </table>
-  </details>
-</div>
-
-<div class="card" style="max-width:560px">
-  <h3 style="font-size:15px;margin-bottom:14px">Ручная корректировка</h3>
-  <form method="post" action="/students/{{ student.id }}/charge" style="display:flex;flex-direction:column;gap:10px">
-    <div class="split-row">
-      <div class="form-group" style="margin-bottom:0">
-        <label>Сумма (сом) *</label>
-        <input type="number" name="amount" class="form-control" required
-               placeholder="Положительная — долг, отрицательная — переплата/списание">
-      </div>
-      <div class="form-group" style="margin-bottom:0">
-        <label>Описание *</label>
-        <input type="text" name="description" class="form-control" required
-               placeholder="Долг на начало года, скидка...">
-      </div>
+    <div style="display:flex;gap:10px;margin-top:8px">
+      <button type="submit" class="btn btn-primary" style="flex:1">Сохранить</button>
+      <button type="button" class="btn btn-secondary" onclick="toggleBlock('billing', false)">Отмена</button>
     </div>
-    <button type="submit" class="btn btn-secondary" style="align-self:flex-start">Добавить начисление</button>
   </form>
 </div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+function toggleBlock(name, editing) {
+  document.getElementById(name + '-view').style.display = editing ? 'none' : '';
+  document.getElementById(name + '-form').style.display = editing ? '' : 'none';
+  document.getElementById(name + '-edit-btn').style.display = editing ? 'none' : '';
+  if (!editing) document.getElementById(name + '-form').reset();
+}
+</script>
 {% endblock %}

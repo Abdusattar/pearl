@@ -1,0 +1,49 @@
+{% extends "base.html" %}
+{% block title %}Баланс и история — {{ student.name }} — Жемчужина{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <h1>{{ student.name }}</h1>
+  <a href="{{ back_url }}" class="btn btn-secondary">{{ back_label }}</a>
+</div>
+
+<div class="card" style="max-width:560px;margin-bottom:20px">
+  <h3 style="font-size:15px;margin-bottom:10px">Баланс</h3>
+  {% if balance > 0 %}
+    <div style="font-size:20px;font-weight:700;color:#dc2626">Долг: {{ "{:,.0f}".format(balance) }} с</div>
+  {% elif balance < 0 %}
+    <div style="font-size:20px;font-weight:700;color:#16a34a">Переплата: {{ "{:,.0f}".format(-balance) }} с</div>
+  {% else %}
+    <div style="font-size:20px;font-weight:700;color:var(--text-muted)">Баланс: 0 с</div>
+  {% endif %}
+
+  <div style="margin-top:18px">
+    <div style="font-size:13px;color:var(--text-muted);margin-bottom:10px">История начислений и оплат ({{ ledger|length }})</div>
+    <table class="table">
+      <thead><tr><th>Дата</th><th>Сумма</th><th>Описание</th></tr></thead>
+      <tbody>
+        {% for row in ledger %}
+        <tr>
+          <td data-label="Дата">{{ row.date.strftime("%d.%m.%Y") }}</td>
+          <td data-label="Сумма">
+            {% if row.kind == 'charge' %}
+            <span style="color:#dc2626">+{{ "{:,.0f}".format(row.amount) }} с</span>
+            {% else %}
+            <span style="color:#16a34a">−{{ "{:,.0f}".format(row.amount) }} с</span>
+            {% endif %}
+          </td>
+          <td data-label="Описание">
+            {{ row.description or '—' }}
+            {% if row.kind == 'payment' %}
+            <span class="badge {% if row.source == 'Optima' %}badge-confirmed{% else %}badge-pending{% endif %}" style="margin-left:6px">{{ row.source }}</span>
+            {% endif %}
+          </td>
+        </tr>
+        {% else %}
+        <tr><td colspan="3" style="text-align:center;color:var(--text-muted)">Начислений и оплат ещё не было</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}

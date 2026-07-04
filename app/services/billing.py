@@ -74,6 +74,41 @@ def get_balance(db: Session, student_id: int) -> float:
     return float(charged) - float(paid)
 
 
+def get_ledger(db: Session, student_id: int) -> list[dict]:
+    """Единая лента начислений и оплат ребёнка, по дате — новые сверху.
+    Начисление увеличивает долг, оплата уменьшает — на карточке нужно видеть
+    и то, и то вместе, а не только итоговую цифру баланса."""
+    charges = (
+        db.query(Charge)
+        .filter(Charge.student_id == student_id)
+        .all()
+    )
+    payments = (
+        db.query(Transaction)
+        .filter(
+            Transaction.student_id == student_id,
+            Transaction.type == "income",
+            Transaction.deleted_at.is_(None),
+        )
+        .all()
+    )
+    ledger = [
+        {"date": c.date, "amount": float(c.amount), "description": c.description, "kind": "charge"}
+        for c in charges
+    ] + [
+        {
+            "date": p.date,
+            "amount": float(p.amount),
+            "description": p.description,
+            "kind": "payment",
+            "source": "Optima" if p.external_txn_id else "Вручную",
+        }
+        for p in payments
+    ]
+    ledger.sort(key=lambda row: row["date"], reverse=True)
+    return ledger
+
+
 def get_balances(db: Session, student_ids: list[int]) -> dict[int, float]:
     if not student_ids:
         return {}
@@ -93,13 +128,6 @@ def get_balances(db: Session, student_ids: list[int]) -> dict[int, float]:
         sid: float(charges.get(sid, 0)) - float(payments.get(sid, 0))
         for sid in student_ids
     }
-
-
-def add_manual_charge(db: Session, student_id: int, amount: float, description: str, charge_date: date) -> Charge:
-    charge = Charge(student_id=student_id, amount=amount, description=description, date=charge_date)
-    db.add(charge)
-    db.flush()
-    return charge
 
 
 def set_student_services(db: Session, student_id: int, service_ids: list[int]) -> None:
