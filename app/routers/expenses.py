@@ -295,6 +295,8 @@ def list_expenses(
 @router.get("/upload", response_class=HTMLResponse)
 def upload_form(request: Request, org_id: int | None = None, db: Session = Depends(get_db)):
     user = get_current_user(request, db)
+    if not user:
+        return RedirectResponse("/login", status_code=302)
     accessible = get_accessible_orgs(user, db)
     current_org = resolve_org(org_id, user, db)
 
@@ -317,6 +319,8 @@ async def handle_upload(
     db: Session = Depends(get_db),
 ):
     user = get_current_user(request, db)
+    if not user:
+        return RedirectResponse("/login", status_code=302)
     accessible = get_accessible_orgs(user, db)
     current_org = resolve_org(org_id, user, db)
 
@@ -408,6 +412,8 @@ def confirm_form(
     org_id: int | None = None, err: str | None = None, db: Session = Depends(get_db),
 ):
     user = get_current_user(request, db)
+    if not user:
+        return RedirectResponse("/login", status_code=302)
     accessible = get_accessible_orgs(user, db)
     receipt = db.query(Receipt).get(receipt_id)
     if not receipt:
@@ -616,6 +622,8 @@ def handle_confirm(
     db: Session = Depends(get_db),
 ):
     user = get_current_user(request, db)
+    if not user:
+        return RedirectResponse("/login", status_code=302)
     receipt = db.query(Receipt).get(receipt_id)
     if not receipt:
         return HTMLResponse("Квитанция не найдена", status_code=404)
@@ -824,6 +832,8 @@ def handle_confirm(
 @router.get("/add", response_class=HTMLResponse)
 def add_form(request: Request, org_id: int | None = None, db: Session = Depends(get_db)):
     user = get_current_user(request, db)
+    if not user:
+        return RedirectResponse("/login", status_code=302)
     accessible = get_accessible_orgs(user, db)
     current_org = resolve_org(org_id, user, db)
     from app.models import Product
@@ -865,6 +875,8 @@ def handle_add(
     db: Session = Depends(get_db),
 ):
     user = get_current_user(request, db)
+    if not user:
+        return RedirectResponse("/login", status_code=302)
     accessible = get_accessible_orgs(user, db)
     current_org = resolve_org(org_id, user, db)
     category_id = int(category_id) if category_id and str(category_id).isdigit() else None
@@ -941,6 +953,8 @@ def handle_add(
 @router.get("/tx/{tx_id}/edit", response_class=HTMLResponse)
 def edit_tx_form(tx_id: int, request: Request, org_id: int | None = None, db: Session = Depends(get_db)):
     user = get_current_user(request, db)
+    if not user:
+        return RedirectResponse("/login", status_code=302)
     tx = db.query(Transaction).get(tx_id)
     if not tx or tx.deleted_at:
         return HTMLResponse("Запись не найдена", status_code=404)
@@ -993,6 +1007,8 @@ def handle_edit_tx(
     db: Session = Depends(get_db),
 ):
     user = get_current_user(request, db)
+    if not user:
+        return RedirectResponse("/login", status_code=302)
     tx = db.query(Transaction).get(tx_id)
     if not tx or tx.deleted_at:
         return HTMLResponse("Запись не найдена", status_code=404)
@@ -1016,6 +1032,8 @@ def delete_receipt(
     db: Session = Depends(get_db),
 ):
     user = get_current_user(request, db)
+    if not user:
+        return RedirectResponse("/login", status_code=302)
     receipt = db.query(Receipt).get(receipt_id)
     if not receipt:
         return HTMLResponse("Квитанция не найдена", status_code=404)
