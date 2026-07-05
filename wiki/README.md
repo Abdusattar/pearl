@@ -8,6 +8,7 @@
 ### architecture/
 - [stack.md](architecture/stack.md) — технологический стек, принципы, клиентская матрица
 - [modules.md](architecture/modules.md) — все модули ИС, статус реализации, roadmap
+- [deploy_ops.md](architecture/deploy_ops.md) — Railway CLI, пайплайн деплоя, разбор инцидента «медленный прод» → auth-баг
 
 ### payments/
 - [strategy.md](payments/strategy.md) — стратегия оплат: ручной ввод → автоматика, два банка
