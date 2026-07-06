@@ -71,17 +71,15 @@
         <div style="font-size:13px;color:var(--text-muted);margin-bottom:24px">Провёл: {{ receipt.created_by_name }}</div>
         <div style="display:flex;flex-direction:column;gap:10px">
           <a href="/expenses/upload?org_id={{ current_org_id or '' }}"
-             class="btn btn-primary" style="min-height:52px;font-size:16px;display:flex;align-items:center;justify-content:center">
+             class="btn btn-primary" style="min-height:56px;font-size:17px;font-weight:700;display:flex;align-items:center;justify-content:center">
             + Следующая квитанция
           </a>
-          <a href="/expenses/?org_id={{ current_org_id or '' }}&status=unconfirmed"
-             class="btn btn-secondary" style="min-height:44px;display:flex;align-items:center;justify-content:center">
-            Непроведённые
-          </a>
-          <a href="/expenses/?org_id={{ current_org_id or '' }}"
-             class="btn btn-secondary" style="min-height:44px;display:flex;align-items:center;justify-content:center">
-            ← К списку
-          </a>
+          <div style="display:flex;gap:16px;justify-content:center;margin-top:4px">
+            <a href="/expenses/?org_id={{ current_org_id or '' }}&status=unconfirmed"
+               style="font-size:12px;color:var(--text-muted)">Непроведённые</a>
+            <a href="/expenses/?org_id={{ current_org_id or '' }}"
+               style="font-size:12px;color:var(--text-muted)">← К списку</a>
+          </div>
         </div>
       </div>
     </div>
