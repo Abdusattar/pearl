@@ -45,6 +45,9 @@
     {% if total_debt %}
     <div class="total-item" style="color:#b45309">Долг поставщикам: <strong>{{ "{:,.0f}".format(total_debt) }} с</strong></div>
     {% endif %}
+    {% if uncategorized_count %}
+    <div class="total-item" style="color:#b45309">Без категории: <strong>{{ uncategorized_count }}</strong></div>
+    {% endif %}
   </div>
   {% endif %}
 

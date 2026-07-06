@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.dependencies import get_current_user, get_accessible_orgs, resolve_org
-from app.models import Organization, Product, WarehouseReceipt, WriteOff
+from app.models import ExpenseCategory, Organization, Product, WarehouseReceipt, WriteOff
 
 router = APIRouter(prefix="/warehouse", tags=["warehouse"])
 templates = Jinja2Templates(directory=str(Path(__file__).parent.parent / "templates"))
@@ -251,7 +251,13 @@ def products_list(request: Request, org_id: str | None = None, db: Session = Dep
     if ctx is None:
         return RedirectResponse("/login", status_code=302)
     products = db.query(Product).order_by(Product.category.nullslast(), Product.name).all()
-    ctx.update({"products": products, "units": UNITS, "categories": CATEGORIES})
+    expense_categories = db.query(ExpenseCategory).order_by(
+        ExpenseCategory.parent_id.nullsfirst(), ExpenseCategory.name
+    ).all()
+    ctx.update({
+        "products": products, "units": UNITS, "categories": CATEGORIES,
+        "expense_categories": expense_categories,
+    })
     return templates.TemplateResponse("warehouse/products.html", ctx)
 
 
@@ -262,6 +268,7 @@ def products_add(
     name: str = Form(...),
     unit: str = Form("кг"),
     category: str = Form("прочее"),
+    expense_category_id: str = Form(None),
     db: Session = Depends(get_db),
 ):
     ctx = _base_ctx(request, db, org_id)
@@ -269,6 +276,7 @@ def products_add(
         return RedirectResponse("/login", status_code=302)
     existing = db.query(Product).filter(func.lower(Product.name) == name.strip().lower()).first()
     if not existing:
-        db.add(Product(name=name.strip(), unit=unit, category=category))
+        exp_cat_id = int(expense_category_id) if expense_category_id and expense_category_id.isdigit() else None
+        db.add(Product(name=name.strip(), unit=unit, category=category, expense_category_id=exp_cat_id))
         db.commit()
     return RedirectResponse(f"/warehouse/products/?org_id={ctx['current_org_id']}", status_code=302)

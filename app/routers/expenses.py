@@ -1,5 +1,4 @@
 import shutil
-from collections import Counter
 from datetime import date, datetime
 from pathlib import Path
 from typing import List, Optional
@@ -288,6 +287,13 @@ def list_expenses(
         if debt_sum:
             total_debt += debt_sum
 
+    uncategorized_count = db.query(Transaction).filter(
+        Transaction.organization_id.in_(visible_org_ids),
+        Transaction.type == "expense",
+        Transaction.deleted_at.is_(None),
+        Transaction.category_id.is_(None),
+    ).count()
+
     selected_month = month or datetime.now().strftime("%Y-%m")
 
     return templates.TemplateResponse("expenses/list.html", {
@@ -300,6 +306,7 @@ def list_expenses(
         "selected_category": category_id,
         "selected_month": selected_month,
         "total_debt": total_debt,
+        "uncategorized_count": uncategorized_count,
         "totals": totals,
         "pending_count": pending_count,
     })
@@ -519,79 +526,24 @@ def confirm_form(
 
     needs_check_count = sum(1 for it in items if it["needs_check"])
 
-    # Предзаполнить категорию из уже существующей транзакции (если есть)
-    pre_category_id = None
-    existing_rt = db.query(ReceiptTransaction).filter(ReceiptTransaction.receipt_id == receipt_id).first()
-    if existing_rt and receipt.ocr_status not in ("confirmed", "rejected"):
-        existing_tx = db.query(Transaction).get(existing_rt.transaction_id)
-        if existing_tx:
-            pre_category_id = existing_tx.category_id
-
-    # Авто-предложение категории
-    if not pre_category_id and receipt.ocr_status not in ("confirmed", "rejected"):
-        FOOD_PRODUCT_CATS = {"мясо", "овощи", "зелень", "крупы", "молочные", "специи", "масла", "фрукты", "хлеб"}
-
-        # 1. По категории распознанных продуктов (exact alias + AI — уже в items)
-        # Порог: еда должна составлять >= 40% от всех позиций чека
-        food_count = 0
-        for item in items:
-            pid = item.get("display_product_id")
-            if not pid:
-                continue
-            p = db.get(Product, pid)
-            if p and p.is_standard and (p.category or "").lower() in FOOD_PRODUCT_CATS:
-                food_count += 1
-        total_items = len(items)
-        food_ratio = food_count / total_items if total_items > 0 else 0
-        if food_ratio >= 0.4:
-            food_cat = db.query(ExpenseCategory).filter(
-                ExpenseCategory.name == "Продукты питания"
-            ).first()
-            if food_cat:
-                pre_category_id = food_cat.id
-
-        # 2. Фолбэк: история прошлых чеков (для временных продуктов без категории)
-        if not pre_category_id and raw_items:
-            cat_votes = Counter()
-            for it in raw_items:
-                matched = match_product(db, it.name)
-                if not matched:
-                    continue
-                row = (
-                    db.query(Transaction.category_id)
-                    .join(ReceiptTransaction, ReceiptTransaction.transaction_id == Transaction.id)
-                    .join(ReceiptItem, ReceiptItem.receipt_id == ReceiptTransaction.receipt_id)
-                    .filter(
-                        ReceiptItem.product_id == matched.id,
-                        Transaction.category_id.isnot(None),
-                        ReceiptItem.receipt_id != receipt_id,
-                    )
-                    .order_by(Transaction.id.desc())
-                    .first()
-                )
-                if row:
-                    cat_votes[row[0]] += 1
-            if cat_votes:
-                pre_category_id = cat_votes.most_common(1)[0][0]
-
-    # Для экрана успеха — подтянуть транзакцию
+    # Для экрана успеха — подтянуть все транзакции чека (могут быть в нескольких категориях)
     confirmed_tx = None
     if receipt.ocr_status == "confirmed":
-        rt = db.query(ReceiptTransaction).filter(ReceiptTransaction.receipt_id == receipt_id).first()
-        if rt:
-            tx = db.query(Transaction).get(rt.transaction_id)
-            if tx:
-                cat = db.query(ExpenseCategory).get(tx.category_id) if tx.category_id else None
-                confirmed_tx = {
-                    "amount": tx.amount,
-                    "date": tx.date.strftime("%d.%m.%Y") if tx.date else "—",
-                    "category_name": cat.name if cat else "—",
-                }
-
-    all_cats = get_categories(db)
-    food_parent_ids = {c.id for c in all_cats if 'питан' in c.name.lower()}
-    food_cat_ids = list(food_parent_ids | {c.id for c in all_cats if c.parent_id in food_parent_ids})
-    warehouse_cat_ids = [c.id for c in all_cats if c.warehouse_eligible]
+        rts = db.query(ReceiptTransaction).filter(ReceiptTransaction.receipt_id == receipt_id).all()
+        txs = [db.query(Transaction).get(rt.transaction_id) for rt in rts]
+        txs = [t for t in txs if t]
+        if txs:
+            cat_names = []
+            for t in txs:
+                cat = db.query(ExpenseCategory).get(t.category_id) if t.category_id else None
+                name = cat.name if cat else "без категории"
+                if name not in cat_names:
+                    cat_names.append(name)
+            confirmed_tx = {
+                "amount": receipt.amount_confirmed,
+                "date": txs[0].date.strftime("%d.%m.%Y") if txs[0].date else "—",
+                "category_name": " + ".join(cat_names),
+            }
 
     creator = db.get(User, receipt.created_by) if receipt.created_by else None
     all_suppliers = db.query(Supplier).order_by(Supplier.name).all()
@@ -614,14 +566,10 @@ def confirm_form(
             "created_by_name": creator.name if creator else "—",
         },
         "items": items,
-        "categories": all_cats,
-        "food_cat_ids": food_cat_ids,
-        "warehouse_cat_ids": warehouse_cat_ids,
         "suppliers": all_suppliers,
         "today": date.today().isoformat(),
         "confirmed_tx": confirmed_tx,
-        "pre_category_id": pre_category_id,
-        "error": "Выбери категорию расхода" if err == "cat" else "Выбери поставщика — без него нельзя провести квитанцию" if err == "supplier" else "Укажи количество и цену для всех позиций" if err == "qty" else "Укажи единицу измерения для всех позиций" if err == "unit" else None,
+        "error": "Выбери поставщика — без него нельзя провести квитанцию" if err == "supplier" else "Укажи количество и цену для всех позиций" if err == "qty" else "Укажи единицу измерения для всех позиций" if err == "unit" else None,
         "success": None,
     })
 
@@ -636,7 +584,6 @@ def handle_confirm(
     amount: float = Form(None),
     amount_paid: str = Form(None),
     due_date: str = Form(None),
-    category_id: str | None = Form(None),
     description: str = Form(None),
     date_: str = Form(None, alias="date"),
     item_name: List[str] = Form(default=[]),
@@ -646,8 +593,6 @@ def handle_confirm(
     item_qty: List[str] = Form(default=[]),
     item_unit_price: List[str] = Form(default=[]),
     item_total_price: List[str] = Form(default=[]),
-    split_category_id: List[str] = Form(default=[]),
-    split_amount: List[str] = Form(default=[]),
     add_to_warehouse: str = Form(default=""),
     supplier_id: str = Form(default=""),
     new_supplier_name: str = Form(default=""),
@@ -660,9 +605,6 @@ def handle_confirm(
     receipt = db.query(Receipt).get(receipt_id)
     if not receipt:
         return HTMLResponse("Квитанция не найдена", status_code=404)
-
-    category_id = int(category_id) if category_id and str(category_id).isdigit() else None
-    split_category_id = [int(x) for x in split_category_id if x and str(x).isdigit()]
 
     # Переназначить объект если выбран конкретный садик
     if receipt_org_id and receipt_org_id != receipt.organization_id:
@@ -689,7 +631,6 @@ def handle_confirm(
                         "amount_confirmed": receipt.amount_confirmed, "ocr_status": receipt.ocr_status,
                         "org_name": org_map.get(receipt.organization_id, "—")},
             "items": items,
-            "categories": get_categories(db),
             "today": date.today().isoformat(),
             "error": "Укажи сумму",
             "success": None,
@@ -701,24 +642,19 @@ def handle_confirm(
         except ValueError:
             return None
 
-    splits = [
-        (cat_id, _parse_amount(amt))
-        for cat_id, amt in zip(split_category_id, split_amount)
-        if cat_id and _parse_amount(amt)
-    ]
+    def _safe_num(vals, i):
+        try:
+            v = vals[i].strip() if i < len(vals) else ""
+            return float(v.replace(",", ".")) if v else None
+        except (ValueError, AttributeError):
+            return None
 
     amount_paid_val = _parse_amount(amount_paid)
-    # Не оплачено полностью (частично или в долг) — только для случая с одной категорией.
-    # Если равно сумме или не указано — считаем оплаченным полностью (NULL, историческое поведение).
+    # Не оплачено полностью (частично или в долг). Если равно сумме или не указано —
+    # считаем оплаченным полностью (NULL, историческое поведение).
     if amount_paid_val is not None and amount_paid_val >= amount:
         amount_paid_val = None
     due_date_val = date.fromisoformat(due_date) if due_date else None
-
-    if not category_id and not splits:
-        return RedirectResponse(
-            f"/expenses/{receipt_id}/confirm?org_id={org_id or ''}&err=cat",
-            status_code=303,
-        )
 
     sid = resolve_supplier(db, supplier_id, new_supplier_name, new_supplier_phone)
     if not sid:
@@ -727,42 +663,113 @@ def handle_confirm(
             status_code=303,
         )
 
-    main_tx_id = None
-    if splits:
-        total_confirmed = sum(amt for _, amt in splits)
-        for cat_id, amt in splits:
-            tx = Transaction(
-                organization_id=receipt.organization_id, type="expense", amount=amt,
-                category_id=cat_id, supplier_id=sid, description=description, date=tx_date,
-                created_by=user.id,
+    # Валидация + разрешение товара для каждой позиции — нужно ДО разбивки по категориям,
+    # т.к. категория расхода теперь берётся из товара, а не выбирается человеком.
+    resolved_items = []  # [{name, raw, product, qty, unit_price, total}, ...]
+    for i, name in enumerate(item_name):
+        name = name.strip()
+        if not name:
+            continue
+        total = _safe_num(item_total_price, i)
+        if total is None:
+            continue
+        qty_val = _safe_num(item_qty, i)
+        price_val = _safe_num(item_unit_price, i)
+        unit_val = item_unit[i].strip() if i < len(item_unit) else ""
+        if qty_val is None or price_val is None:
+            return RedirectResponse(
+                f"/expenses/{receipt_id}/confirm?org_id={org_id or ''}&err=qty",
+                status_code=303,
             )
-            db.add(tx)
-            db.flush()
-            if main_tx_id is None:
-                main_tx_id = tx.id
-            db.add(ReceiptTransaction(receipt_id=receipt.id, transaction_id=tx.id, amount=amt))
-            audit(db, "transaction", tx.id, "insert", user.id, {"org_id": receipt.organization_id, "amount": amt})
-    else:
+        if not unit_val:
+            return RedirectResponse(
+                f"/expenses/{receipt_id}/confirm?org_id={org_id or ''}&err=unit",
+                status_code=303,
+            )
+
+        raw = item_raw_name[i].strip() if i < len(item_raw_name) else ""
+        pid_str = item_product_id[i].strip() if i < len(item_product_id) else ""
+        if pid_str and pid_str.isdigit():
+            product = db.get(Product, int(pid_str))
+            if not product:
+                product = get_or_create_product(db, name)
+        else:
+            product = get_or_create_product(db, name)
+        if raw:
+            ensure_alias(db, raw, product.id)
+
+        # Обновить unit для временных продуктов (у эталонов unit уже верный)
+        if unit_val and not product.is_standard and product.unit != unit_val:
+            product.unit = unit_val
+
+        resolved_items.append({
+            "name": name, "raw": raw, "product": product,
+            "qty": qty_val, "unit_price": price_val, "total": total,
+        })
+
+    # Группируем позиции по статье расходов, которая закреплена за товаром.
+    # Новая/неопознанная позиция → категория None (проявится как "без категории").
+    group_totals: dict = {}
+    for it in resolved_items:
+        cat_id = it["product"].expense_category_id
+        group_totals[cat_id] = group_totals.get(cat_id, 0) + it["total"]
+
+    if not group_totals:
+        # Нет позиций вообще (OCR не распознал / ручной чек без деталей) — вся сумма без категории
+        group_totals[None] = amount
+
+    items_sum = sum(group_totals.values())
+    scale = (amount / items_sum) if items_sum else 1.0
+
+    # Пропорционально делим сумму, оплату и долг по получившимся категориям.
+    # Последней группе отдаём остаток — без ошибок округления.
+    cat_ids = list(group_totals.keys())
+    running_amount = 0.0
+    running_paid = 0.0
+    tx_by_cat = {}
+    main_tx_id = None
+    for idx, cat_id in enumerate(cat_ids):
+        is_last = idx == len(cat_ids) - 1
+        if is_last:
+            cat_amount = round(amount - running_amount, 2)
+        else:
+            cat_amount = round(group_totals[cat_id] * scale, 2)
+            running_amount += cat_amount
+        if cat_amount <= 0:
+            continue
+
+        cat_amount_paid = None
+        if amount_paid_val is not None:
+            if is_last:
+                cat_amount_paid = round(amount_paid_val - running_paid, 2)
+            else:
+                cat_amount_paid = round(cat_amount / amount * amount_paid_val, 2) if amount else 0.0
+                running_paid += cat_amount_paid
+            if cat_amount_paid >= cat_amount:
+                cat_amount_paid = None
+
         tx = Transaction(
-            organization_id=receipt.organization_id, type="expense", amount=amount,
-            amount_paid=amount_paid_val, due_date=due_date_val,
-            category_id=category_id, supplier_id=sid, description=description, date=tx_date,
+            organization_id=receipt.organization_id, type="expense", amount=cat_amount,
+            amount_paid=cat_amount_paid, due_date=due_date_val if cat_amount_paid is not None else None,
+            category_id=cat_id, supplier_id=sid, description=description, date=tx_date,
             created_by=user.id,
         )
         db.add(tx)
         db.flush()
-        main_tx_id = tx.id
-        db.add(ReceiptTransaction(receipt_id=receipt.id, transaction_id=tx.id, amount=amount))
-        audit(db, "transaction", tx.id, "insert", user.id, {"org_id": receipt.organization_id, "amount": amount})
-        total_confirmed = amount
+        if main_tx_id is None:
+            main_tx_id = tx.id
+        db.add(ReceiptTransaction(receipt_id=receipt.id, transaction_id=tx.id, amount=cat_amount))
+        audit(db, "transaction", tx.id, "insert", user.id, {"org_id": receipt.organization_id, "amount": cat_amount})
+        tx_by_cat[cat_id] = tx.id
 
+    total_confirmed = amount
     receipt.ocr_status = "confirmed"
     receipt.amount_confirmed = total_confirmed
     receipt.confirmed_by = user.id
     receipt.confirmed_at = datetime.now()
     audit(db, "receipt", receipt.id, "update", user.id, {"status": "confirmed", "amount": total_confirmed})
 
-    # Категории, для которых позиции НЕ детализируются и НЕ промоутируются в эталон
+    # Категории, для которых позиции НЕ промоутируются в эталон автоматически
     NO_PROMOTE_NAMES = {"ремонт", "транспорт", "прочее"}
     def _is_promote_eligible(cat_id):
         if not cat_id:
@@ -779,92 +786,37 @@ def handle_confirm(
                 return False
         return True
 
-    promote_eligible = _is_promote_eligible(category_id)
-
-    # Сохраняем отредактированные позиции (если были переданы)
+    # Сохраняем отредактированные позиции
     want_warehouse = add_to_warehouse == "1"
-    if item_name:
-        def _safe_num(vals, i):
-            try:
-                v = vals[i].strip() if i < len(vals) else ""
-                return float(v.replace(",", ".")) if v else None
-            except (ValueError, AttributeError):
-                return None
-
-        # Валидация: позиция с суммой должна иметь кол-во и цену
-        for i, name in enumerate(item_name):
-            if not name.strip():
-                continue
-            total = _safe_num(item_total_price, i)
-            if total is None:
-                continue
-            qty_val = _safe_num(item_qty, i)
-            price_val = _safe_num(item_unit_price, i)
-            unit_val = item_unit[i].strip() if i < len(item_unit) else ""
-            if qty_val is None or price_val is None:
-                return RedirectResponse(
-                    f"/expenses/{receipt_id}/confirm?org_id={org_id or ''}&err=qty",
-                    status_code=303,
-                )
-            if not unit_val:
-                return RedirectResponse(
-                    f"/expenses/{receipt_id}/confirm?org_id={org_id or ''}&err=unit",
-                    status_code=303,
-                )
-
+    if resolved_items:
         db.query(ReceiptItem).filter(ReceiptItem.receipt_id == receipt_id).delete()
 
-        for i, name in enumerate(item_name):
-            name = name.strip()
-            if not name:
-                continue
-            total = _safe_num(item_total_price, i)
-            if total is None:
-                continue
-
-            raw = item_raw_name[i].strip() if i < len(item_raw_name) else ""
-            pid_str = item_product_id[i].strip() if i < len(item_product_id) else ""
-            if pid_str and pid_str.isdigit():
-                product = db.get(Product, int(pid_str))
-                if not product:
-                    product = get_or_create_product(db, name)
-            else:
-                product = get_or_create_product(db, name)
-            if raw:
-                ensure_alias(db, raw, product.id)
-
-            # Обновить unit для временных продуктов (у эталонов unit уже верный)
-            submitted_unit = item_unit[i].strip() if i < len(item_unit) else ""
-            if submitted_unit and not product.is_standard and product.unit != submitted_unit:
-                product.unit = submitted_unit
-
-            qty_val = _safe_num(item_qty, i)
-            price_val = _safe_num(item_unit_price, i)
-
+        for it in resolved_items:
+            product = it["product"]
             db.add(ReceiptItem(
                 receipt_id=receipt_id,
-                name=raw or name,
+                name=it["raw"] or it["name"],
                 product_id=product.id,
-                qty=qty_val,
-                unit_price=price_val,
-                total_price=total,
+                qty=it["qty"],
+                unit_price=it["unit_price"],
+                total_price=it["total"],
             ))
             db.flush()
 
             # Авто-промоут временного продукта если категория позволяет
-            if promote_eligible and not product.is_standard:
+            if _is_promote_eligible(product.expense_category_id) and not product.is_standard:
                 maybe_promote(db, product, threshold=3)
 
             # Автоматически добавить в склад если есть количество и цена
-            if want_warehouse and qty_val and qty_val > 0 and price_val and price_val > 0:
+            if want_warehouse and it["qty"] and it["qty"] > 0 and it["unit_price"] and it["unit_price"] > 0:
                 db.add(WarehouseReceipt(
                     date=tx_date,
                     product_id=product.id,
-                    quantity=qty_val,
-                    price_per_unit=price_val,
-                    total_cost=round(qty_val * price_val, 2),
+                    quantity=it["qty"],
+                    price_per_unit=it["unit_price"],
+                    total_cost=round(it["qty"] * it["unit_price"], 2),
                     organization_id=receipt.organization_id,
-                    transaction_id=main_tx_id,
+                    transaction_id=tx_by_cat.get(product.expense_category_id, main_tx_id),
                     created_by=user.id,
                 ))
 

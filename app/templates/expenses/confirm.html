@@ -201,38 +201,6 @@
           <input type="date" name="date" class="form-control" value="{{ today }}" required>
         </div>
 
-        <div id="single-cat-block" class="form-group">
-          <label style="display:flex;align-items:center;justify-content:space-between">
-            <span>Категория</span>
-            <button type="button" onclick="enableSplit()" style="font-size:11px;color:var(--primary);background:none;border:none;cursor:pointer;padding:0">разделить по категориям →</button>
-          </label>
-          <select name="category_id" id="single-cat-select" class="form-control" required
-                  {% if pre_category_id %}data-preselect="{{ pre_category_id }}"{% endif %}>
-            <option value="">Выберите категорию</option>
-            {% set ns = namespace(parent_ids=[]) %}
-            {% for cat in categories %}{% if cat.parent_id is not none and cat.parent_id not in ns.parent_ids %}{% set ns.parent_ids = ns.parent_ids + [cat.parent_id] %}{% endif %}{% endfor %}
-            {% for cat in categories %}
-              {% if cat.parent_id is none %}
-              <option value="{{ cat.id }}" {% if cat.id in ns.parent_ids %}disabled style="color:#9ca3af;font-weight:600"{% endif %}>{{ cat.name }}</option>
-              {% else %}
-              <option value="{{ cat.id }}" {% if cat.id == pre_category_id %}selected{% endif %}>&nbsp;&nbsp;↳ {{ cat.name }}</option>
-              {% endif %}
-            {% endfor %}
-          </select>
-        </div>
-
-        <div id="split-block" style="display:none" class="form-group">
-          <label style="display:flex;align-items:center;justify-content:space-between">
-            <span>Разбивка по категориям</span>
-            <button type="button" onclick="disableSplit()" style="font-size:11px;color:var(--text-muted);background:none;border:none;cursor:pointer;padding:0">← одна категория</button>
-          </label>
-          <div id="split-rows" style="display:flex;flex-direction:column;gap:6px;margin-bottom:6px"></div>
-          <button type="button" onclick="addSplitRow()" style="font-size:12px;color:var(--primary);background:none;border:none;cursor:pointer;padding:4px 0">+ добавить категорию</button>
-          <div style="font-size:12px;margin-top:6px;color:var(--text-muted)">
-            Остаток: <span id="split-rest" style="font-weight:600;color:#dc2626">—</span> сом
-          </div>
-        </div>
-
         <div id="warehouse-block" style="display:none;margin-bottom:18px">
           <div style="background:#f0fdf4;border:1px solid #86efac;border-radius:8px;padding:12px 14px">
             <label style="display:flex;align-items:flex-start;gap:10px;cursor:pointer">
@@ -479,32 +447,8 @@ function initAutocomplete(input) {
 
 document.querySelectorAll('.item-name-input').forEach(initAutocomplete);
 
-const FOOD_CATEGORY_IDS = new Set({{ food_cat_ids | tojson }});
-const WAREHOUSE_CAT_IDS = new Set({{ warehouse_cat_ids | tojson }});
-
-function onCategoryChange(categoryId) {
-  const catId   = Number(categoryId);
-  const isFood  = FOOD_CATEGORY_IDS.has(catId);
-  const isWh    = WAREHOUSE_CAT_IDS.has(catId);
-  const hasId   = !!categoryId;
-
-  document.querySelectorAll('.product-hint').forEach(el => {
-    el.style.display = isFood ? '' : 'none';
-  });
-
-  const itemsCard = document.getElementById('items-card');
-  if (itemsCard) {
-    itemsCard.style.display = (!hasId || isFood) ? '' : 'none';
-  }
-
-  // Блок склада — только для категорий с warehouse_eligible
-  const whBlock = document.getElementById('warehouse-block');
-  if (whBlock) {
-    whBlock.style.display = isWh ? '' : 'none';
-    if (isWh) updateWarehouseHint();
-  }
-}
-
+// Категория теперь определяется автоматически по товару — блок склада
+// показываем всегда, когда в чеке есть хоть одна позиция с количеством.
 function updateWarehouseHint() {
   const rows = document.querySelectorAll('#items-body .item-row');
   const items = [];
@@ -513,6 +457,8 @@ function updateWarehouseHint() {
     const qty   = parseFloat(row.querySelector('.item-qty')?.value);
     if (name && qty > 0) items.push(name + ' ' + qty);
   });
+  const whBlock = document.getElementById('warehouse-block');
+  if (whBlock) whBlock.style.display = items.length ? '' : 'none';
   const hint = document.getElementById('warehouse-hint');
   if (hint) {
     hint.textContent = items.length
@@ -520,69 +466,7 @@ function updateWarehouseHint() {
       : 'Позиции с количеством поступят в складской учёт';
   }
 }
-
-const catSelect = document.getElementById('single-cat-select');
-if (catSelect) {
-  const preselect = catSelect.dataset.preselect;
-  if (preselect) catSelect.value = preselect;
-  catSelect.addEventListener('change', e => onCategoryChange(e.target.value));
-  onCategoryChange(catSelect.value);
-}
-
-// ── Разбивка по категориям ──────────────────────────────────────────
-const CAT_OPTIONS_HTML = `{{ categories | map(attribute='id') | list }}`;
-// Строим HTML опций один раз из DOM единственного select
-function buildCatOptions() {
-  return [...document.getElementById('single-cat-select').options]
-    .map(o => `<option value="${o.value}" ${o.disabled ? 'disabled' : ''}>${o.text}</option>`)
-    .join('');
-}
-
-function addSplitRow(catId, amt) {
-  const row = document.createElement('div');
-  row.style.cssText = 'display:flex;gap:6px;align-items:center';
-  row.innerHTML = `
-    <select name="split_category_id" class="form-control" style="flex:1;font-size:13px" onchange="updateSplitRest()">
-      ${buildCatOptions()}
-    </select>
-    <input type="number" name="split_amount" class="form-control split-amt" step="0.01"
-           placeholder="сом" style="width:90px;font-size:13px;text-align:right" oninput="updateSplitRest()">
-    <button type="button" onclick="this.parentElement.remove();updateSplitRest()"
-            style="background:none;border:none;color:var(--text-muted);cursor:pointer;font-size:18px;line-height:1">×</button>
-  `;
-  if (catId) row.querySelector('select').value = catId;
-  if (amt)   row.querySelector('input').value  = amt;
-  document.getElementById('split-rows').appendChild(row);
-  updateSplitRest();
-}
-
-function updateSplitRest() {
-  const total = parseFloat(document.getElementById('total-amount')?.value) || 0;
-  const used  = [...document.querySelectorAll('.split-amt')]
-    .reduce((s, i) => s + (parseFloat(i.value) || 0), 0);
-  const rest = Math.round((total - used) * 100) / 100;
-  const el = document.getElementById('split-rest');
-  if (el) {
-    el.textContent = rest.toLocaleString('ru-RU', {maximumFractionDigits:2});
-    el.style.color = Math.abs(rest) < 0.01 ? '#16a34a' : '#dc2626';
-  }
-}
-
-function enableSplit() {
-  document.getElementById('single-cat-block').style.display = 'none';
-  document.getElementById('single-cat-select').removeAttribute('required');
-  document.getElementById('split-block').style.display = '';
-  if (!document.getElementById('split-rows').children.length) {
-    addSplitRow(); addSplitRow();
-  }
-  updateSplitRest();
-}
-
-function disableSplit() {
-  document.getElementById('split-block').style.display = 'none';
-  document.getElementById('single-cat-block').style.display = '';
-  document.getElementById('single-cat-select').setAttribute('required', '');
-}
+updateWarehouseHint();
 
 // Loading state на кнопке Провести
 document.querySelector('form')?.addEventListener('submit', function(e) {

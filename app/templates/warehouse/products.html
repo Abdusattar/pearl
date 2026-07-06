@@ -26,12 +26,28 @@
         </select>
       </div>
       <div class="form-group">
-        <label>Категория</label>
+        <label>Категория (для склада)</label>
         <select name="category" class="form-control">
           {% for c in categories %}
           <option value="{{ c }}">{{ c }}</option>
           {% endfor %}
         </select>
+      </div>
+      <div class="form-group">
+        <label>Статья расходов</label>
+        <select name="expense_category_id" class="form-control">
+          <option value="">— не привязано —</option>
+          {% for ec in expense_categories %}
+          {% if ec.parent_id is none %}
+          <option value="{{ ec.id }}">{{ ec.name }}</option>
+          {% else %}
+          <option value="{{ ec.id }}">&nbsp;&nbsp;↳ {{ ec.name }}</option>
+          {% endif %}
+          {% endfor %}
+        </select>
+        <div style="font-size:11px;color:var(--text-muted);margin-top:4px">
+          Определяет, в какую статью расходов автоматически попадёт этот товар при проведении чека.
+        </div>
       </div>
       <button type="submit" class="btn btn-primary" style="width:100%">Добавить</button>
     </form>
@@ -44,7 +60,7 @@
         <tr>
           <th>Название</th>
           <th style="width:60px">Ед.</th>
-          <th style="width:120px">Категория</th>
+          <th style="width:140px">Статья расходов</th>
         </tr>
       </thead>
       <tbody>
@@ -60,7 +76,14 @@
         <tr>
           <td>{{ p.name }}</td>
           <td style="color:var(--text-muted)">{{ p.unit or 'кг' }}</td>
-          <td style="color:var(--text-muted);font-size:13px">{{ p.category or '—' }}</td>
+          <td style="font-size:13px">
+            {% if p.expense_category_id %}
+              {% set matched = expense_categories | selectattr('id', 'equalto', p.expense_category_id) | first %}
+              {{ matched.name if matched else '—' }}
+            {% else %}
+              <span style="color:#b45309">не привязано</span>
+            {% endif %}
+          </td>
         </tr>
         {% endfor %}
       </tbody>
