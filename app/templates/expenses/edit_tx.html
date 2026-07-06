@@ -28,24 +28,34 @@
 
     <div class="form-group">
       <label>Сумма (сом)</label>
-      <input type="number" name="amount" class="form-control" step="0.01"
+      <input type="number" name="amount" id="tx-amount" class="form-control" step="0.01"
              inputmode="decimal" required value="{{ tx.amount }}"
-             style="font-size:24px;font-weight:700;text-align:center;padding:12px">
+             style="font-size:24px;font-weight:700;text-align:center;padding:12px"
+             oninput="updateDebtHint()">
     </div>
 
     <div class="form-group">
-      <label>Оплачено (сом)</label>
-      <input type="number" name="amount_paid" class="form-control" step="0.01"
-             inputmode="decimal" value="{{ tx.amount_paid or '' }}"
-             placeholder="оставь пустым, если оплачено полностью">
-      {% if tx.debt and tx.debt > 0 %}
-      <div style="font-size:12px;color:#b45309;margin-top:4px">Текущий долг: {{ "{:,.0f}".format(tx.debt) }} сом — увеличь «Оплачено», чтобы погасить (частично или полностью)</div>
-      {% endif %}
-    </div>
-
-    <div class="form-group">
-      <label>Плановая дата погашения долга</label>
-      <input type="date" name="due_date" class="form-control" value="{{ tx.due_date or '' }}">
+      <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
+        <input type="checkbox" id="paid-full-checkbox" {% if not tx.debt or tx.debt <= 0 %}checked{% endif %}
+               onchange="togglePaidFull()" style="width:16px;height:16px">
+        <span>Оплачено полностью</span>
+      </label>
+      <div id="paid-partial-block" style="{% if not tx.debt or tx.debt <= 0 %}display:none{% endif %};margin-top:8px">
+        <label>Оплачено (сом)</label>
+        <input type="number" name="amount_paid" id="amount-paid" class="form-control" step="0.01"
+               inputmode="decimal" value="{{ tx.amount_paid or '' }}"
+               oninput="updateDebtHint()">
+        {% if tx.debt and tx.debt > 0 %}
+        <div style="font-size:12px;color:#b45309;margin-top:4px">Текущий долг: {{ "{:,.0f}".format(tx.debt) }} сом — увеличь «Оплачено», чтобы погасить (частично или полностью)</div>
+        {% endif %}
+        <div id="debt-hint" style="display:none;margin-top:8px;background:#fef3c7;border:1px solid #fcd34d;border-radius:8px;padding:8px 12px">
+          <div style="font-size:13px;font-weight:600;color:#b45309">Долг поставщику: <span id="debt-amount">0</span> сом</div>
+        </div>
+        <div style="margin-top:8px">
+          <label style="font-size:11px;color:var(--text-muted)">Плановая дата погашения долга</label>
+          <input type="date" name="due_date" class="form-control" value="{{ tx.due_date or '' }}">
+        </div>
+      </div>
     </div>
 
     <div class="form-group">
@@ -110,4 +120,49 @@
     </div>
   </form>
 </div>
+
+<script>
+function _num(v) {
+  const n = parseFloat(String(v).replace(',', '.'));
+  return isNaN(n) ? null : n;
+}
+
+function togglePaidFull() {
+  const checkbox = document.getElementById('paid-full-checkbox');
+  const block = document.getElementById('paid-partial-block');
+  const paidInput = document.getElementById('amount-paid');
+  if (!checkbox || !block || !paidInput) return;
+  if (checkbox.checked) {
+    block.style.display = 'none';
+    paidInput.value = '';
+  } else {
+    block.style.display = '';
+    if (!paidInput.value.trim()) {
+      paidInput.value = document.getElementById('tx-amount')?.value || '';
+    }
+    paidInput.focus();
+  }
+  updateDebtHint();
+}
+
+function updateDebtHint() {
+  const checkbox = document.getElementById('paid-full-checkbox');
+  const hintBox = document.getElementById('debt-hint');
+  const amountEl = document.getElementById('debt-amount');
+  if (!hintBox || !amountEl) return;
+  if (checkbox && checkbox.checked) { hintBox.style.display = 'none'; return; }
+  const amount = _num(document.getElementById('tx-amount')?.value) || 0;
+  const paidInput = document.getElementById('amount-paid');
+  const paidRaw = paidInput ? paidInput.value.trim() : '';
+  if (!paidRaw) { hintBox.style.display = 'none'; return; }
+  const paid = _num(paidRaw) || 0;
+  const debt = amount - paid;
+  if (debt > 0.009) {
+    amountEl.textContent = debt.toLocaleString('ru-RU', {maximumFractionDigits: 2});
+    hintBox.style.display = '';
+  } else {
+    hintBox.style.display = 'none';
+  }
+}
+</script>
 {% endblock %}

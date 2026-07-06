@@ -177,19 +177,23 @@
         </div>
 
         <div class="form-group">
-          <label>Оплачено сейчас (сом)</label>
-          <input type="number" name="amount_paid" id="amount-paid" class="form-control" step="0.01"
-                 inputmode="decimal" placeholder="оставь пустым, если оплачено полностью"
-                 oninput="updateDebtHint()">
-          <div style="font-size:11px;color:var(--text-muted);margin-top:4px">
-            Оставь пустым, если оплатили сразу всю сумму. Если оплатили только часть — впиши,
-            сколько реально отдали продавцу, остаток система посчитает как долг.
-          </div>
-          <div id="debt-hint" style="display:none;margin-top:8px;background:#fef3c7;border:1px solid #fcd34d;border-radius:8px;padding:8px 12px">
-            <div style="font-size:13px;font-weight:600;color:#b45309">Долг поставщику: <span id="debt-amount">0</span> сом</div>
-            <div style="margin-top:6px">
-              <label style="font-size:11px;color:var(--text-muted)">Когда планируете погасить (необязательно)</label>
-              <input type="date" name="due_date" class="form-control" style="font-size:12px;padding:4px 6px">
+          <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
+            <input type="checkbox" id="paid-full-checkbox" checked onchange="togglePaidFull()" style="width:16px;height:16px">
+            <span>Оплачено полностью</span>
+          </label>
+          <div id="paid-partial-block" style="display:none;margin-top:8px">
+            <label>Оплачено сейчас (сом)</label>
+            <input type="number" name="amount_paid" id="amount-paid" class="form-control" step="0.01"
+                   inputmode="decimal" oninput="updateDebtHint()">
+            <div style="font-size:11px;color:var(--text-muted);margin-top:4px">
+              Уменьши сумму до того, что реально отдали продавцу — остаток система посчитает как долг.
+            </div>
+            <div id="debt-hint" style="display:none;margin-top:8px;background:#fef3c7;border:1px solid #fcd34d;border-radius:8px;padding:8px 12px">
+              <div style="font-size:13px;font-weight:600;color:#b45309">Долг поставщику: <span id="debt-amount">0</span> сом</div>
+              <div style="margin-top:6px">
+                <label style="font-size:11px;color:var(--text-muted)">Когда планируете погасить (необязательно)</label>
+                <input type="date" name="due_date" class="form-control" style="font-size:12px;padding:4px 6px">
+              </div>
             </div>
           </div>
         </div>
@@ -331,13 +335,35 @@ function updateGrandTotal() {
   updateDebtHint();
 }
 
-function updateDebtHint() {
-  const amount = _num(document.getElementById('total-amount')?.value) || 0;
+function togglePaidFull() {
+  const checkbox = document.getElementById('paid-full-checkbox');
+  const block = document.getElementById('paid-partial-block');
   const paidInput = document.getElementById('amount-paid');
-  const paidRaw = paidInput ? paidInput.value.trim() : '';
+  if (!checkbox || !block || !paidInput) return;
+  if (checkbox.checked) {
+    block.style.display = 'none';
+    paidInput.value = '';
+    updateDebtHint();
+  } else {
+    block.style.display = '';
+    if (!paidInput.value.trim()) {
+      const amount = document.getElementById('total-amount')?.value || '';
+      paidInput.value = amount;
+    }
+    paidInput.focus();
+    updateDebtHint();
+  }
+}
+
+function updateDebtHint() {
+  const checkbox = document.getElementById('paid-full-checkbox');
   const hintBox = document.getElementById('debt-hint');
   const amountEl = document.getElementById('debt-amount');
   if (!hintBox || !amountEl) return;
+  if (checkbox && checkbox.checked) { hintBox.style.display = 'none'; return; }
+  const amount = _num(document.getElementById('total-amount')?.value) || 0;
+  const paidInput = document.getElementById('amount-paid');
+  const paidRaw = paidInput ? paidInput.value.trim() : '';
   if (!paidRaw) { hintBox.style.display = 'none'; return; }
   const paid = _num(paidRaw) || 0;
   const debt = amount - paid;
