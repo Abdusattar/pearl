@@ -621,7 +621,7 @@ def confirm_form(
         "today": date.today().isoformat(),
         "confirmed_tx": confirmed_tx,
         "pre_category_id": pre_category_id,
-        "error": "Выбери категорию расхода" if err == "cat" else "Укажи количество и цену для всех позиций" if err == "qty" else "Укажи единицу измерения для всех позиций" if err == "unit" else None,
+        "error": "Выбери категорию расхода" if err == "cat" else "Выбери поставщика — без него нельзя провести квитанцию" if err == "supplier" else "Укажи количество и цену для всех позиций" if err == "qty" else "Укажи единицу измерения для всех позиций" if err == "unit" else None,
         "success": None,
     })
 
@@ -721,6 +721,11 @@ def handle_confirm(
         )
 
     sid = resolve_supplier(db, supplier_id, new_supplier_name, new_supplier_phone)
+    if not sid:
+        return RedirectResponse(
+            f"/expenses/{receipt_id}/confirm?org_id={org_id or ''}&err=supplier",
+            status_code=303,
+        )
 
     main_tx_id = None
     if splits:
@@ -940,6 +945,20 @@ def handle_add(
 
     tx_date = date.fromisoformat(date_) if date_ else date.today()
     sid = resolve_supplier(db, supplier_id, new_supplier_name, new_supplier_phone)
+
+    if not sid:
+        return templates.TemplateResponse("expenses/add.html", {
+            "request": request, "current_user": user,
+            "accessible_orgs": accessible,
+            "current_org_id": current_org.id,
+            "upload_orgs": get_upload_orgs(user, db),
+            "categories": get_categories(db),
+            "suppliers": db.query(Supplier).order_by(Supplier.name).all(),
+            "products": db.query(Product).order_by(Product.name).all(),
+            "food_cat_ids": [],
+            "today": date.today().isoformat(),
+            "error": "Выбери поставщика — без него нельзя провести расход",
+        })
 
     def _parse_amount(s):
         try:
