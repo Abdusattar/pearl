@@ -472,6 +472,7 @@ def confirm_form(
         ai_name = norm.get("matched_name")
         match_type = norm.get("match_type", "none")     # ai_standard | ai_provisional | none
         ai_is_standard = norm.get("is_standard", False)
+        ai_suggested = False
 
         if exact:
             # Точный alias → зелёный
@@ -495,12 +496,16 @@ def confirm_form(
             fuzzy_matched = False
             provisional_matched = True
         else:
-            # Не нашёл ничего → красный
-            display_name = it.name
+            # Нет в каталоге вообще → если товар читаемый, ИИ предлагает
+            # стандартизированное имя (без бренда/сорта/веса) — человек проверяет/правит.
+            # Если и ИИ не смог — сырой OCR-текст как есть.
+            suggested_name = norm.get("suggested_name")
+            display_name = suggested_name or it.name
             display_product_id = None
             product_matched = False
             fuzzy_matched = False
             provisional_matched = False
+            ai_suggested = bool(suggested_name)
 
         display_name = display_name[:1].upper() + display_name[1:] if display_name else display_name
         # unit: берём из продукта если найден, иначе пустая строка (пользователь укажет)
@@ -515,6 +520,8 @@ def confirm_form(
             check_hint = f"проверь — похоже на «{display_name}»"
         elif provisional_matched:
             check_hint = f"проверь — уже покупали как «{display_name}»"
+        elif ai_suggested:
+            check_hint = f"проверь — ИИ предлагает «{display_name}», в каталоге нет (OCR: «{it.name}»)"
         elif not product_matched:
             check_hint = "проверь — новая позиция"
         else:
