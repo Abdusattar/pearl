@@ -96,11 +96,14 @@
       <div class="card" id="items-card" style="margin-bottom:16px">
         <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
           <h3 style="margin:0;font-size:15px">Позиции чека</h3>
-          {% if items %}
-          <span id="check-counter" style="font-size:12px;border-radius:4px;padding:2px 8px"></span>
-          {% else %}
-          <span style="font-size:12px;color:#dc2626;background:#fee2e2;border:1px solid #fca5a5;border-radius:4px;padding:2px 8px">OCR не распознал — введи вручную</span>
-          {% endif %}
+          <div style="display:flex;align-items:center;gap:10px">
+            {% if items %}
+            <span id="check-counter" style="font-size:12px;border-radius:4px;padding:2px 8px"></span>
+            {% else %}
+            <span style="font-size:12px;color:#dc2626;background:#fee2e2;border:1px solid #fca5a5;border-radius:4px;padding:2px 8px">OCR не распознал — введи вручную</span>
+            {% endif %}
+            <button type="button" onclick="markUnreadable()" style="font-size:11px;color:var(--text-muted);background:none;border:none;cursor:pointer;padding:0;text-decoration:underline">Не читается — ввести вручную</button>
+          </div>
         </div>
         <table id="items-table" style="width:100%;border-collapse:collapse;font-size:13px">
           <thead id="items-thead">
@@ -467,6 +470,18 @@ function updateWarehouseHint() {
   }
 }
 updateWarehouseHint();
+
+// "Не читается" — сбросить позиции, вся сумма пойдёт одной строкой без категории
+function markUnreadable() {
+  if (!confirm('Позиции чека будут очищены, сумму впишешь вручную. Продолжить?')) return;
+  const tbody = document.getElementById('items-body');
+  if (tbody) tbody.innerHTML = '';
+  const itemsCard = document.getElementById('items-card');
+  if (itemsCard) itemsCard.style.display = 'none';
+  updateGrandTotal();
+  const amountInput = document.getElementById('total-amount');
+  if (amountInput) { amountInput.value = ''; amountInput.focus(); }
+}
 
 // Loading state на кнопке Провести
 document.querySelector('form')?.addEventListener('submit', function(e) {
