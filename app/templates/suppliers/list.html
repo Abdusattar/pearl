@@ -40,6 +40,7 @@
       <tr>
         <th>Название</th>
         <th>Телефон</th>
+        <th>Долг</th>
         <th></th>
       </tr>
     </thead>
@@ -48,6 +49,13 @@
       <tr>
         <td data-label="Название" style="font-weight:500">{{ s.name }}</td>
         <td data-label="Телефон">{{ s.phone or '—' }}</td>
+        <td data-label="Долг">
+          {% if s.debt and s.debt > 0 %}
+          <span style="color:#b45309;font-weight:600">{{ "{:,.0f}".format(s.debt) }} с</span>
+          {% else %}
+          <span style="color:var(--text-muted)">—</span>
+          {% endif %}
+        </td>
         <td class="actions">
           <form method="post" action="/suppliers/{{ s.id }}/delete" style="display:inline"
                 onsubmit="return confirm('Удалить поставщика «{{ s.name }}»?')">

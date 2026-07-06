@@ -123,6 +123,8 @@ class Transaction(Base):
     organization_id = Column(Integer, ForeignKey("organizations.id"), nullable=False)
     type            = Column(String(10), nullable=False)  # income|expense
     amount          = Column(Numeric(12, 2), nullable=False)
+    amount_paid     = Column(Numeric(12, 2))  # NULL = оплачено полностью (amount); меньше amount = есть долг поставщику
+    due_date        = Column(Date)  # плановая дата погашения долга, необязательно
     category_id     = Column(Integer, ForeignKey("expense_categories.id"))
     supplier_id     = Column(Integer, ForeignKey("suppliers.id"), nullable=True)
     student_id      = Column(Integer, ForeignKey("students.id"))

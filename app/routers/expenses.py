@@ -201,12 +201,15 @@ def list_expenses(
         tx_cat = None
         tx_id = None
         tx_supplier = None
+        tx_debt = None
         if rt:
             tx = db.query(Transaction).get(rt.transaction_id)
             if tx:
                 tx_cat = _cat_name(tx.category_id)
                 tx_id = tx.id
                 tx_supplier = supplier_map.get(tx.supplier_id)
+                if tx.amount_paid is not None:
+                    tx_debt = tx.amount - tx.amount_paid
         if r.ocr_status == "manual":
             href = f"/expenses/tx/{tx_id}/edit?org_id={current_org_id}" if tx_id else None
         else:
@@ -224,6 +227,7 @@ def list_expenses(
             "amount_detected": r.amount_detected,
             "amount_confirmed": r.amount_confirmed,
             "ocr_status": r.ocr_status,
+            "debt": tx_debt,
         })
 
     # --- Ручные транзакции (без квитанции) ---
@@ -260,11 +264,13 @@ def list_expenses(
                 "amount_detected": None,
                 "amount_confirmed": tx.amount,
                 "ocr_status": "manual",
+                "debt": (tx.amount - tx.amount_paid) if tx.amount_paid is not None else None,
             })
         receipts.sort(key=lambda r: r["sort_date"] or date.min, reverse=True)
 
     # Totals by org
     totals = []
+    total_debt = 0
     for org_id_t in visible_org_ids:
         total = db.query(func.sum(Transaction.amount)).filter(
             Transaction.organization_id == org_id_t,
@@ -273,6 +279,14 @@ def list_expenses(
         ).scalar()
         if total:
             totals.append({"org_name": org_map.get(org_id_t, "?"), "total": total})
+        debt_sum = db.query(func.sum(Transaction.amount - Transaction.amount_paid)).filter(
+            Transaction.organization_id == org_id_t,
+            Transaction.type == "expense",
+            Transaction.deleted_at.is_(None),
+            Transaction.amount_paid.isnot(None),
+        ).scalar()
+        if debt_sum:
+            total_debt += debt_sum
 
     selected_month = month or datetime.now().strftime("%Y-%m")
 
@@ -285,6 +299,7 @@ def list_expenses(
         "categories": get_categories(db),
         "selected_category": category_id,
         "selected_month": selected_month,
+        "total_debt": total_debt,
         "totals": totals,
         "pending_count": pending_count,
     })
@@ -619,6 +634,8 @@ def handle_confirm(
     receipt_org_id: int = Form(None),
     action: str = Form(...),
     amount: float = Form(None),
+    amount_paid: str = Form(None),
+    due_date: str = Form(None),
     category_id: str | None = Form(None),
     description: str = Form(None),
     date_: str = Form(None, alias="date"),
@@ -690,6 +707,13 @@ def handle_confirm(
         if cat_id and _parse_amount(amt)
     ]
 
+    amount_paid_val = _parse_amount(amount_paid)
+    # Не оплачено полностью (частично или в долг) — только для случая с одной категорией.
+    # Если равно сумме или не указано — считаем оплаченным полностью (NULL, историческое поведение).
+    if amount_paid_val is not None and amount_paid_val >= amount:
+        amount_paid_val = None
+    due_date_val = date.fromisoformat(due_date) if due_date else None
+
     if not category_id and not splits:
         return RedirectResponse(
             f"/expenses/{receipt_id}/confirm?org_id={org_id or ''}&err=cat",
@@ -716,6 +740,7 @@ def handle_confirm(
     else:
         tx = Transaction(
             organization_id=receipt.organization_id, type="expense", amount=amount,
+            amount_paid=amount_paid_val, due_date=due_date_val,
             category_id=category_id, supplier_id=sid, description=description, date=tx_date,
             created_by=user.id,
         )
@@ -878,6 +903,8 @@ def handle_add(
     request: Request,
     org_id: int = Form(...),
     amount: float = Form(...),
+    amount_paid: str = Form(None),
+    due_date: str = Form(None),
     category_id: str | None = Form(None),
     description: str = Form(None),
     date_: str = Form(None, alias="date"),
@@ -913,8 +940,21 @@ def handle_add(
 
     tx_date = date.fromisoformat(date_) if date_ else date.today()
     sid = resolve_supplier(db, supplier_id, new_supplier_name, new_supplier_phone)
+
+    def _parse_amount(s):
+        try:
+            return float(str(s).replace(",", ".")) if s else None
+        except ValueError:
+            return None
+
+    amount_paid_val = _parse_amount(amount_paid)
+    if amount_paid_val is not None and amount_paid_val >= amount:
+        amount_paid_val = None
+    due_date_val = date.fromisoformat(due_date) if due_date else None
+
     tx = Transaction(
         organization_id=org_id, type="expense", amount=amount,
+        amount_paid=amount_paid_val, due_date=due_date_val,
         category_id=category_id, supplier_id=sid, description=description, date=tx_date,
         created_by=user.id,
     )
@@ -1000,6 +1040,9 @@ def edit_tx_form(tx_id: int, request: Request, org_id: int | None = None, db: Se
         "tx": {
             "id": tx.id,
             "amount": tx.amount,
+            "amount_paid": tx.amount_paid,
+            "due_date": tx.due_date.isoformat() if tx.due_date else "",
+            "debt": (tx.amount - tx.amount_paid) if tx.amount_paid is not None else None,
             "date": tx.date.isoformat() if tx.date else date.today().isoformat(),
             "category_id": tx.category_id,
             "description": tx.description or "",
@@ -1017,6 +1060,8 @@ def handle_edit_tx(
     request: Request,
     org_id: int = Form(None),
     amount: float = Form(...),
+    amount_paid: str = Form(None),
+    due_date: str = Form(None),
     category_id: str | None = Form(None),
     description: str = Form(None),
     date_: str = Form(None, alias="date"),
@@ -1029,7 +1074,19 @@ def handle_edit_tx(
     if not tx or tx.deleted_at:
         return HTMLResponse("Запись не найдена", status_code=404)
 
+    def _parse_amount(s):
+        try:
+            return float(str(s).replace(",", ".")) if s else None
+        except ValueError:
+            return None
+
+    amount_paid_val = _parse_amount(amount_paid)
+    if amount_paid_val is not None and amount_paid_val >= amount:
+        amount_paid_val = None
+
     tx.amount = amount
+    tx.amount_paid = amount_paid_val
+    tx.due_date = date.fromisoformat(due_date) if due_date else None
     tx.category_id = int(category_id) if category_id and str(category_id).isdigit() else None
     tx.description = description
     tx.date = date.fromisoformat(date_) if date_ else tx.date

@@ -42,6 +42,9 @@
     {% for t in totals %}
     <div class="total-item">{{ t.org_name }}: <strong>{{ "{:,.0f}".format(t.total) }} с</strong></div>
     {% endfor %}
+    {% if total_debt %}
+    <div class="total-item" style="color:#b45309">Долг поставщикам: <strong>{{ "{:,.0f}".format(total_debt) }} с</strong></div>
+    {% endif %}
   </div>
   {% endif %}
 
@@ -72,6 +75,9 @@
             {{ "{:,.0f}".format(r.amount_detected) }} с <span style="color:var(--text-muted);font-size:12px">(OCR)</span>
           {% else %}
             —
+          {% endif %}
+          {% if r.debt and r.debt > 0 %}
+          <div style="font-size:11px;color:#b45309;margin-top:2px">долг {{ "{:,.0f}".format(r.debt) }} с</div>
           {% endif %}
         </td>
         <td data-label="Статус">

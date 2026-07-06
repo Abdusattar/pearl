@@ -34,6 +34,21 @@
     </div>
 
     <div class="form-group">
+      <label>Оплачено (сом)</label>
+      <input type="number" name="amount_paid" class="form-control" step="0.01"
+             inputmode="decimal" value="{{ tx.amount_paid or '' }}"
+             placeholder="оставь пустым, если оплачено полностью">
+      {% if tx.debt and tx.debt > 0 %}
+      <div style="font-size:12px;color:#b45309;margin-top:4px">Текущий долг: {{ "{:,.0f}".format(tx.debt) }} сом — увеличь «Оплачено», чтобы погасить (частично или полностью)</div>
+      {% endif %}
+    </div>
+
+    <div class="form-group">
+      <label>Плановая дата погашения долга</label>
+      <input type="date" name="due_date" class="form-control" value="{{ tx.due_date or '' }}">
+    </div>
+
+    <div class="form-group">
       <label>Категория</label>
       <select name="category_id" class="form-control">
         <option value="">Без категории</option>

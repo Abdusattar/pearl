@@ -75,8 +75,26 @@
     <div class="form-group">
       <label>Сумма (сом)</label>
       <input type="number" name="amount" id="amount-input" class="form-control" step="0.01"
-             inputmode="decimal" required placeholder="0.00">
+             inputmode="decimal" required placeholder="0.00" oninput="updateDebtHint()">
       <div id="items-sum-hint" style="font-size:12px;color:var(--text-muted);margin-top:4px"></div>
+    </div>
+
+    <div class="form-group">
+      <label>Оплачено сейчас (сом)</label>
+      <input type="number" name="amount_paid" id="amount-paid" class="form-control" step="0.01"
+             inputmode="decimal" placeholder="оставь пустым, если оплачено полностью"
+             oninput="updateDebtHint()">
+      <div style="font-size:11px;color:var(--text-muted);margin-top:4px">
+        Оставь пустым, если оплатили сразу всю сумму. Если только часть — впиши, сколько
+        реально отдали продавцу, остаток система посчитает как долг.
+      </div>
+      <div id="debt-hint" style="display:none;margin-top:8px;background:#fef3c7;border:1px solid #fcd34d;border-radius:8px;padding:8px 12px">
+        <div style="font-size:13px;font-weight:600;color:#b45309">Долг поставщику: <span id="debt-amount">0</span> сом</div>
+        <div style="margin-top:6px">
+          <label style="font-size:11px;color:var(--text-muted)">Когда планируете погасить (необязательно)</label>
+          <input type="date" name="due_date" class="form-control" style="font-size:12px;padding:4px 6px">
+        </div>
+      </div>
     </div>
 
     <div class="form-group">
@@ -183,6 +201,25 @@ function updateGrandTotal() {
     ? 'Сумма позиций: ' + sum.toLocaleString('ru-RU', {maximumFractionDigits: 2}) + ' с'
     : '';
   if (amountInput && sum > 0) amountInput.value = sum.toFixed(2);
+  updateDebtHint();
+}
+
+function updateDebtHint() {
+  const amount = _num(document.getElementById('amount-input')?.value) || 0;
+  const paidInput = document.getElementById('amount-paid');
+  const paidRaw = paidInput ? paidInput.value.trim() : '';
+  const hintBox = document.getElementById('debt-hint');
+  const amountEl = document.getElementById('debt-amount');
+  if (!hintBox || !amountEl) return;
+  if (!paidRaw) { hintBox.style.display = 'none'; return; }
+  const paid = _num(paidRaw) || 0;
+  const debt = amount - paid;
+  if (debt > 0.009) {
+    amountEl.textContent = debt.toLocaleString('ru-RU', {maximumFractionDigits: 2});
+    hintBox.style.display = '';
+  } else {
+    hintBox.style.display = 'none';
+  }
 }
 
 function addItemRow() {
