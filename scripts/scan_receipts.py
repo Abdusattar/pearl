@@ -98,7 +98,7 @@ def main():
     print(f"Уже в кэше: {done} / {len(images)}")
 
     for i, img in enumerate(images):
-        key = str(img)
+        key = img.relative_to(ROOT).as_posix()
         if key in cache:
             continue
 

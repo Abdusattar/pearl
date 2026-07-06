@@ -99,7 +99,7 @@
         <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
           <h3 style="margin:0;font-size:15px">Позиции чека</h3>
           {% if items %}
-          <span style="font-size:12px;color:var(--text-muted);background:#fef3c7;border:1px solid #fcd34d;border-radius:4px;padding:2px 8px">черновик OCR — проверь</span>
+          <span id="check-counter" style="font-size:12px;border-radius:4px;padding:2px 8px"></span>
           {% else %}
           <span style="font-size:12px;color:#dc2626;background:#fee2e2;border:1px solid #fca5a5;border-radius:4px;padding:2px 8px">OCR не распознал — введи вручную</span>
           {% endif %}
@@ -117,7 +117,7 @@
           </thead>
           <tbody id="items-body">
             {% for item in items %}
-            <tr class="item-row" style="border-bottom:1px solid var(--border)">
+            <tr class="item-row" data-checked="{{ '1' if item.product_matched else '0' }}" style="border-bottom:1px solid var(--border)">
               <td style="padding:4px;position:relative">
                 <input type="hidden" name="item_raw_name" value="{{ item.raw_name }}">
                 <input type="hidden" name="item_product_id" value="{{ item.display_product_id or '' }}">
@@ -125,17 +125,13 @@
                        value="{{ item.display_name }}"
                        class="form-control item-name-input"
                        autocomplete="off"
-                       style="font-size:12px;padding:4px 6px;border-width:2px;{% if item.product_matched %}border-style:solid;border-color:#16a34a{% elif item.fuzzy_matched %}border-style:solid;border-color:#f59e0b{% elif item.provisional_matched %}border-style:solid;border-color:#3b82f6{% else %}border-style:solid;border-color:#dc2626{% endif %}"
+                       style="font-size:12px;padding:4px 6px;border-width:2px;border-style:solid;{% if item.product_matched %}border-color:#16a34a{% else %}border-color:#f59e0b{% endif %}"
                        data-raw="{{ item.raw_name | e }}">
                 <div class="autocomplete-dropdown" style="display:none;position:absolute;z-index:100;left:4px;right:4px;top:100%;background:#fff;border:1px solid var(--border);border-radius:6px;box-shadow:0 4px 12px rgba(0,0,0,.1);max-height:180px;overflow-y:auto"></div>
                 {% if item.product_matched %}
-                <div class="product-hint" style="font-size:10px;color:#16a34a;margin-top:2px">✓ эталон точно · {{ item.raw_name }}</div>
-                {% elif item.fuzzy_matched %}
-                <div class="product-hint" style="font-size:10px;color:#b45309;margin-top:2px">? эталон, проверь · OCR: "{{ item.raw_name }}"</div>
-                {% elif item.provisional_matched %}
-                <div class="product-hint" style="font-size:10px;color:#2563eb;margin-top:2px">~ временный, накапливается · OCR: "{{ item.raw_name }}"</div>
+                <div class="product-hint" style="font-size:10px;color:#16a34a;margin-top:2px">✓ в каталоге</div>
                 {% else %}
-                <div class="product-hint" style="font-size:10px;color:#dc2626;margin-top:2px">✗ не найдено · OCR: "{{ item.raw_name }}"</div>
+                <div class="product-hint" style="font-size:10px;color:#b45309;margin-top:2px">{{ item.check_hint or "проверь — новая позиция" }}</div>
                 {% endif %}
               </td>
               <td style="padding:4px">
@@ -149,7 +145,7 @@
               <td style="padding:4px"><input type="text" name="item_qty" value="{{ item.qty or '' }}" class="form-control item-qty" style="font-size:12px;padding:4px 6px;text-align:right" oninput="recalcRow(this)"></td>
               <td style="padding:4px"><input type="text" name="item_unit_price" value="{{ item.unit_price or '' }}" class="form-control item-price" style="font-size:12px;padding:4px 6px;text-align:right" oninput="recalcRow(this)"></td>
               <td style="padding:4px"><input type="text" name="item_total_price" value="{{ item.total_price }}" class="form-control item-total" style="font-size:12px;padding:4px 6px;text-align:right" oninput="updateGrandTotal()"></td>
-              <td style="padding:4px;text-align:center"><button type="button" onclick="this.closest('tr').remove();updateGrandTotal()" style="background:none;border:none;color:var(--text-muted);cursor:pointer;font-size:16px">×</button></td>
+              <td style="padding:4px;text-align:center"><button type="button" onclick="this.closest('tr').remove();updateGrandTotal();updateCheckCounter()" style="background:none;border:none;color:var(--text-muted);cursor:pointer;font-size:16px">×</button></td>
             </tr>
             {% endfor %}
           </tbody>
@@ -321,12 +317,13 @@ function addItemRow() {
   if (!tbody) return;
   const row = document.createElement('tr');
   row.className = 'item-row';
+  row.dataset.checked = '0';
   row.style.borderBottom = '1px solid var(--border)';
   row.innerHTML = `
     <td style="padding:4px;position:relative">
       <input type="hidden" name="item_raw_name" value="">
       <input type="hidden" name="item_product_id" value="">
-      <input type="text" name="item_name" value="" class="form-control item-name-input" autocomplete="off" style="font-size:12px;padding:4px 6px" data-raw="" data-candidates="[]">
+      <input type="text" name="item_name" value="" class="form-control item-name-input" autocomplete="off" style="font-size:12px;padding:4px 6px;border-width:2px;border-style:solid;border-color:#f59e0b" data-raw="" data-candidates="[]">
       <div class="autocomplete-dropdown" style="display:none;position:absolute;z-index:100;left:4px;right:4px;top:100%;background:#fff;border:1px solid var(--border);border-radius:6px;box-shadow:0 4px 12px rgba(0,0,0,.1);max-height:180px;overflow-y:auto"></div>
     </td>
     <td style="padding:4px">
@@ -339,15 +336,37 @@ function addItemRow() {
     <td style="padding:4px"><input type="text" name="item_qty" value="" class="form-control item-qty" style="font-size:12px;padding:4px 6px;text-align:right" oninput="recalcRow(this)"></td>
     <td style="padding:4px"><input type="text" name="item_unit_price" value="" class="form-control item-price" style="font-size:12px;padding:4px 6px;text-align:right" oninput="recalcRow(this)"></td>
     <td style="padding:4px"><input type="text" name="item_total_price" value="" class="form-control item-total" style="font-size:12px;padding:4px 6px;text-align:right" oninput="updateGrandTotal()"></td>
-    <td style="padding:4px;text-align:center"><button type="button" onclick="this.closest('tr').remove();updateGrandTotal()" style="background:none;border:none;color:var(--text-muted);cursor:pointer;font-size:16px">×</button></td>
+    <td style="padding:4px;text-align:center"><button type="button" onclick="this.closest('tr').remove();updateGrandTotal();updateCheckCounter()" style="background:none;border:none;color:var(--text-muted);cursor:pointer;font-size:16px">×</button></td>
   `;
   tbody.appendChild(row);
   const newInput = row.querySelector('.item-name-input');
   if (newInput) initAutocomplete(newInput);
+  updateCheckCounter();
 }
 
-// Показать сумму позиций при загрузке
+function updateCheckCounter() {
+  const rows = [...document.querySelectorAll('#items-body .item-row')];
+  const unchecked = rows.filter(r => r.dataset.checked !== '1').length;
+  const el = document.getElementById('check-counter');
+  if (!el) return;
+  if (!rows.length) {
+    el.textContent = '';
+  } else if (unchecked === 0) {
+    el.textContent = '✓ всё проверено';
+    el.style.color = '#16a34a';
+    el.style.background = '#f0fdf4';
+    el.style.border = '1px solid #86efac';
+  } else {
+    el.textContent = `⚠ ${unchecked} ${unchecked === 1 ? 'строка требует' : 'строки требуют'} проверки`;
+    el.style.color = '#b45309';
+    el.style.background = '#fef3c7';
+    el.style.border = '1px solid #fcd34d';
+  }
+}
+
+// Показать сумму позиций и счётчик проверки при загрузке
 updateGrandTotal();
+updateCheckCounter();
 
 // ── Autocomplete для позиций ────────────────────────────────────────
 function initAutocomplete(input) {
@@ -388,9 +407,13 @@ function initAutocomplete(input) {
     if (hiddenId) hiddenId.value = id;
     const hint = input.closest('td').querySelector('.product-hint');
     if (hint) {
-      hint.textContent = '✓ справочник · OCR: ' + (input.dataset.raw || '');
+      hint.textContent = '✓ в каталоге';
       hint.style.color = '#16a34a';
     }
+    input.style.borderColor = '#16a34a';
+    const row = input.closest('tr');
+    if (row) row.dataset.checked = '1';
+    updateCheckCounter();
     dropdown.style.display = 'none';
   }
 

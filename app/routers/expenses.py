@@ -472,6 +472,18 @@ def confirm_form(
         is_standard_match = product_matched or fuzzy_matched
         matched_product = db.get(Product, display_product_id) if display_product_id else None
         display_unit = matched_product.unit if matched_product else ""
+        # Для персонала — только 2 состояния: точный алиас = не трогать,
+        # всё остальное (AI-догадка/временное/не найдено) = проверь глазами.
+        # На период обучения намеренно строго: даже уверенная AI-догадка требует взгляда.
+        needs_check = not product_matched
+        if fuzzy_matched:
+            check_hint = f"проверь — похоже на «{display_name}»"
+        elif provisional_matched:
+            check_hint = f"проверь — уже покупали как «{display_name}»"
+        elif not product_matched:
+            check_hint = "проверь — новая позиция"
+        else:
+            check_hint = ""
         items.append({
             "id": it.id,
             "raw_name": it.name,
@@ -481,12 +493,16 @@ def confirm_form(
             "fuzzy_matched": fuzzy_matched,
             "provisional_matched": provisional_matched,
             "is_standard_match": is_standard_match,
+            "needs_check": needs_check,
+            "check_hint": check_hint,
             "unit": display_unit,
             "candidates": [],
             "qty": it.qty,
             "unit_price": it.unit_price,
             "total_price": it.total_price,
         })
+
+    needs_check_count = sum(1 for it in items if it["needs_check"])
 
     # Предзаполнить категорию из уже существующей транзакции (если есть)
     pre_category_id = None

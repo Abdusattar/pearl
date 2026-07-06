@@ -77,6 +77,39 @@ if not user:
 проверить на `None` и редиректнуть на `/login`. Это легко забыть при
 копировании существующего кода в `expenses.py` — именно так появился баг.
 
+## Разовые скрипты против прод-БД (например, добавление пользователя)
+
+`railway run python scripts/xxx.py` на этой Windows-машине падает с
+`UnicodeDecodeError` при разборе DSN — похоже на баг самого Railway CLI при
+инъекции переменных окружения в дочерний процесс на Windows. Обходной путь —
+не оборачивать в `railway run`, а взять адрес БД напрямую и передать через
+`DATABASE_URL` явным env var перед `python`:
+
+```
+railway variables --service Postgres --kv   # смотреть DATABASE_PUBLIC_URL
+DATABASE_URL="postgresql://postgres:<pass>@<host>.proxy.rlwy.net:<port>/railway" \
+  PYTHONIOENCODING=utf-8 python scripts/xxx.py
+```
+
+Важно: брать **`DATABASE_PUBLIC_URL`**, не `DATABASE_URL` из сервиса Postgres —
+последний указывает на `postgres.railway.internal`, недоступный за пределами
+Railway-сети. `PYTHONIOENCODING=utf-8` обязателен — иначе `print()` с кириллицей
+роняет скрипт `UnicodeEncodeError` на консоли с кодировкой cp1251 (тот же класс
+проблемы, что и с bash/curl — см. `context/summary.md` → «Готча (кириллица)»).
+
+**Sequence-баг ловится и на проде, не только в dev:** `users_id_seq` (и,
+вероятно, `organizations_id_seq`) был рассинхронизирован ещё в dev-сессии 04.07
+(seed с явными id без `setval`) — 06.07 та же проблема всплыла на **проде** при
+попытке добавить нового пользователя (`UniqueViolation: Key (id)=(1) already
+exists`). Чинится одноразово:
+
+```sql
+SELECT setval('users_id_seq', (SELECT MAX(id) FROM users));
+```
+
+Если где-то ещё сидировали записи с явным `id` вручную — тот же класс бага
+может всплыть в других таблицах.
+
 ## См. также
 
 - [[architecture/stack]] — стек в целом, Docker + деплой

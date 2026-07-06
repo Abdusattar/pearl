@@ -49,7 +49,7 @@ CREATE TABLE users (
     id              SERIAL PRIMARY KEY,
     tg_id           BIGINT UNIQUE,
     name            VARCHAR(100) NOT NULL,
-    role            user_role NOT NULL,  -- owner | director | manager | teacher
+    role            user_role NOT NULL,  -- owner | director | manager | staff
     organization_id INTEGER REFERENCES organizations(id),
     created_at      TIMESTAMP DEFAULT now(),
     deleted_at      TIMESTAMP
@@ -185,7 +185,7 @@ CREATE INDEX ON audit_log(entity_type, entity_id);
 ## ENUM типы
 ```sql
 CREATE TYPE org_type       AS ENUM ('root', 'school', 'kindergarten', 'group');
-CREATE TYPE user_role      AS ENUM ('owner', 'director', 'manager', 'teacher');
+CREATE TYPE user_role      AS ENUM ('owner', 'director', 'manager', 'staff');
 CREATE TYPE tx_type        AS ENUM ('income', 'expense');
 CREATE TYPE ocr_status_type AS ENUM ('pending', 'processing', 'processed', 'confirmed', 'rejected');
 ```
@@ -216,7 +216,7 @@ CREATE TYPE ocr_status_type AS ENUM ('pending', 'processing', 'processed', 'conf
 | **owner** (собственник) | Все + дашборд → drill-down | Все | Все | Просмотр | Вся Жемчужина |
 | **director** (Айжан) | Школа + **просмотр садиков** | Школа | Школа | Школа (создаёт/ведёт) | Школа + просмотр садиков |
 | **manager** (Мунара) | Садики (Сокулук + Кожомкул) | Садики | Садики | Садики (создаёт/ведёт) | Только садики |
-| **teacher** (педагоги) | — | Свой класс | Свой класс | — | Свой класс |
+| **staff** (сотрудник объекта — закуп и т.п.) | Свой объект | Свой класс/группа | Свой класс/группа | — | Свой объект |
 
 **Ввод расходов:**
 - Школьные расходы → Айжан (и при необходимости другой уполномоченный)

@@ -24,7 +24,7 @@ class User(Base):
     id              = Column(Integer, primary_key=True)
     tg_id           = Column(Integer, unique=True)
     name            = Column(String(100), nullable=False)
-    role            = Column(String(20), nullable=False)  # owner|director|manager|teacher
+    role            = Column(String(20), nullable=False)  # owner|director|manager|staff
     organization_id = Column(Integer, ForeignKey("organizations.id"))
     password_hash   = Column(String(200))
     created_at      = Column(DateTime, server_default=func.now())

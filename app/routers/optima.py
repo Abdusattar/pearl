@@ -18,7 +18,7 @@ from fastapi.responses import Response
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.models import Student, Transaction, Enrollment, Group
+from app.models import Student, Transaction, Enrollment, Group, Organization
 
 router = APIRouter(prefix="/optima", tags=["optima"])
 log = logging.getLogger(__name__)
@@ -84,7 +84,14 @@ def optima_payment(
             .filter(Enrollment.student_id == student.id, Enrollment.end_date.is_(None))
             .scalar()
         )
-        comment = f"{student.name} — {group}" if group else student.name
+        org = db.get(Organization, student.organization_id)
+        org_label = f"{org.name} Жемчужина" if org else None
+        parts = [student.name]
+        if org_label:
+            parts.append(org_label)
+        if group:
+            parts.append(f"группа {group}")
+        comment = ", ".join(parts)
         return _xml(txn_id, OK, comment, sum_val=sum)
 
     # ── PAY ──────────────────────────────────────────────────────────────────
