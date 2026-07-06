@@ -28,9 +28,10 @@ MEDIA_DIR.mkdir(parents=True, exist_ok=True)
 ORG_KINDERGARTENS = 3
 
 
-def get_accessible_orgs(user: User, db: Session) -> list[Organization]:
+def get_accessible_orgs(user: User, db: Session, all_orgs: list[Organization] | None = None) -> list[Organization]:
     """Орги доступные пользователю по роли."""
-    all_orgs = db.query(Organization).all()
+    if all_orgs is None:
+        all_orgs = db.query(Organization).all()
     if user.role == "owner":
         return all_orgs
     if user.role == "director":
@@ -43,16 +44,17 @@ def get_accessible_orgs(user: User, db: Session) -> list[Organization]:
     return [o for o in all_orgs if o.id == user.organization_id]
 
 
-def get_upload_orgs(user: User, db: Session) -> list[Organization]:
+def get_upload_orgs(user: User, db: Session, all_orgs: list[Organization] | None = None) -> list[Organization]:
     """Только листовые орги (без родительских узлов) — куда можно загружать расходы."""
-    all_orgs = db.query(Organization).all()
+    if all_orgs is None:
+        all_orgs = db.query(Organization).all()
     has_children = {o.parent_id for o in all_orgs if o.parent_id is not None}
-    orgs = get_accessible_orgs(user, db)
+    orgs = get_accessible_orgs(user, db, all_orgs)
     return [o for o in orgs if o.id not in has_children]
 
 
-def resolve_org(org_id: int | None, user: User, db: Session) -> Organization:
-    accessible = get_accessible_orgs(user, db)
+def resolve_org(org_id: int | None, user: User, db: Session, all_orgs: list[Organization] | None = None) -> Organization:
+    accessible = get_accessible_orgs(user, db, all_orgs)
     if org_id:
         org = next((o for o in accessible if o.id == org_id), None)
         if org:
@@ -125,8 +127,9 @@ def list_expenses(
     if not user:
         return RedirectResponse("/login", status_code=302)
 
-    accessible = get_accessible_orgs(user, db)
-    current_org = resolve_org(org_id, user, db)
+    all_orgs = db.query(Organization).all()
+    accessible = get_accessible_orgs(user, db, all_orgs)
+    current_org = resolve_org(org_id, user, db, all_orgs)
     current_org_id = current_org.id if current_org else None
 
     # Доступные org_id для фильтрации
@@ -134,7 +137,6 @@ def list_expenses(
         visible_org_ids = [o.id for o in accessible]
     elif current_org_id:
         # Показываем текущую орг и её детей
-        all_orgs = db.query(Organization).all()
         visible_org_ids = [current_org_id]
         visible_org_ids += [o.id for o in all_orgs if o.parent_id == current_org_id]
     else:
@@ -182,33 +184,36 @@ def list_expenses(
         Receipt.ocr_status.in_(["pending", "processed"]),
     ).count()
 
-    org_map = {o.id: o.name for o in db.query(Organization).all()}
+    org_map = {o.id: o.name for o in all_orgs}
     supplier_map = {s.id: s.name for s in db.query(Supplier).all()}
-    cat_map = {}
+    cat_map = {c.id: c.name for c in db.query(ExpenseCategory).all()}
 
     def _cat_name(category_id_val):
-        if not category_id_val:
-            return None
-        if category_id_val not in cat_map:
-            c = db.query(ExpenseCategory).get(category_id_val)
-            cat_map[category_id_val] = c.name if c else None
-        return cat_map[category_id_val]
+        return cat_map.get(category_id_val) if category_id_val else None
+
+    # Одним запросом подтягиваем транзакции всех квитанций разом (вместо запроса на каждую строку)
+    receipt_ids = [r.id for r in receipts_raw]
+    tx_by_receipt = {}
+    if receipt_ids:
+        rt_tx_rows = (
+            db.query(ReceiptTransaction.receipt_id, Transaction)
+            .join(Transaction, Transaction.id == ReceiptTransaction.transaction_id)
+            .filter(ReceiptTransaction.receipt_id.in_(receipt_ids))
+            .order_by(Transaction.id)
+            .all()
+        )
+        for receipt_id, tx in rt_tx_rows:
+            # При авторазбивке по категориям у чека может быть несколько транзакций —
+            # в списке показываем первую (самую раннюю по id), как и раньше.
+            tx_by_receipt.setdefault(receipt_id, tx)
 
     receipts = []
     for r in receipts_raw:
-        rt = db.query(ReceiptTransaction).filter(ReceiptTransaction.receipt_id == r.id).first()
-        tx_cat = None
-        tx_id = None
-        tx_supplier = None
-        tx_debt = None
-        if rt:
-            tx = db.query(Transaction).get(rt.transaction_id)
-            if tx:
-                tx_cat = _cat_name(tx.category_id)
-                tx_id = tx.id
-                tx_supplier = supplier_map.get(tx.supplier_id)
-                if tx.amount_paid is not None:
-                    tx_debt = tx.amount - tx.amount_paid
+        tx = tx_by_receipt.get(r.id)
+        tx_cat = _cat_name(tx.category_id) if tx else None
+        tx_id = tx.id if tx else None
+        tx_supplier = supplier_map.get(tx.supplier_id) if tx else None
+        tx_debt = (tx.amount - tx.amount_paid) if tx and tx.amount_paid is not None else None
         if r.ocr_status == "manual":
             href = f"/expenses/tx/{tx_id}/edit?org_id={current_org_id}" if tx_id else None
         else:
@@ -267,25 +272,33 @@ def list_expenses(
             })
         receipts.sort(key=lambda r: r["sort_date"] or date.min, reverse=True)
 
-    # Totals by org
-    totals = []
-    total_debt = 0
-    for org_id_t in visible_org_ids:
-        total = db.query(func.sum(Transaction.amount)).filter(
-            Transaction.organization_id == org_id_t,
+    # Totals by org — одним groupby-запросом вместо цикла с 2 запросами на каждую орг
+    totals_by_org = dict(
+        db.query(Transaction.organization_id, func.sum(Transaction.amount))
+        .filter(
+            Transaction.organization_id.in_(visible_org_ids),
             Transaction.type == "expense",
             Transaction.deleted_at.is_(None),
-        ).scalar()
-        if total:
-            totals.append({"org_name": org_map.get(org_id_t, "?"), "total": total})
-        debt_sum = db.query(func.sum(Transaction.amount - Transaction.amount_paid)).filter(
-            Transaction.organization_id == org_id_t,
+        )
+        .group_by(Transaction.organization_id)
+        .all()
+    )
+    debt_by_org = dict(
+        db.query(Transaction.organization_id, func.sum(Transaction.amount - Transaction.amount_paid))
+        .filter(
+            Transaction.organization_id.in_(visible_org_ids),
             Transaction.type == "expense",
             Transaction.deleted_at.is_(None),
             Transaction.amount_paid.isnot(None),
-        ).scalar()
-        if debt_sum:
-            total_debt += debt_sum
+        )
+        .group_by(Transaction.organization_id)
+        .all()
+    )
+    totals = [
+        {"org_name": org_map.get(org_id_t, "?"), "total": totals_by_org[org_id_t]}
+        for org_id_t in visible_org_ids if totals_by_org.get(org_id_t)
+    ]
+    total_debt = sum(debt_by_org.values()) if debt_by_org else 0
 
     uncategorized_count = db.query(Transaction).filter(
         Transaction.organization_id.in_(visible_org_ids),
