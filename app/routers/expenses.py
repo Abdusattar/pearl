@@ -782,8 +782,9 @@ def handle_confirm(
     receipt.confirmed_at = datetime.now()
     audit(db, "receipt", receipt.id, "update", user.id, {"status": "confirmed", "amount": total_confirmed})
 
-    # Категории, для которых позиции НЕ промоутируются в эталон автоматически
-    NO_PROMOTE_NAMES = {"ремонт", "транспорт", "прочее"}
+    # Категории-услуги, для которых позиции НЕ промоутируются в эталон автоматически
+    # (Ремонт исключён из списка — заказчик прямо просил стандартные позиции по стройматериалам)
+    NO_PROMOTE_NAMES = {"транспорт", "прочее"}
     def _is_promote_eligible(cat_id):
         if not cat_id:
             return False
@@ -850,8 +851,11 @@ def add_form(request: Request, org_id: int | None = None, db: Session = Depends(
     from app.models import Product
     products = db.query(Product).order_by(Product.name).all()
     all_cats = get_categories(db)
-    food_parent_ids = {c.id for c in all_cats if 'питан' in c.name.lower()}
-    food_cat_ids = list(food_parent_ids | {c.id for c in all_cats if c.parent_id in food_parent_ids})
+    # Позиции показываем для всех "товарных" категорий — не показываем только для
+    # услуг (Транспорт, Прочее), там пока нет смысла в товарных позициях.
+    SERVICE_CAT_NAMES = {"транспорт", "прочее"}
+    service_root_ids = {c.id for c in all_cats if c.parent_id is None and c.name.lower() in SERVICE_CAT_NAMES}
+    food_cat_ids = [c.id for c in all_cats if c.id not in service_root_ids and c.parent_id not in service_root_ids]
     all_suppliers = db.query(Supplier).order_by(Supplier.name).all()
     return templates.TemplateResponse("expenses/add.html", {
         "request": request,
