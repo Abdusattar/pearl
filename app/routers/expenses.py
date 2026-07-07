@@ -466,6 +466,8 @@ def confirm_form(
     normalized = normalize_items(db, ocr_payload) if ocr_payload else []
 
     items = []
+    unmatched_count = 0
+    unmatched_total = 0.0
     for it, norm in zip(raw_items, normalized):
         exact = match_product(db, it.name)
         ai_pid = norm.get("matched_product_id")
@@ -502,9 +504,14 @@ def confirm_form(
             ai_suggested = bool(suggested_name)
             if not ai_suggested:
                 # ИИ сам не считает эту строку товаром (см. normalize.py) — не
-                # показываем и не сохраняем, как и позицию без имени вообще.
-                # Несостыковка "Сумма позиций" с суммой чека подскажет человеку,
-                # что что-то пропущено — впишет вручную, если это реально товар.
+                # показываем как редактируемую позицию (нельзя проверить кол-во/
+                # цену у того, что даже не похоже на товар). Но сумму не теряем:
+                # уносим её в "без категории" (group_totals[None] в handle_confirm
+                # через unmatched_amount) + предупреждаем агрегированной строкой,
+                # чтобы общий итог не мог тихо просесть.
+                unmatched_count += 1
+                if it.total_price is not None:
+                    unmatched_total += float(it.total_price)
                 continue
             display_name = suggested_name
             display_product_id = None
@@ -595,6 +602,8 @@ def confirm_form(
             "created_by_name": creator.name if creator else "—",
         },
         "items": items,
+        "unmatched_count": unmatched_count,
+        "unmatched_total": round(unmatched_total, 2),
         "suppliers": all_suppliers,
         "today": date.today().isoformat(),
         "confirmed_tx": confirmed_tx,
@@ -621,6 +630,7 @@ def handle_confirm(
     item_unit: List[str] = Form(default=[]),
     item_qty: List[str] = Form(default=[]),
     item_unit_price: List[str] = Form(default=[]),
+    unmatched_amount: str = Form(default="0"),
     add_to_warehouse: str = Form(default=""),
     supplier_id: str = Form(default=""),
     new_supplier_name: str = Form(default=""),
@@ -743,6 +753,13 @@ def handle_confirm(
     for it in resolved_items:
         cat_id = it["product"].expense_category_id
         group_totals[cat_id] = group_totals.get(cat_id, 0) + it["total"]
+
+    # Позиции, которые ИИ не смог сопоставить с товаром (см. confirm_form) — их
+    # сумма не размазывается по категориям пропорцией, а честно уходит в "без
+    # категории", чтобы итог всегда сходился без участия человека.
+    unmatched_val = _safe_num([unmatched_amount], 0) or 0.0
+    if unmatched_val > 0:
+        group_totals[None] = group_totals.get(None, 0) + unmatched_val
 
     if not group_totals:
         # Нет позиций вообще (OCR не распознал / ручной чек без деталей) — вся сумма без категории
