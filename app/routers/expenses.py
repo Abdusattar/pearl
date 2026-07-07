@@ -498,14 +498,19 @@ def confirm_form(
         else:
             # Нет в каталоге вообще → если товар читаемый, ИИ предлагает
             # стандартизированное имя (без бренда/сорта/веса) — человек проверяет/правит.
-            # Если и ИИ не смог — сырой OCR-текст как есть.
             suggested_name = norm.get("suggested_name")
-            display_name = suggested_name or it.name
+            ai_suggested = bool(suggested_name)
+            if not ai_suggested:
+                # ИИ сам не считает эту строку товаром (см. normalize.py) — не
+                # показываем и не сохраняем, как и позицию без имени вообще.
+                # Несостыковка "Сумма позиций" с суммой чека подскажет человеку,
+                # что что-то пропущено — впишет вручную, если это реально товар.
+                continue
+            display_name = suggested_name
             display_product_id = None
             product_matched = False
             fuzzy_matched = False
             provisional_matched = False
-            ai_suggested = bool(suggested_name)
 
         display_name = display_name[:1].upper() + display_name[1:] if display_name else display_name
         # unit: берём из продукта если найден, иначе пустая строка (пользователь укажет)
@@ -528,8 +533,6 @@ def confirm_form(
             check_hint = f"проверь — уже покупали как «{display_name}»"
         elif ai_suggested:
             check_hint = f"проверь — ИИ предлагает «{display_name}», в каталоге нет (OCR: «{it.name}»)"
-        elif not product_matched:
-            check_hint = "проверь — новая позиция"
         else:
             check_hint = ""
         items.append({
