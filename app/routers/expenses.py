@@ -516,9 +516,11 @@ def confirm_form(
         # всё остальное (AI-догадка/временное/не найдено) = проверь глазами.
         # На период обучения намеренно строго: даже уверенная AI-догадка требует взгляда.
         needs_check = not product_matched
-        missing_price = it.total_price is None
-        if missing_price:
-            check_hint = "впиши цену — OCR не нашёл сумму по этой позиции"
+        # Сумма всегда считается из кол-во × цена — если одного из них нет,
+        # позиция не готова, даже если OCR где-то распознал итоговое число.
+        missing_breakdown = it.qty is None or it.unit_price is None
+        if missing_breakdown:
+            check_hint = "впиши количество и цену — без этого позиция не считается заполненной"
             needs_check = True
         elif fuzzy_matched:
             check_hint = f"проверь — похоже на «{display_name}»"
@@ -616,7 +618,6 @@ def handle_confirm(
     item_unit: List[str] = Form(default=[]),
     item_qty: List[str] = Form(default=[]),
     item_unit_price: List[str] = Form(default=[]),
-    item_total_price: List[str] = Form(default=[]),
     add_to_warehouse: str = Form(default=""),
     supplier_id: str = Form(default=""),
     new_supplier_name: str = Form(default=""),
@@ -696,16 +697,16 @@ def handle_confirm(
             continue
         qty_val = _safe_num(item_qty, i)
         price_val = _safe_num(item_unit_price, i)
-        total = _safe_num(item_total_price, i)
-        if total is None and qty_val is not None and price_val is not None:
-            total = round(qty_val * price_val, 2)
-        # Позиция без цены не выбрасывается молча — итемизация обязательна для всех
-        # товарных категорий, сотрудник должен дозаполнить перед проведением.
-        if qty_val is None or price_val is None or total is None:
+        # Сумма никогда не берётся из отправленного поля напрямую (его туда мог
+        # вписать только JS-расчёт на глазах у человека) — сервер всегда сам
+        # пересчитывает total = кол-во × цена. Нет кол-ва/цены — нет позиции,
+        # заполнять руками обязательно, автоподстановки "1 шт." нет.
+        if qty_val is None or price_val is None:
             return RedirectResponse(
                 f"/expenses/{receipt_id}/confirm?org_id={org_id or ''}&err=qty",
                 status_code=303,
             )
+        total = round(qty_val * price_val, 2)
         unit_val = item_unit[i].strip() if i < len(item_unit) else ""
         if not unit_val:
             return RedirectResponse(
@@ -898,7 +899,6 @@ def handle_add(
     item_name: List[str] = Form(default=[]),
     item_qty: List[str] = Form(default=[]),
     item_unit_price: List[str] = Form(default=[]),
-    item_total_price: List[str] = Form(default=[]),
     supplier_id: str = Form(default=""),
     new_supplier_name: str = Form(default=""),
     new_supplier_phone: str = Form(default=""),
@@ -971,11 +971,18 @@ def handle_add(
         except (ValueError, AttributeError):
             return None
 
-    valid_items = [
-        (item_name[i].strip(), _safe(item_qty, i), _safe(item_unit_price, i), _safe(item_total_price, i))
-        for i in range(len(item_name))
-        if item_name[i].strip() and _safe(item_total_price, i)
-    ]
+    # Сумма позиции всегда считается из кол-во × цена, а не берётся из отправленного
+    # поля — позиция без обоих чисел не сохраняется (позиции в целом необязательны).
+    valid_items = []
+    for i in range(len(item_name)):
+        name = item_name[i].strip()
+        if not name:
+            continue
+        qty = _safe(item_qty, i)
+        unit_price = _safe(item_unit_price, i)
+        if qty is None or unit_price is None:
+            continue
+        valid_items.append((name, qty, unit_price, round(qty * unit_price, 2)))
 
     if valid_items:
         receipt = Receipt(

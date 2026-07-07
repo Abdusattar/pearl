@@ -130,9 +130,9 @@ def analyze_receipt(file_path: str) -> dict | None:
             if total is None and qty and unit_price:
                 total = round(qty * unit_price, 2)
             name = str(it.get("name") or "").strip()
-            # Позицию без цены не выбрасываем (заказчик требует полную итемизацию) —
-            # если нет ни имени, ни суммы, это точно не строка товара, пропускаем.
-            if total is None and not name:
+            # Без имени это не позиция товара (даже если какие-то цифры распознались) —
+            # человек добавит такую строку вручную, если она вообще нужна.
+            if not name:
                 continue
             if unit_price is None and total is not None and qty and qty > 0:
                 unit_price = round(total / qty, 2)

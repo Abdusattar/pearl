@@ -257,9 +257,9 @@ function addItemRow() {
              oninput="recalcRow(this)" placeholder="цена">
     </td>
     <td style="padding:4px">
-      <input type="text" name="item_total_price" class="form-control item-total"
-             style="font-size:12px;padding:4px 6px;text-align:right"
-             oninput="updateGrandTotal()" placeholder="сумма">
+      <input type="text" name="item_total_price" class="form-control item-total" readonly
+             style="font-size:12px;padding:4px 6px;text-align:right;background:var(--bg-secondary,#f3f4f6);color:var(--text-muted)"
+             placeholder="сумма" title="Считается автоматически из количества и цены">
     </td>
     <td style="padding:4px;text-align:center">
       <button type="button"
