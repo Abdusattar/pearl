@@ -516,7 +516,11 @@ def confirm_form(
         # всё остальное (AI-догадка/временное/не найдено) = проверь глазами.
         # На период обучения намеренно строго: даже уверенная AI-догадка требует взгляда.
         needs_check = not product_matched
-        if fuzzy_matched:
+        missing_price = it.total_price is None
+        if missing_price:
+            check_hint = "впиши цену — OCR не нашёл сумму по этой позиции"
+            needs_check = True
+        elif fuzzy_matched:
             check_hint = f"проверь — похоже на «{display_name}»"
         elif provisional_matched:
             check_hint = f"проверь — уже покупали как «{display_name}»"
@@ -690,17 +694,19 @@ def handle_confirm(
         name = name.strip()
         if not name:
             continue
-        total = _safe_num(item_total_price, i)
-        if total is None:
-            continue
         qty_val = _safe_num(item_qty, i)
         price_val = _safe_num(item_unit_price, i)
-        unit_val = item_unit[i].strip() if i < len(item_unit) else ""
-        if qty_val is None or price_val is None:
+        total = _safe_num(item_total_price, i)
+        if total is None and qty_val is not None and price_val is not None:
+            total = round(qty_val * price_val, 2)
+        # Позиция без цены не выбрасывается молча — итемизация обязательна для всех
+        # товарных категорий, сотрудник должен дозаполнить перед проведением.
+        if qty_val is None or price_val is None or total is None:
             return RedirectResponse(
                 f"/expenses/{receipt_id}/confirm?org_id={org_id or ''}&err=qty",
                 status_code=303,
             )
+        unit_val = item_unit[i].strip() if i < len(item_unit) else ""
         if not unit_val:
             return RedirectResponse(
                 f"/expenses/{receipt_id}/confirm?org_id={org_id or ''}&err=unit",

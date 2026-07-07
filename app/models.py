@@ -175,7 +175,7 @@ class ReceiptItem(Base):
     product_id  = Column(Integer, ForeignKey("products.id"), nullable=True)
     qty         = Column(Numeric(10, 3))
     unit_price  = Column(Numeric(12, 2))
-    total_price = Column(Numeric(12, 2), nullable=False)
+    total_price = Column(Numeric(12, 2), nullable=True)  # null = OCR не нашёл цену, нужно дозаполнить
 
     product = relationship("Product")
 

@@ -145,7 +145,7 @@
               </td>
               <td style="padding:4px"><input type="text" name="item_qty" value="{{ item.qty or '' }}" class="form-control item-qty" style="font-size:12px;padding:4px 6px;text-align:right" oninput="recalcRow(this)"></td>
               <td style="padding:4px"><input type="text" name="item_unit_price" value="{{ item.unit_price or '' }}" class="form-control item-price" style="font-size:12px;padding:4px 6px;text-align:right" oninput="recalcRow(this)"></td>
-              <td style="padding:4px"><input type="text" name="item_total_price" value="{{ item.total_price }}" class="form-control item-total" style="font-size:12px;padding:4px 6px;text-align:right" oninput="updateGrandTotal()"></td>
+              <td style="padding:4px"><input type="text" name="item_total_price" value="{{ item.total_price or '' }}" class="form-control item-total" style="font-size:12px;padding:4px 6px;text-align:right" oninput="updateGrandTotal()"></td>
               <td style="padding:4px;text-align:center"><button type="button" onclick="this.closest('tr').remove();updateGrandTotal();updateCheckCounter()" style="background:none;border:none;color:var(--text-muted);cursor:pointer;font-size:16px">×</button></td>
             </tr>
             {% endfor %}
