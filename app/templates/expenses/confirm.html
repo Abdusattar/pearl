@@ -107,9 +107,8 @@
         </div>
         {% if unmatched_count %}
         <div style="font-size:12px;color:#b45309;background:#fef3c7;border:1px solid #fcd34d;border-radius:6px;padding:6px 10px;margin-bottom:10px">
-          ⚠ {{ unmatched_count }} {{ "строка не распознана" if unmatched_count == 1 else "строки не распознаны" }} ИИ, на сумму ~{{ "%.2f"|format(unmatched_total) }} сом — сверься с фото чека. Сумма учтена в «без категории», в таблице не показана.
+          ⚠ {{ unmatched_count }} {{ "строка не распознана" if unmatched_count == 1 else "строки не распознаны" }} ИИ как товар и не показана в таблице — сверься с фото чека, допиши вручную, если это реальная покупка.
         </div>
-        <input type="hidden" name="unmatched_amount" value="{{ unmatched_total }}">
         {% endif %}
         <table id="items-table" style="width:100%;border-collapse:collapse;font-size:13px">
           <thead id="items-thead">
@@ -175,14 +174,14 @@
 
         <div class="form-group">
           <label>Сумма (сом)</label>
-          {% if receipt.amount_detected %}
-          <div style="font-size:11px;color:var(--text-muted);text-align:center;margin-bottom:2px">OCR распознал сумму чека: {{ receipt.amount_detected }} — сверяй с этим числом, ниже поле пересчитывается автоматически</div>
-          {% endif %}
+          <!-- Считается ТОЛЬКО из позиций (updateGrandTotal) — OCR-число сюда
+               никогда не подставляется, даже как стартовое значение: то, что
+               написано на бумаге, могло быть ошибкой или подделкой. -->
           <input type="number" name="amount" id="total-amount" class="form-control" step="0.01"
-                 inputmode="decimal"
-                 value="{{ receipt.amount_detected or '' }}" required placeholder="0.00"
+                 inputmode="decimal" readonly
+                 value="" required placeholder="0.00"
                  style="font-size:28px;font-weight:700;text-align:center;padding:14px;
-                        border:2px solid var(--primary);border-radius:12px">
+                        border:2px solid var(--primary);border-radius:12px;background:var(--bg-secondary,#f3f4f6)">
           <div id="items-sum-hint" style="font-size:12px;color:var(--text-muted);text-align:center;margin-top:4px"></div>
         </div>
 
@@ -262,8 +261,6 @@
 
 {% block scripts %}
 <script>
-const UNMATCHED_TOTAL = {{ unmatched_total or 0 }};
-
 function _num(v) {
   const n = parseFloat(String(v).replace(',', '.'));
   return isNaN(n) ? null : n;
@@ -293,16 +290,11 @@ function recalcRow(input) {
 function updateGrandTotal() {
   const totals = [...document.querySelectorAll('.item-total')]
     .map(i => _num(i.value) || 0);
-  if (!totals.length && !UNMATCHED_TOTAL) return;
-  const visibleSum = totals.reduce((a, b) => a + b, 0);
-  const sum = visibleSum + UNMATCHED_TOTAL;
+  if (!totals.length) return;
+  const sum = totals.reduce((a, b) => a + b, 0);
   const hint = document.getElementById('items-sum-hint');
   const amountInput = document.getElementById('total-amount');
-  if (hint) {
-    hint.textContent = UNMATCHED_TOTAL
-      ? `Сумма позиций: ${visibleSum.toLocaleString('ru-RU', {maximumFractionDigits:2})} с + ${UNMATCHED_TOTAL.toLocaleString('ru-RU', {maximumFractionDigits:2})} с без категории = ${sum.toLocaleString('ru-RU', {maximumFractionDigits:2})} с`
-      : 'Сумма позиций: ' + sum.toLocaleString('ru-RU', {maximumFractionDigits:2}) + ' с';
-  }
+  if (hint) hint.textContent = 'Сумма позиций: ' + sum.toLocaleString('ru-RU', {maximumFractionDigits:2}) + ' с';
   if (amountInput) amountInput.value = sum.toFixed(2);
   updateWarehouseHint();
   updateDebtHint();
