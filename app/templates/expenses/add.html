@@ -41,13 +41,6 @@
       </select>
     </div>
 
-    <!-- Справочник продуктов для автодополнения -->
-    <datalist id="products-list">
-      {% for p in products %}
-      <option value="{{ p.name }}">
-      {% endfor %}
-    </datalist>
-
     <!-- Позиции — для всех товарных категорий (не для услуг вроде Транспорта/Прочего) -->
     <div id="items-block" style="display:none" class="form-group">
       <label style="display:flex;align-items:center;justify-content:space-between">
@@ -236,15 +229,77 @@ function updateDebtHint() {
   }
 }
 
+// ── Autocomplete для позиций (тот же компонент, что на confirm.html) ──────
+function initAutocomplete(input) {
+  const dropdown = input.parentElement.querySelector('.autocomplete-dropdown');
+  if (!dropdown) return;
+  let debounceTimer = null;
+
+  function renderDropdown(items) {
+    if (!items.length) { dropdown.style.display = 'none'; return; }
+    dropdown.innerHTML = items.map(c => `
+      <div class="ac-item" data-id="${c.id}" data-name="${c.name.replace(/"/g,'&quot;')}"
+           style="padding:7px 10px;cursor:pointer;font-size:13px;display:flex;justify-content:space-between;align-items:center;gap:6px">
+        <span>${c.name}</span>
+        <span style="font-size:10px;color:var(--text-muted);flex-shrink:0">${c.score < 100 ? '~' + Math.round(c.score) + '%' : '✓'}</span>
+      </div>`).join('');
+    dropdown.style.display = '';
+    dropdown.querySelectorAll('.ac-item').forEach(item => {
+      item.addEventListener('mousedown', e => {
+        e.preventDefault();
+        selectCandidate(item.dataset.id, item.dataset.name);
+      });
+      item.addEventListener('mouseover', () => item.style.background = '#f3f4f6');
+      item.addEventListener('mouseout',  () => item.style.background = '');
+    });
+  }
+
+  function fetchCandidates(q) {
+    if (!q.trim()) { dropdown.style.display = 'none'; return; }
+    fetch('/expenses/products/search?q=' + encodeURIComponent(q))
+      .then(r => r.json())
+      .then(items => renderDropdown(items))
+      .catch(() => { dropdown.style.display = 'none'; });
+  }
+
+  function selectCandidate(id, name) {
+    input.value = name;
+    const hiddenId = input.closest('td').querySelector('[name=item_product_id]');
+    if (hiddenId) hiddenId.value = id;
+    const hint = input.closest('td').querySelector('.product-hint');
+    if (hint) {
+      hint.textContent = '✓ в каталоге';
+      hint.style.color = '#16a34a';
+    }
+    dropdown.style.display = 'none';
+  }
+
+  input.addEventListener('focus', () => fetchCandidates(input.value));
+  input.addEventListener('input', () => {
+    // Ручной ввод после выбора из подсказки — не гарантирует совпадение,
+    // сбрасываем product_id, сервер сам разрешит товар по имени при сохранении.
+    const hiddenId = input.closest('td').querySelector('[name=item_product_id]');
+    if (hiddenId) hiddenId.value = '';
+    const hint = input.closest('td').querySelector('.product-hint');
+    if (hint) hint.textContent = '';
+    clearTimeout(debounceTimer);
+    debounceTimer = setTimeout(() => fetchCandidates(input.value), 180);
+  });
+  input.addEventListener('blur', () => setTimeout(() => { dropdown.style.display = 'none'; }, 180));
+}
+
 function addItemRow() {
   const tbody = document.getElementById('items-body');
   const row = document.createElement('tr');
   row.style.borderBottom = '1px solid var(--border)';
   row.innerHTML = `
-    <td style="padding:4px">
-      <input type="text" name="item_name" class="form-control"
-             list="products-list"
+    <td style="padding:4px;position:relative">
+      <input type="hidden" name="item_product_id" value="">
+      <input type="text" name="item_name" class="form-control item-name-input"
+             autocomplete="off"
              style="font-size:12px;padding:4px 6px" placeholder="Что купили">
+      <div class="autocomplete-dropdown" style="display:none;position:absolute;z-index:100;left:4px;right:4px;top:100%;background:#fff;border:1px solid var(--border);border-radius:6px;box-shadow:0 4px 12px rgba(0,0,0,.1);max-height:180px;overflow-y:auto"></div>
+      <div class="product-hint" style="font-size:10px;color:var(--text-muted);margin-top:2px"></div>
     </td>
     <td style="padding:4px">
       <input type="text" name="item_qty" class="form-control item-qty"
@@ -268,6 +323,7 @@ function addItemRow() {
     </td>
   `;
   tbody.appendChild(row);
+  initAutocomplete(row.querySelector('.item-name-input'));
 }
 </script>
 {% endblock %}

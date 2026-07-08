@@ -115,26 +115,3 @@ def ensure_alias(db: Session, raw: str, product_id: int) -> None:
         db.add(ProductAlias(raw_text=raw.strip(), product_id=product_id))
 
 
-def maybe_promote(db: Session, product: Product, threshold: int = 3) -> bool:
-    """
-    Авто-промоут временного продукта в эталонный, если он встретился >= threshold раз.
-    Возвращает True если продукт был промоутирован.
-    Не вызывается для категорий ремонта/стройки — это контролируется на уровне роутера.
-    """
-    if product.is_standard:
-        return False
-    from app.models import ReceiptItem
-    count = db.query(ReceiptItem).filter(ReceiptItem.product_id == product.id).count()
-    if count >= threshold:
-        # Перед промоутом скопировать category/unit из ближайшего стандарта, если не заданы
-        if not product.category:
-            candidates = rank_candidates(db, product.name, limit=1, standard_only=True)
-            if candidates and candidates[0]["score"] >= 80:
-                std = db.get(Product, candidates[0]["id"])
-                if std:
-                    product.category = std.category
-                    if not product.unit:
-                        product.unit = std.unit
-        product.is_standard = True
-        return True
-    return False

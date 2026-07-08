@@ -15,7 +15,7 @@ from app.models import (
     Transaction, User, AuditLog, WarehouseReceipt, Supplier,
 )
 from app.services.ocr import compute_hash, analyze_receipt
-from app.services.products import match_product, rank_candidates, get_or_create_product, ensure_alias, maybe_promote
+from app.services.products import match_product, rank_candidates, get_or_create_product, ensure_alias
 from app.services.normalize import normalize_items
 from app.dependencies import get_current_user
 
@@ -809,24 +809,6 @@ def handle_confirm(
     receipt.confirmed_at = datetime.now()
     audit(db, "receipt", receipt.id, "update", user.id, {"status": "confirmed", "amount": total_confirmed})
 
-    # Категории-услуги, для которых позиции НЕ промоутируются в эталон автоматически
-    # (Ремонт исключён из списка — заказчик прямо просил стандартные позиции по стройматериалам)
-    NO_PROMOTE_NAMES = {"транспорт", "прочее"}
-    def _is_promote_eligible(cat_id):
-        if not cat_id:
-            return False
-        cat = db.query(ExpenseCategory).get(cat_id)
-        if not cat:
-            return False
-        name_low = cat.name.lower()
-        if name_low in NO_PROMOTE_NAMES:
-            return False
-        if cat.parent_id:
-            parent = db.query(ExpenseCategory).get(cat.parent_id)
-            if parent and parent.name.lower() in NO_PROMOTE_NAMES:
-                return False
-        return True
-
     # Сохраняем отредактированные позиции
     want_warehouse = add_to_warehouse == "1"
     if resolved_items:
@@ -843,10 +825,6 @@ def handle_confirm(
                 total_price=it["total"],
             ))
             db.flush()
-
-            # Авто-промоут временного продукта если категория позволяет
-            if _is_promote_eligible(product.expense_category_id) and not product.is_standard:
-                maybe_promote(db, product, threshold=3)
 
             # Автоматически добавить в склад если есть количество и цена
             if want_warehouse and it["qty"] and it["qty"] > 0 and it["unit_price"] and it["unit_price"] > 0:
@@ -875,8 +853,6 @@ def add_form(request: Request, org_id: int | None = None, db: Session = Depends(
         return RedirectResponse("/login", status_code=302)
     accessible = get_accessible_orgs(user, db)
     current_org = resolve_org(org_id, user, db)
-    from app.models import Product
-    products = db.query(Product).order_by(Product.name).all()
     all_cats = get_categories(db)
     # Позиции показываем для всех "товарных" категорий — не показываем только для
     # услуг (Транспорт, Прочее), там пока нет смысла в товарных позициях.
@@ -892,7 +868,6 @@ def add_form(request: Request, org_id: int | None = None, db: Session = Depends(
         "upload_orgs": get_upload_orgs(user, db),
         "categories": all_cats,
         "food_cat_ids": food_cat_ids,
-        "products": products,
         "suppliers": all_suppliers,
         "today": date.today().isoformat(),
         "error": None,
@@ -912,6 +887,7 @@ def handle_add(
     item_name: List[str] = Form(default=[]),
     item_qty: List[str] = Form(default=[]),
     item_unit_price: List[str] = Form(default=[]),
+    item_product_id: List[str] = Form(default=[]),
     supplier_id: str = Form(default=""),
     new_supplier_name: str = Form(default=""),
     new_supplier_phone: str = Form(default=""),
@@ -932,7 +908,6 @@ def handle_add(
             "upload_orgs": get_upload_orgs(user, db),
             "categories": get_categories(db),
             "suppliers": db.query(Supplier).order_by(Supplier.name).all(),
-            "products": [],
             "food_cat_ids": [],
             "today": date.today().isoformat(),
             "error": "Объект не найден",
@@ -949,7 +924,6 @@ def handle_add(
             "upload_orgs": get_upload_orgs(user, db),
             "categories": get_categories(db),
             "suppliers": db.query(Supplier).order_by(Supplier.name).all(),
-            "products": db.query(Product).order_by(Product.name).all(),
             "food_cat_ids": [],
             "today": date.today().isoformat(),
             "error": "Выбери поставщика — без него нельзя провести расход",
@@ -995,7 +969,11 @@ def handle_add(
         unit_price = _safe(item_unit_price, i)
         if qty is None or unit_price is None:
             continue
-        valid_items.append((name, qty, unit_price, round(qty * unit_price, 2)))
+        pid_str = item_product_id[i].strip() if i < len(item_product_id) else ""
+        product = db.get(Product, int(pid_str)) if pid_str.isdigit() else None
+        if not product:
+            product = get_or_create_product(db, name)
+        valid_items.append((name, qty, unit_price, round(qty * unit_price, 2), product))
 
     if valid_items:
         receipt = Receipt(
@@ -1010,8 +988,7 @@ def handle_add(
         db.add(receipt)
         db.flush()
         db.add(ReceiptTransaction(receipt_id=receipt.id, transaction_id=tx.id, amount=amount))
-        for name, qty, unit_price, total in valid_items:
-            product = get_or_create_product(db, name)
+        for name, qty, unit_price, total, product in valid_items:
             db.add(ReceiptItem(
                 receipt_id=receipt.id,
                 name=name,
