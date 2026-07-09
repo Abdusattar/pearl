@@ -5,10 +5,12 @@
 <div class="page-header">
   <h1>Склад</h1>
   <div style="display:flex;gap:10px">
-    <a href="/warehouse/receipt/add?org_id={{ current_org_id }}" class="btn btn-primary">+ Приход</a>
-    <a href="/warehouse/writeoff/add?org_id={{ current_org_id }}" class="btn btn-secondary">− Списание</a>
-    <a href="/warehouse/products/?org_id={{ current_org_id }}" class="btn btn-secondary">Продукты</a>
     {% if current_user.role != "staff" %}
+    <a href="/warehouse/receipt/add?org_id={{ current_org_id }}" class="btn btn-primary">+ Приход</a>
+    {% endif %}
+    <a href="/warehouse/writeoff/add?org_id={{ current_org_id }}" class="btn btn-secondary">− Списание</a>
+    {% if current_user.role != "staff" %}
+    <a href="/warehouse/products/?org_id={{ current_org_id }}" class="btn btn-secondary">Продукты</a>
     <a href="/warehouse/actualize?org_id={{ current_org_id }}" class="btn btn-secondary">🔍 Актуализация</a>
     {% endif %}
   </div>
@@ -68,8 +70,12 @@
 {% else %}
 <div class="card" style="text-align:center;padding:60px 20px;color:var(--text-muted)">
   <div style="font-size:48px;margin-bottom:16px">📦</div>
+  {% if current_user.role != "staff" %}
   <div style="font-size:16px;margin-bottom:24px">Склад пуст — добавьте первый приход</div>
   <a href="/warehouse/receipt/add?org_id={{ current_org_id }}" class="btn btn-primary btn-lg">+ Добавить приход</a>
+  {% else %}
+  <div style="font-size:16px">Склад пуст — заполнится автоматически из проведённых квитанций</div>
+  {% endif %}
 </div>
 {% endif %}
 

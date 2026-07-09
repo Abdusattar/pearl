@@ -183,6 +183,8 @@ def receipt_add_form(request: Request, org_id: str | None = None, db: Session = 
     ctx = _base_ctx(request, db, org_id)
     if ctx is None:
         return RedirectResponse("/login", status_code=302)
+    if ctx["current_user"].role == "staff":
+        return RedirectResponse(f"/warehouse/?org_id={ctx['current_org_id']}", status_code=302)
     products = db.query(Product).order_by(Product.name).all()
     ctx.update({"products": products, "units": UNITS, "categories": CATEGORIES, "today": date_type.today().isoformat(), "error": None})
     return templates.TemplateResponse("warehouse/receipt_form.html", ctx)
@@ -205,6 +207,8 @@ def receipt_add_save(
     ctx = _base_ctx(request, db, org_id)
     if ctx is None:
         return RedirectResponse("/login", status_code=302)
+    if ctx["current_user"].role == "staff":
+        return RedirectResponse(f"/warehouse/?org_id={ctx['current_org_id']}", status_code=302)
 
     # Resolve product
     if product_id == "new":
@@ -264,7 +268,6 @@ def writeoff_add_save(
     product_id: int = Form(...),
     quantity: float = Form(...),
     writeoff_date: str = Form(...),
-    children_count: int = Form(None),
     reason: str = Form("питание детей"),
     db: Session = Depends(get_db),
 ):
@@ -277,7 +280,6 @@ def writeoff_add_save(
         product_id=product_id,
         quantity=quantity,
         organization_id=ctx["current_org"].id,
-        children_count=children_count if children_count else None,
         reason=reason or "питание детей",
         created_by=ctx["current_user"].id,
     )
@@ -360,6 +362,8 @@ def products_list(request: Request, org_id: str | None = None, db: Session = Dep
     ctx = _base_ctx(request, db, org_id)
     if ctx is None:
         return RedirectResponse("/login", status_code=302)
+    if ctx["current_user"].role == "staff":
+        return RedirectResponse(f"/warehouse/?org_id={ctx['current_org_id']}", status_code=302)
     products = db.query(Product).order_by(Product.category.nullslast(), Product.name).all()
     expense_categories = db.query(ExpenseCategory).order_by(
         ExpenseCategory.parent_id.nullsfirst(), ExpenseCategory.name
@@ -384,6 +388,8 @@ def products_add(
     ctx = _base_ctx(request, db, org_id)
     if ctx is None:
         return RedirectResponse("/login", status_code=302)
+    if ctx["current_user"].role == "staff":
+        return RedirectResponse(f"/warehouse/?org_id={ctx['current_org_id']}", status_code=302)
     existing = db.query(Product).filter(func.lower(Product.name) == name.strip().lower()).first()
     if not existing:
         exp_cat_id = int(expense_category_id) if expense_category_id and expense_category_id.isdigit() else None
