@@ -30,7 +30,7 @@ def seed():
                 ExpenseCategory(id=2,  name="Продукты",       parent_id=1,    organization_id=None),
                 ExpenseCategory(id=3,  name="Готовая еда",    parent_id=1,    organization_id=None),
                 ExpenseCategory(id=4,  name="Хозяйство",      parent_id=None, organization_id=None),
-                ExpenseCategory(id=5,  name="Бытовая химия",  parent_id=4,    organization_id=None),
+                ExpenseCategory(id=5,  name="Мыломойка",      parent_id=4,    organization_id=None),
                 ExpenseCategory(id=6,  name="Инвентарь",      parent_id=4,    organization_id=None),
                 ExpenseCategory(id=7,  name="Канцелярия",     parent_id=None, organization_id=None),
                 ExpenseCategory(id=8,  name="Зарплаты",       parent_id=None, organization_id=None),

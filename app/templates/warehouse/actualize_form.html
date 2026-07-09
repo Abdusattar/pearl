@@ -20,7 +20,12 @@
   <div style="font-size:13px;color:var(--text-muted);margin-bottom:16px">
     Впиши товар и сколько его реально сейчас на складе — система сама посчитает
     разницу с системой и создаст приход или списание. Товар не найден в
-    подсказках — при сохранении создастся новый.
+    подсказках — при сохранении создастся новый. Кнопка «Загрузить все текущие
+    остатки» заполнит таблицу тем, что уже числится по системе — останется
+    поправить только те строки, где факт разошёлся со счётом. Изменённые строки
+    подсвечиваются. Чтобы показать, что товара больше нет — впиши 0, а не
+    удаляй строку крестиком: удаление просто пропускает товар и не меняет его
+    остаток.
   </div>
 
   <form method="post" action="/warehouse/actualize">
@@ -44,6 +49,7 @@
         <tbody id="items-body"></tbody>
       </table>
       <button type="button" onclick="addRow()" style="margin-top:8px;font-size:12px;color:var(--primary);background:none;border:none;cursor:pointer;padding:4px 0">+ добавить строку</button>
+      <button type="button" onclick="loadCurrentBalances()" style="margin-top:8px;margin-left:16px;font-size:12px;color:var(--text-muted);background:none;border:1px solid var(--border);border-radius:6px;cursor:pointer;padding:5px 10px">⤓ Загрузить все текущие остатки</button>
     </div>
 
     <button type="submit" class="btn btn-primary" style="margin-top:8px">Сохранить всё</button>
@@ -55,7 +61,7 @@
 <script>
 const PRODUCTS = {{ products_json | tojson }};
 
-function addRow() {
+function addRow(product) {
   const tbody = document.getElementById('items-body');
   const row = document.createElement('tr');
   row.style.borderBottom = '1px solid var(--border)';
@@ -76,6 +82,37 @@ function addRow() {
   `;
   tbody.appendChild(row);
   initRow(row);
+  if (product) {
+    const nameInput = row.querySelector('.item-name');
+    const hiddenId = row.querySelector('.item-pid');
+    const qtyInput = row.querySelector('.item-qty');
+    const hint = row.querySelector('.balance-hint');
+    const balStr = product.balance.toFixed(3).replace(/\.?0+$/, '');
+    nameInput.value = product.name;
+    hiddenId.value = product.id;
+    qtyInput.value = balStr;
+    qtyInput.dataset.original = balStr;
+    hint.textContent = 'по системе: ' + balStr + ' ' + product.unit;
+  }
+  return row;
+}
+
+function loadCurrentBalances() {
+  const tbody = document.getElementById('items-body');
+  if (tbody.children.length > 0 && !confirm('Текущие строки будут заменены остатками по системе. Продолжить?')) return;
+  tbody.innerHTML = '';
+  const withStock = PRODUCTS.filter(p => p.balance > 0);
+  if (!withStock.length) { addRow(); return; }
+  let prevCat = null;
+  withStock.forEach(p => {
+    if (p.category !== prevCat) {
+      prevCat = p.category;
+      const catRow = document.createElement('tr');
+      catRow.innerHTML = `<td colspan="3" style="padding:6px 4px;font-size:11px;font-weight:700;text-transform:uppercase;color:var(--text-muted);background:var(--bg)">${prevCat}</td>`;
+      tbody.appendChild(catRow);
+    }
+    addRow(p);
+  });
 }
 
 function initRow(row) {
@@ -83,6 +120,7 @@ function initRow(row) {
   const dropdown = row.querySelector('.ac-dropdown');
   const hiddenId = row.querySelector('.item-pid');
   const hint = row.querySelector('.balance-hint');
+  const qtyInput = row.querySelector('.item-qty');
 
   function render(items) {
     if (!items.length) { dropdown.style.display = 'none'; return; }
@@ -97,9 +135,12 @@ function initRow(row) {
       el.addEventListener('mousedown', e => {
         e.preventDefault();
         const p = PRODUCTS.find(x => x.id == el.dataset.id);
+        const balStr = p.balance.toFixed(3).replace(/\.?0+$/,'');
         input.value = p.name;
         hiddenId.value = p.id;
-        hint.textContent = 'по системе: ' + p.balance.toFixed(3).replace(/\.?0+$/,'') + ' ' + p.unit;
+        hint.textContent = 'по системе: ' + balStr + ' ' + p.unit;
+        qtyInput.dataset.original = balStr;
+        checkChanged();
         dropdown.style.display = 'none';
       });
     });
@@ -108,6 +149,8 @@ function initRow(row) {
   input.addEventListener('input', () => {
     hiddenId.value = '';
     hint.textContent = '';
+    delete qtyInput.dataset.original;
+    checkChanged();
     const q = input.value.trim().toLowerCase();
     if (!q) { dropdown.style.display = 'none'; return; }
     render(PRODUCTS.filter(p => p.name.toLowerCase().includes(q)).slice(0, 8));
@@ -122,6 +165,16 @@ function initRow(row) {
       hint.style.color = 'var(--success)';
     }
   }, 180));
+
+  function checkChanged() {
+    const orig = qtyInput.dataset.original;
+    if (orig === undefined) { qtyInput.style.background = ''; return; }
+    const cur = parseFloat((qtyInput.value || '').replace(',', '.'));
+    const origVal = parseFloat(orig);
+    const changed = isNaN(cur) || Math.abs(cur - origVal) > 0.001;
+    qtyInput.style.background = changed ? '#fff3cd' : '';
+  }
+  qtyInput.addEventListener('input', checkChanged);
 }
 
 addRow();

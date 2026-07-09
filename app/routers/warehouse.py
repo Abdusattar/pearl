@@ -294,9 +294,9 @@ def actualize_form(request: Request, org_id: str | None = None, db: Session = De
     all_orgs = db.query(Organization).all()
     org_ids = _descendants(ctx["current_org"].id, all_orgs) if ctx["current_org"] else set()
     balance_map = _get_balance_map(db, org_ids)
-    products = db.query(Product).order_by(Product.name).all()
+    products = db.query(Product).order_by(Product.category.nullslast(), Product.name).all()
     products_json = [
-        {"id": p.id, "name": p.name, "unit": p.unit or "кг",
+        {"id": p.id, "name": p.name, "unit": p.unit or "кг", "category": p.category or "прочее",
          "balance": balance_map.get(p.id, {"balance": 0})["balance"]}
         for p in products
     ]
@@ -371,10 +371,10 @@ def actualize_save(
 
     db.commit()
 
-    products = db.query(Product).order_by(Product.name).all()
+    products = db.query(Product).order_by(Product.category.nullslast(), Product.name).all()
     balance_map = _get_balance_map(db, org_ids)
     products_json = [
-        {"id": p.id, "name": p.name, "unit": p.unit or "кг",
+        {"id": p.id, "name": p.name, "unit": p.unit or "кг", "category": p.category or "прочее",
          "balance": balance_map.get(p.id, {"balance": 0})["balance"]}
         for p in products
     ]
