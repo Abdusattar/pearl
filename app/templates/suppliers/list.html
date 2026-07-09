@@ -29,6 +29,10 @@
         <input type="tel" name="phone" class="form-control" placeholder="+996 700 000 000">
       </div>
     </div>
+    <div class="form-group" style="margin-bottom:0">
+      <label>ИНН (необязательно)</label>
+      <input type="text" name="inn" class="form-control" placeholder="14 цифр — нужен бухгалтеру для реестров">
+    </div>
     <button type="submit" class="btn btn-primary" style="align-self:flex-start">+ Добавить</button>
   </form>
 </div>
@@ -40,6 +44,7 @@
       <tr>
         <th>Название</th>
         <th>Телефон</th>
+        <th>ИНН</th>
         <th>Долг</th>
         <th></th>
       </tr>
@@ -49,6 +54,7 @@
       <tr>
         <td data-label="Название" style="font-weight:500">{{ s.name }}</td>
         <td data-label="Телефон">{{ s.phone or '—' }}</td>
+        <td data-label="ИНН" style="color:var(--text-muted)">{{ s.inn or '—' }}</td>
         <td data-label="Долг">
           {% if s.debt and s.debt > 0 %}
           <span style="color:#b45309;font-weight:600">{{ "{:,.0f}".format(s.debt) }} с</span>

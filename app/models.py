@@ -108,6 +108,7 @@ class Supplier(Base):
     id         = Column(Integer, primary_key=True)
     name       = Column(String(200), nullable=False)
     phone      = Column(String(20), unique=True, nullable=True)
+    inn        = Column(String(20), nullable=True)  # для реестров бухгалтеру (ст. 177 НК КР)
     created_at = Column(DateTime, server_default=func.now())
 
 
@@ -213,6 +214,25 @@ class WriteOff(Base):
     deleted_at      = Column(DateTime)
 
     product      = relationship("Product")
+    organization = relationship("Organization")
+
+
+class Asset(Base):
+    """Реестр капитальных покупок (мебель, оборудование, игровые комплексы) — лёгкая версия,
+    без расчёта амортизации (это решает бухгалтер по своему методу, когда появится 1С).
+    Просто фиксирует сам факт: что купили, когда, за сколько — база для будущей амортизации."""
+    __tablename__ = "assets"
+    id              = Column(Integer, primary_key=True)
+    name            = Column(String(200), nullable=False)
+    description     = Column(Text)
+    category        = Column(String(50))  # мебель, оборудование, игровой инвентарь, прочее
+    purchase_date   = Column(Date, nullable=False)
+    cost            = Column(Numeric(12, 2), nullable=False)
+    organization_id = Column(Integer, ForeignKey("organizations.id"), nullable=False)
+    created_by      = Column(Integer, ForeignKey("users.id"))
+    created_at      = Column(DateTime, server_default=func.now())
+    deleted_at      = Column(DateTime)
+
     organization = relationship("Organization")
 
 

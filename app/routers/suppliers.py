@@ -33,7 +33,7 @@ def supplier_list(request: Request, db: Session = Depends(get_db)):
 
     supplier_rows = []
     for s in suppliers:
-        supplier_rows.append({"id": s.id, "name": s.name, "phone": s.phone, "debt": debt_map.get(s.id)})
+        supplier_rows.append({"id": s.id, "name": s.name, "phone": s.phone, "inn": s.inn, "debt": debt_map.get(s.id)})
 
     return templates.TemplateResponse("suppliers/list.html", {
         "request": request,
@@ -49,6 +49,7 @@ def create_supplier(
     request: Request,
     name: str = Form(...),
     phone: str = Form(default=""),
+    inn: str = Form(default=""),
     org_id: str = Form(default=""),
     db: Session = Depends(get_db),
 ):
@@ -57,11 +58,12 @@ def create_supplier(
         return RedirectResponse("/login", status_code=302)
     name = name.strip()
     phone_val = phone.strip() or None
+    inn_val = inn.strip() or None
 
     if name:
         existing = db.query(Supplier).filter(Supplier.name == name).first()
         if not existing:
-            s = Supplier(name=name, phone=phone_val)
+            s = Supplier(name=name, phone=phone_val, inn=inn_val)
             db.add(s)
             db.commit()
 
