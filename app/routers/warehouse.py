@@ -1,5 +1,6 @@
 from datetime import date as date_type
 from pathlib import Path
+from typing import List
 
 from fastapi import APIRouter, Depends, Form, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
@@ -284,6 +285,67 @@ def writeoff_add_save(
         created_by=ctx["current_user"].id,
     )
     db.add(writeoff)
+    db.commit()
+    return RedirectResponse(f"/warehouse/?org_id={ctx['current_org_id']}", status_code=302)
+
+
+MEAL_TYPES = ["Завтрак", "Обед", "Полдник", "Ужин"]
+
+
+@router.get("/writeoff/meal", response_class=HTMLResponse)
+def writeoff_meal_form(request: Request, org_id: str | None = None, db: Session = Depends(get_db)):
+    ctx = _base_ctx(request, db, org_id)
+    if ctx is None:
+        return RedirectResponse("/login", status_code=302)
+
+    all_orgs = db.query(Organization).all()
+    org_ids = _descendants(ctx["current_org"].id, all_orgs) if ctx["current_org"] else set()
+    balances = _get_balances(db, org_ids)
+    in_stock = [b for b in balances if b["balance"] > 0]
+    in_stock_json = [
+        {"id": b["product"].id, "name": b["product"].name,
+         "unit": b["product"].unit or "кг", "balance": b["balance"]}
+        for b in in_stock
+    ]
+
+    ctx.update({
+        "in_stock": in_stock, "in_stock_json": in_stock_json, "meal_types": MEAL_TYPES,
+        "today": date_type.today().isoformat(), "error": None,
+    })
+    return templates.TemplateResponse("warehouse/writeoff_meal_form.html", ctx)
+
+
+@router.post("/writeoff/meal", response_class=HTMLResponse)
+def writeoff_meal_save(
+    request: Request,
+    org_id: str | None = Form(None),
+    writeoff_date: str = Form(...),
+    meal_type: str = Form(...),
+    item_product_id: List[str] = Form(default=[]),
+    item_quantity: List[str] = Form(default=[]),
+    db: Session = Depends(get_db),
+):
+    ctx = _base_ctx(request, db, org_id)
+    if ctx is None:
+        return RedirectResponse("/login", status_code=302)
+
+    d = date_type.fromisoformat(writeoff_date)
+    for i, pid_str in enumerate(item_product_id):
+        pid_str = pid_str.strip()
+        qty_str = item_quantity[i].strip() if i < len(item_quantity) else ""
+        if not pid_str or not qty_str:
+            continue
+        try:
+            qty = float(qty_str.replace(",", "."))
+        except ValueError:
+            continue
+        if qty <= 0:
+            continue
+        db.add(WriteOff(
+            date=d, product_id=int(pid_str), quantity=qty,
+            organization_id=ctx["current_org"].id, reason="питание детей",
+            meal_type=meal_type, created_by=ctx["current_user"].id,
+        ))
     db.commit()
     return RedirectResponse(f"/warehouse/?org_id={ctx['current_org_id']}", status_code=302)
 

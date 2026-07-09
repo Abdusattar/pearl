@@ -1,0 +1,128 @@
+{% extends "base.html" %}
+{% block title %}Списание на приём пищи — Склад{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <h1>Списание на приём пищи</h1>
+  <a href="/warehouse/?org_id={{ current_org_id }}" class="btn btn-secondary">← Назад</a>
+</div>
+
+<div class="card" style="max-width:640px">
+  {% if error %}
+  <div class="alert alert-error">{{ error }}</div>
+  {% endif %}
+
+  {% if not in_stock %}
+  <div style="text-align:center;padding:32px;color:var(--text-muted)">
+    Нет продуктов в наличии — сначала добавьте <a href="/warehouse/receipt/add?org_id={{ current_org_id }}">приход</a>
+  </div>
+  {% else %}
+
+  <form method="post" action="/warehouse/writeoff/meal">
+    <input type="hidden" name="org_id" value="{{ current_org_id }}">
+
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
+      <div class="form-group">
+        <label>Дата</label>
+        <input type="date" name="writeoff_date" class="form-control" value="{{ today }}" required>
+      </div>
+      <div class="form-group">
+        <label>Приём пищи</label>
+        <select name="meal_type" class="form-control" required>
+          {% for m in meal_types %}
+          <option value="{{ m }}">{{ m }}</option>
+          {% endfor %}
+        </select>
+      </div>
+    </div>
+
+    <div class="form-group">
+      <label>Продукты</label>
+      <table style="width:100%;border-collapse:collapse;font-size:13px" id="items-table">
+        <thead>
+          <tr style="border-bottom:2px solid var(--border);text-align:left">
+            <th style="padding:6px 4px;width:55%">Товар</th>
+            <th style="padding:6px 4px;width:30%">Количество</th>
+            <th style="padding:6px 4px;width:15%"></th>
+          </tr>
+        </thead>
+        <tbody id="items-body"></tbody>
+      </table>
+      <button type="button" onclick="addRow()" style="margin-top:8px;font-size:12px;color:var(--primary);background:none;border:none;cursor:pointer;padding:4px 0">+ добавить строку</button>
+    </div>
+
+    <button type="submit" class="btn btn-primary" style="margin-top:8px">Списать всё</button>
+  </form>
+  {% endif %}
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+const PRODUCTS = {{ in_stock_json | tojson }};
+
+function addRow() {
+  const tbody = document.getElementById('items-body');
+  const row = document.createElement('tr');
+  row.style.borderBottom = '1px solid var(--border)';
+  row.innerHTML = `
+    <td style="padding:4px;position:relative">
+      <input type="hidden" class="item-pid" name="item_product_id" value="">
+      <input type="text" class="form-control item-name" autocomplete="off"
+             placeholder="Начни печатать..." style="font-size:13px;padding:5px 8px">
+      <div class="ac-dropdown" style="display:none;position:absolute;z-index:100;left:4px;right:4px;top:100%;background:#fff;border:1px solid var(--border);border-radius:6px;box-shadow:0 4px 12px rgba(0,0,0,.1);max-height:180px;overflow-y:auto"></div>
+      <div class="balance-hint" style="font-size:11px;color:var(--text-muted);margin-top:2px"></div>
+    </td>
+    <td style="padding:4px">
+      <input type="text" class="form-control item-qty" name="item_quantity" placeholder="0.000" style="font-size:13px;padding:5px 8px;text-align:right">
+    </td>
+    <td style="padding:4px;text-align:center">
+      <button type="button" onclick="this.closest('tr').remove()" style="background:none;border:none;color:var(--text-muted);cursor:pointer;font-size:16px">×</button>
+    </td>
+  `;
+  tbody.appendChild(row);
+  initRow(row);
+}
+
+function initRow(row) {
+  const input = row.querySelector('.item-name');
+  const dropdown = row.querySelector('.ac-dropdown');
+  const hiddenId = row.querySelector('.item-pid');
+  const hint = row.querySelector('.balance-hint');
+
+  function render(items) {
+    if (!items.length) { dropdown.style.display = 'none'; return; }
+    dropdown.innerHTML = items.map(p => `
+      <div class="ac-item" data-id="${p.id}" data-name="${p.name.replace(/"/g,'&quot;')}"
+           style="padding:7px 10px;cursor:pointer;font-size:13px;display:flex;justify-content:space-between">
+        <span>${p.name}</span>
+        <span style="color:var(--text-muted);font-size:11px">${p.balance.toFixed(3).replace(/\.?0+$/,'')} ${p.unit}</span>
+      </div>`).join('');
+    dropdown.style.display = '';
+    dropdown.querySelectorAll('.ac-item').forEach(el => {
+      el.addEventListener('mousedown', e => {
+        e.preventDefault();
+        const p = PRODUCTS.find(x => x.id == el.dataset.id);
+        input.value = p.name;
+        hiddenId.value = p.id;
+        hint.textContent = 'на складе: ' + p.balance.toFixed(3).replace(/\.?0+$/,'') + ' ' + p.unit;
+        dropdown.style.display = 'none';
+      });
+    });
+  }
+
+  input.addEventListener('input', () => {
+    hiddenId.value = '';
+    const q = input.value.trim().toLowerCase();
+    if (!q) { dropdown.style.display = 'none'; return; }
+    render(PRODUCTS.filter(p => p.name.toLowerCase().includes(q)).slice(0, 8));
+  });
+  input.addEventListener('focus', () => {
+    if (input.value.trim()) render(PRODUCTS.filter(p => p.name.toLowerCase().includes(input.value.trim().toLowerCase())).slice(0, 8));
+  });
+  input.addEventListener('blur', () => setTimeout(() => { dropdown.style.display = 'none'; }, 180));
+}
+
+addRow();
+</script>
+{% endblock %}

@@ -8,7 +8,8 @@
     {% if current_user.role != "staff" %}
     <a href="/warehouse/receipt/add?org_id={{ current_org_id }}" class="btn btn-primary">+ Приход</a>
     {% endif %}
-    <a href="/warehouse/writeoff/add?org_id={{ current_org_id }}" class="btn btn-secondary">− Списание</a>
+    <a href="/warehouse/writeoff/meal?org_id={{ current_org_id }}" class="btn btn-primary">− Списание на приём пищи</a>
+    <a href="/warehouse/writeoff/add?org_id={{ current_org_id }}" class="btn btn-secondary">− Списание (порча/прочее)</a>
     {% if current_user.role != "staff" %}
     <a href="/warehouse/products/?org_id={{ current_org_id }}" class="btn btn-secondary">Продукты</a>
     <a href="/warehouse/actualize?org_id={{ current_org_id }}" class="btn btn-secondary">🔍 Актуализация</a>
@@ -108,7 +109,7 @@
       <div>
         <div style="font-weight:500">{{ w.product.name }}</div>
         <div style="color:var(--text-muted);font-size:12px">
-          {{ w.date.strftime('%d.%m.%Y') }}{% if w.children_count %} · {{ w.children_count }} детей{% endif %}
+          {{ w.date.strftime('%d.%m.%Y') }}{% if w.meal_type %} · {{ w.meal_type }}{% endif %}{% if w.children_count %} · {{ w.children_count }} детей{% endif %}
         </div>
       </div>
       <div style="text-align:right">

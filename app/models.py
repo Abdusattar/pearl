@@ -229,6 +229,7 @@ class WriteOff(Base):
     organization_id = Column(Integer, ForeignKey("organizations.id"), nullable=False)
     children_count  = Column(Integer)
     reason          = Column(String(100), default="питание детей")
+    meal_type       = Column(String(20))  # завтрак/обед/полдник/ужин — заполняется через /warehouse/writeoff/meal
     created_by      = Column(Integer, ForeignKey("users.id"))
     created_at      = Column(DateTime, server_default=func.now())
     deleted_at      = Column(DateTime)
