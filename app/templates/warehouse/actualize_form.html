@@ -1,0 +1,109 @@
+{% extends "base.html" %}
+{% block title %}Актуализация — Склад{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <h1>Актуализация склада</h1>
+  <a href="/warehouse/?org_id={{ current_org_id }}" class="btn btn-secondary">← Назад</a>
+</div>
+
+<div class="card" style="max-width:560px">
+  {% if result %}
+  <div class="alert alert-success">{{ result }}</div>
+  {% endif %}
+  {% if error %}
+  <div class="alert alert-error">{{ error }}</div>
+  {% endif %}
+
+  <div style="font-size:13px;color:var(--text-muted);margin-bottom:16px">
+    Выбери товар, впиши, сколько его реально сейчас на складе — система сама посчитает
+    разницу с тем, что числится в системе, и создаст приход или списание.
+  </div>
+
+  <form method="post" action="/warehouse/actualize">
+    <input type="hidden" name="org_id" value="{{ current_org_id }}">
+
+    <div class="form-group">
+      <label>Дата пересчёта</label>
+      <input type="date" name="actualize_date" class="form-control" value="{{ today }}" required>
+    </div>
+
+    <div class="form-group">
+      <label>Товар</label>
+      <select name="product_id" id="product_sel" class="form-control" onchange="onSelect(this)" required>
+        <option value="">— выберите товар —</option>
+        {% for r in rows %}
+        <option value="{{ r.product.id }}"
+                data-balance="{{ r.balance }}"
+                data-price="{{ r.avg_price }}"
+                data-unit="{{ r.product.unit or 'кг' }}">
+          {{ r.product.name }} — по системе {{ "%.3f"|format(r.balance)|replace('.000','') }} {{ r.product.unit or 'кг' }}
+        </option>
+        {% endfor %}
+      </select>
+    </div>
+
+    <div class="form-group">
+      <label>Фактический остаток (<span id="unit_lbl">ед.</span>)</label>
+      <input type="number" name="actual_qty" id="actual_input" class="form-control"
+             step="0.001" min="0" placeholder="0.000" oninput="showDelta()" required>
+      <div id="delta_hint" style="font-size:13px;margin-top:6px;min-height:18px"></div>
+    </div>
+
+    <div class="form-group" id="price_block" style="display:none">
+      <label>Цена за <span id="unit_lbl2">ед.</span> для новой позиции (сом)</label>
+      <input type="number" name="price_per_unit" id="price_input" class="form-control" step="0.01" min="0" placeholder="0.00">
+      <div style="font-size:11px;color:var(--text-muted);margin-top:4px">
+        По умолчанию — средняя цена товара. Нужна только когда фактический остаток больше, чем в системе.
+      </div>
+    </div>
+
+    <div style="display:flex;gap:10px;margin-top:8px">
+      <button type="submit" class="btn btn-primary">Сохранить</button>
+      <a href="/warehouse/?org_id={{ current_org_id }}" class="btn btn-secondary">Отмена</a>
+    </div>
+  </form>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+function onSelect(sel) {
+  const opt = sel.options[sel.selectedIndex];
+  const unit = opt.dataset.unit || 'ед.';
+  document.getElementById('unit_lbl').textContent = unit;
+  document.getElementById('unit_lbl2').textContent = unit;
+  const price = parseFloat(opt.dataset.price) || 0;
+  document.getElementById('price_input').placeholder = price ? price.toFixed(2) : '0.00';
+  showDelta();
+}
+
+function showDelta() {
+  const sel = document.getElementById('product_sel');
+  const opt = sel.options[sel.selectedIndex];
+  const hint = document.getElementById('delta_hint');
+  const priceBlock = document.getElementById('price_block');
+  if (!opt || !opt.value) { hint.textContent = ''; priceBlock.style.display = 'none'; return; }
+
+  const balance = parseFloat(opt.dataset.balance) || 0;
+  const unit = opt.dataset.unit || 'ед.';
+  const actual = parseFloat(document.getElementById('actual_input').value);
+  if (isNaN(actual)) { hint.textContent = ''; priceBlock.style.display = 'none'; return; }
+
+  const delta = actual - balance;
+  if (Math.abs(delta) < 0.001) {
+    hint.textContent = '✓ Совпадает с системой — ничего создано не будет';
+    hint.style.color = 'var(--text-muted)';
+    priceBlock.style.display = 'none';
+  } else if (delta > 0) {
+    hint.textContent = `Будет добавлен приход: +${delta.toFixed(3).replace(/\.?0+$/,'')} ${unit}`;
+    hint.style.color = 'var(--success)';
+    priceBlock.style.display = '';
+  } else {
+    hint.textContent = `Будет создано списание: ${delta.toFixed(3).replace(/\.?0+$/,'')} ${unit}`;
+    hint.style.color = 'var(--danger)';
+    priceBlock.style.display = 'none';
+  }
+}
+</script>
+{% endblock %}

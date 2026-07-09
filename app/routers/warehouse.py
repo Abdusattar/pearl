@@ -102,6 +102,47 @@ def _base_ctx(request: Request, db: Session, org_id_str: str | None) -> dict:
     }
 
 
+def _get_balance_map(db: Session, org_ids: set) -> dict:
+    """Текущий остаток и средняя цена по ВСЕМ продуктам (не только тем, что были в приходе) —
+    нужно для актуализации, где корректировать можно и то, чего ещё не было."""
+    recv = (
+        db.query(
+            WarehouseReceipt.product_id.label("pid"),
+            func.sum(WarehouseReceipt.quantity).label("qty"),
+            func.sum(WarehouseReceipt.total_cost).label("cost"),
+        )
+        .filter(WarehouseReceipt.organization_id.in_(org_ids), WarehouseReceipt.deleted_at.is_(None))
+        .group_by(WarehouseReceipt.product_id)
+        .subquery()
+    )
+    woff = (
+        db.query(WriteOff.product_id.label("pid"), func.sum(WriteOff.quantity).label("qty"))
+        .filter(WriteOff.organization_id.in_(org_ids), WriteOff.deleted_at.is_(None))
+        .group_by(WriteOff.product_id)
+        .subquery()
+    )
+    rows = (
+        db.query(
+            Product.id,
+            func.coalesce(recv.c.qty, 0),
+            func.coalesce(recv.c.cost, 0),
+            func.coalesce(woff.c.qty, 0),
+        )
+        .outerjoin(recv, Product.id == recv.c.pid)
+        .outerjoin(woff, Product.id == woff.c.pid)
+        .all()
+    )
+    result = {}
+    for pid, received, total_cost, written in rows:
+        received, total_cost, written = float(received), float(total_cost), float(written)
+        balance = received - written
+        result[pid] = {
+            "balance": balance,
+            "avg_price": (total_cost / received) if received > 0 else 0,
+        }
+    return result
+
+
 @router.get("/", response_class=HTMLResponse)
 def index(request: Request, org_id: str | None = None, db: Session = Depends(get_db)):
     ctx = _base_ctx(request, db, org_id)
@@ -243,6 +284,75 @@ def writeoff_add_save(
     db.add(writeoff)
     db.commit()
     return RedirectResponse(f"/warehouse/?org_id={ctx['current_org_id']}", status_code=302)
+
+
+@router.get("/actualize", response_class=HTMLResponse)
+def actualize_form(request: Request, org_id: str | None = None, db: Session = Depends(get_db)):
+    ctx = _base_ctx(request, db, org_id)
+    if ctx is None:
+        return RedirectResponse("/login", status_code=302)
+    if ctx["current_user"].role == "staff":
+        return RedirectResponse(f"/warehouse/?org_id={ctx['current_org_id']}", status_code=302)
+
+    all_orgs = db.query(Organization).all()
+    org_ids = _descendants(ctx["current_org"].id, all_orgs) if ctx["current_org"] else set()
+    balance_map = _get_balance_map(db, org_ids)
+    products = db.query(Product).order_by(Product.category.nullslast(), Product.name).all()
+    rows = [{"product": p, **balance_map.get(p.id, {"balance": 0, "avg_price": 0})} for p in products]
+
+    ctx.update({"rows": rows, "today": date_type.today().isoformat(), "error": None, "result": None})
+    return templates.TemplateResponse("warehouse/actualize_form.html", ctx)
+
+
+@router.post("/actualize", response_class=HTMLResponse)
+def actualize_save(
+    request: Request,
+    org_id: str | None = Form(None),
+    product_id: int = Form(...),
+    actual_qty: float = Form(...),
+    price_per_unit: float = Form(None),
+    actualize_date: str = Form(...),
+    db: Session = Depends(get_db),
+):
+    ctx = _base_ctx(request, db, org_id)
+    if ctx is None:
+        return RedirectResponse("/login", status_code=302)
+    if ctx["current_user"].role == "staff":
+        return RedirectResponse(f"/warehouse/?org_id={ctx['current_org_id']}", status_code=302)
+
+    all_orgs = db.query(Organization).all()
+    org_ids = _descendants(ctx["current_org"].id, all_orgs) if ctx["current_org"] else set()
+    balance_map = _get_balance_map(db, org_ids)
+    current = balance_map.get(product_id, {"balance": 0, "avg_price": 0})
+    delta = round(actual_qty - current["balance"], 3)
+    product = db.query(Product).filter(Product.id == product_id).first()
+    d = date_type.fromisoformat(actualize_date)
+
+    if delta > 0.001:
+        price = price_per_unit if price_per_unit else current["avg_price"]
+        db.add(WarehouseReceipt(
+            date=d, product_id=product_id, quantity=delta, price_per_unit=price,
+            total_cost=round(delta * price, 2), organization_id=ctx["current_org"].id,
+            supplier_name="Инвентаризация", created_by=ctx["current_user"].id,
+        ))
+        result = f"Найдено больше: +{delta:.3f} {product.unit or 'кг'} — добавлено на склад"
+    elif delta < -0.001:
+        db.add(WriteOff(
+            date=d, product_id=product_id, quantity=abs(delta), organization_id=ctx["current_org"].id,
+            reason="инвентаризация", created_by=ctx["current_user"].id,
+        ))
+        result = f"Найдено меньше: {delta:.3f} {product.unit or 'кг'} — списано"
+    else:
+        result = "Остаток совпадает — ничего не изменено"
+    db.commit()
+
+    all_orgs = db.query(Organization).all()
+    org_ids = _descendants(ctx["current_org"].id, all_orgs) if ctx["current_org"] else set()
+    balance_map = _get_balance_map(db, org_ids)
+    products = db.query(Product).order_by(Product.category.nullslast(), Product.name).all()
+    rows = [{"product": p, **balance_map.get(p.id, {"balance": 0, "avg_price": 0})} for p in products]
+    ctx.update({"rows": rows, "today": date_type.today().isoformat(), "error": None, "result": result})
+    return templates.TemplateResponse("warehouse/actualize_form.html", ctx)
 
 
 @router.get("/products/", response_class=HTMLResponse)

@@ -8,6 +8,9 @@
     <a href="/warehouse/receipt/add?org_id={{ current_org_id }}" class="btn btn-primary">+ Приход</a>
     <a href="/warehouse/writeoff/add?org_id={{ current_org_id }}" class="btn btn-secondary">− Списание</a>
     <a href="/warehouse/products/?org_id={{ current_org_id }}" class="btn btn-secondary">Продукты</a>
+    {% if current_user.role != "staff" %}
+    <a href="/warehouse/actualize?org_id={{ current_org_id }}" class="btn btn-secondary">🔍 Актуализация</a>
+    {% endif %}
   </div>
 </div>
 
