@@ -1,0 +1,66 @@
+{% extends "base.html" %}
+{% set active_page = "attendance" %}
+
+{% block title %}Посещаемость — Жемчужина{% endblock %}
+
+{% block content %}
+<style>
+.att-group { margin-bottom: 18px; }
+.att-group h3 { font-size: 14px; margin-bottom: 8px; color: var(--text-muted); text-transform: uppercase; letter-spacing: .5px; }
+.att-row { display: flex; align-items: center; justify-content: space-between; padding: 10px 14px; border-bottom: 1px solid var(--border); }
+.att-row:last-child { border-bottom: none; }
+.att-row label { display: flex; align-items: center; gap: 10px; cursor: pointer; font-size: 14px; width: 100%; justify-content: space-between; }
+.att-count { font-size: 13px; color: var(--text-muted); }
+</style>
+
+<div class="page-header">
+  <h1>Посещаемость</h1>
+</div>
+
+{% if request.query_params.get('saved') %}
+<div class="alert alert-success" style="max-width:640px">Сохранено</div>
+{% endif %}
+
+<form method="get" action="/attendance/" style="margin-bottom:16px;max-width:300px">
+  <input type="hidden" name="org_id" value="{{ current_org_id or '' }}">
+  <div class="form-group" style="margin:0">
+    <label>Дата</label>
+    <input type="date" name="date" class="form-control" value="{{ target_date }}"
+           onchange="this.form.submit()" max="{{ today }}">
+  </div>
+</form>
+
+{% if not groups %}
+<div class="card" style="text-align:center;padding:32px;color:var(--text-muted)">
+  Нет активных детей с группой на этом объекте.
+</div>
+{% else %}
+<form method="post" action="/attendance/">
+  <input type="hidden" name="org_id" value="{{ current_org_id or '' }}">
+  <input type="hidden" name="date" value="{{ target_date }}">
+
+  <div class="card" style="max-width:640px">
+    {% for g in groups %}
+    <div class="att-group">
+      <h3>{{ g.group.name }} <span class="att-count">({{ g.students|length }} детей)</span></h3>
+      {% for s in g.students %}
+      <div class="att-row">
+        <label>
+          <span>{{ s.name }}</span>
+          <input type="checkbox" name="absent_id" value="{{ s.id }}" {% if s.absent %}checked{% endif %}
+                 style="width:18px;height:18px">
+        </label>
+      </div>
+      {% endfor %}
+    </div>
+    {% endfor %}
+  </div>
+
+  <div style="font-size:12px;color:var(--text-muted);max-width:640px;margin:10px 0">
+    Отмечай галочкой только тех, кого сегодня НЕТ. Остальные по умолчанию — пришли.
+  </div>
+
+  <button type="submit" class="btn btn-primary btn-lg" style="max-width:640px;width:100%">Сохранить посещаемость</button>
+</form>
+{% endif %}
+{% endblock %}

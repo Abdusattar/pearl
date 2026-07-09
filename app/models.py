@@ -1,6 +1,6 @@
 from sqlalchemy import (
     Column, Integer, String, Numeric, Date, DateTime, Text, Boolean,
-    ForeignKey, CheckConstraint, func
+    ForeignKey, CheckConstraint, UniqueConstraint, func
 )
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import relationship, backref
@@ -72,6 +72,26 @@ class Enrollment(Base):
 
     student = relationship("Student", back_populates="enrollments")
     group   = relationship("Group")
+
+
+class Attendance(Base):
+    """Утренняя отметка посещаемости — по одной записи на ребёнка на день.
+    present=False означает "отсутствует". Используется, чтобы повар готовил
+    на факт явки, а не на списочный состав группы (см. wiki/architecture/warehouse_module.md)."""
+    __tablename__ = "attendance"
+    __table_args__ = (
+        UniqueConstraint('student_id', 'date', name='uq_attendance_student_date'),
+    )
+    id              = Column(Integer, primary_key=True)
+    student_id      = Column(Integer, ForeignKey("students.id"), nullable=False)
+    date            = Column(Date, nullable=False)
+    present         = Column(Boolean, nullable=False, default=True)
+    organization_id = Column(Integer, ForeignKey("organizations.id"), nullable=False)
+    created_by      = Column(Integer, ForeignKey("users.id"))
+    created_at      = Column(DateTime, server_default=func.now())
+    updated_at      = Column(DateTime, server_default=func.now(), onupdate=func.now())
+
+    student = relationship("Student")
 
 
 class ExpenseCategory(Base):
