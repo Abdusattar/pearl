@@ -179,74 +179,6 @@ def index(request: Request, org_id: str | None = None, db: Session = Depends(get
     return templates.TemplateResponse("warehouse/index.html", ctx)
 
 
-@router.get("/receipt/add", response_class=HTMLResponse)
-def receipt_add_form(request: Request, org_id: str | None = None, db: Session = Depends(get_db)):
-    ctx = _base_ctx(request, db, org_id)
-    if ctx is None:
-        return RedirectResponse("/login", status_code=302)
-    if ctx["current_user"].role == "staff":
-        return RedirectResponse(f"/warehouse/?org_id={ctx['current_org_id']}", status_code=302)
-    products = db.query(Product).order_by(Product.name).all()
-    ctx.update({"products": products, "units": UNITS, "categories": CATEGORIES, "today": date_type.today().isoformat(), "error": None})
-    return templates.TemplateResponse("warehouse/receipt_form.html", ctx)
-
-
-@router.post("/receipt/add", response_class=HTMLResponse)
-def receipt_add_save(
-    request: Request,
-    org_id: str | None = Form(None),
-    product_id: str = Form(...),
-    new_product_name: str = Form(""),
-    new_product_unit: str = Form("кг"),
-    new_product_category: str = Form("прочее"),
-    quantity: float = Form(...),
-    price_per_unit: float = Form(...),
-    receipt_date: str = Form(...),
-    supplier_name: str = Form(""),
-    db: Session = Depends(get_db),
-):
-    ctx = _base_ctx(request, db, org_id)
-    if ctx is None:
-        return RedirectResponse("/login", status_code=302)
-    if ctx["current_user"].role == "staff":
-        return RedirectResponse(f"/warehouse/?org_id={ctx['current_org_id']}", status_code=302)
-
-    # Resolve product
-    if product_id == "new":
-        name = new_product_name.strip()
-        if not name:
-            products = db.query(Product).order_by(Product.name).all()
-            ctx.update({"products": products, "units": UNITS, "categories": CATEGORIES,
-                        "today": receipt_date, "error": "Введите название нового продукта"})
-            return templates.TemplateResponse("warehouse/receipt_form.html", ctx)
-        existing = db.query(Product).filter(func.lower(Product.name) == name.lower()).first()
-        if existing:
-            product = existing
-        else:
-            product = Product(name=name, unit=new_product_unit, category=new_product_category)
-            db.add(product)
-            db.flush()
-    else:
-        product = db.query(Product).filter(Product.id == int(product_id)).first()
-        if not product:
-            return RedirectResponse(f"/warehouse/?org_id={ctx['current_org_id']}", status_code=302)
-
-    total = round(quantity * price_per_unit, 2)
-    receipt = WarehouseReceipt(
-        date=date_type.fromisoformat(receipt_date),
-        product_id=product.id,
-        quantity=quantity,
-        price_per_unit=price_per_unit,
-        total_cost=total,
-        organization_id=ctx["current_org"].id,
-        supplier_name=supplier_name.strip() or None,
-        created_by=ctx["current_user"].id,
-    )
-    db.add(receipt)
-    db.commit()
-    return RedirectResponse(f"/warehouse/?org_id={ctx['current_org_id']}", status_code=302)
-
-
 @router.get("/writeoff/add", response_class=HTMLResponse)
 def writeoff_add_form(request: Request, org_id: str | None = None, db: Session = Depends(get_db)):
     ctx = _base_ctx(request, db, org_id)
@@ -364,7 +296,10 @@ def actualize_form(request: Request, org_id: str | None = None, db: Session = De
     products = db.query(Product).order_by(Product.category.nullslast(), Product.name).all()
     rows = [{"product": p, **balance_map.get(p.id, {"balance": 0, "avg_price": 0})} for p in products]
 
-    ctx.update({"rows": rows, "today": date_type.today().isoformat(), "error": None, "result": None})
+    ctx.update({
+        "rows": rows, "units": UNITS, "categories": CATEGORIES,
+        "today": date_type.today().isoformat(), "error": None, "result": None,
+    })
     return templates.TemplateResponse("warehouse/actualize_form.html", ctx)
 
 
@@ -372,7 +307,10 @@ def actualize_form(request: Request, org_id: str | None = None, db: Session = De
 def actualize_save(
     request: Request,
     org_id: str | None = Form(None),
-    product_id: int = Form(...),
+    product_id: str = Form(...),
+    new_product_name: str = Form(""),
+    new_product_unit: str = Form("кг"),
+    new_product_category: str = Form("прочее"),
     actual_qty: float = Form(...),
     price_per_unit: float = Form(None),
     actualize_date: str = Form(...),
@@ -387,22 +325,39 @@ def actualize_save(
     all_orgs = db.query(Organization).all()
     org_ids = _descendants(ctx["current_org"].id, all_orgs) if ctx["current_org"] else set()
     balance_map = _get_balance_map(db, org_ids)
-    current = balance_map.get(product_id, {"balance": 0, "avg_price": 0})
+
+    if product_id == "new":
+        name = new_product_name.strip()
+        if not name:
+            products = db.query(Product).order_by(Product.category.nullslast(), Product.name).all()
+            rows = [{"product": p, **balance_map.get(p.id, {"balance": 0, "avg_price": 0})} for p in products]
+            ctx.update({"rows": rows, "units": UNITS, "categories": CATEGORIES,
+                        "today": actualize_date, "error": "Введите название нового продукта", "result": None})
+            return templates.TemplateResponse("warehouse/actualize_form.html", ctx)
+        product = db.query(Product).filter(func.lower(Product.name) == name.lower()).first()
+        if not product:
+            product = Product(name=name, unit=new_product_unit, category=new_product_category)
+            db.add(product)
+            db.flush()
+        current = balance_map.get(product.id, {"balance": 0, "avg_price": 0})
+    else:
+        product = db.query(Product).filter(Product.id == int(product_id)).first()
+        current = balance_map.get(product.id, {"balance": 0, "avg_price": 0})
+
     delta = round(actual_qty - current["balance"], 3)
-    product = db.query(Product).filter(Product.id == product_id).first()
     d = date_type.fromisoformat(actualize_date)
 
     if delta > 0.001:
         price = price_per_unit if price_per_unit else current["avg_price"]
         db.add(WarehouseReceipt(
-            date=d, product_id=product_id, quantity=delta, price_per_unit=price,
+            date=d, product_id=product.id, quantity=delta, price_per_unit=price,
             total_cost=round(delta * price, 2), organization_id=ctx["current_org"].id,
             supplier_name="Инвентаризация", created_by=ctx["current_user"].id,
         ))
         result = f"Найдено больше: +{delta:.3f} {product.unit or 'кг'} — добавлено на склад"
     elif delta < -0.001:
         db.add(WriteOff(
-            date=d, product_id=product_id, quantity=abs(delta), organization_id=ctx["current_org"].id,
+            date=d, product_id=product.id, quantity=abs(delta), organization_id=ctx["current_org"].id,
             reason="инвентаризация", created_by=ctx["current_user"].id,
         ))
         result = f"Найдено меньше: {delta:.3f} {product.unit or 'кг'} — списано"
@@ -415,7 +370,8 @@ def actualize_save(
     balance_map = _get_balance_map(db, org_ids)
     products = db.query(Product).order_by(Product.category.nullslast(), Product.name).all()
     rows = [{"product": p, **balance_map.get(p.id, {"balance": 0, "avg_price": 0})} for p in products]
-    ctx.update({"rows": rows, "today": date_type.today().isoformat(), "error": None, "result": result})
+    ctx.update({"rows": rows, "units": UNITS, "categories": CATEGORIES,
+                "today": date_type.today().isoformat(), "error": None, "result": result})
     return templates.TemplateResponse("warehouse/actualize_form.html", ctx)
 
 
@@ -435,26 +391,3 @@ def products_list(request: Request, org_id: str | None = None, db: Session = Dep
         "expense_categories": expense_categories,
     })
     return templates.TemplateResponse("warehouse/products.html", ctx)
-
-
-@router.post("/products/add")
-def products_add(
-    request: Request,
-    org_id: str | None = Form(None),
-    name: str = Form(...),
-    unit: str = Form("кг"),
-    category: str = Form("прочее"),
-    expense_category_id: str = Form(None),
-    db: Session = Depends(get_db),
-):
-    ctx = _base_ctx(request, db, org_id)
-    if ctx is None:
-        return RedirectResponse("/login", status_code=302)
-    if ctx["current_user"].role == "staff":
-        return RedirectResponse(f"/warehouse/?org_id={ctx['current_org_id']}", status_code=302)
-    existing = db.query(Product).filter(func.lower(Product.name) == name.strip().lower()).first()
-    if not existing:
-        exp_cat_id = int(expense_category_id) if expense_category_id and expense_category_id.isdigit() else None
-        db.add(Product(name=name.strip(), unit=unit, category=category, expense_category_id=exp_cat_id))
-        db.commit()
-    return RedirectResponse(f"/warehouse/products/?org_id={ctx['current_org_id']}", status_code=302)

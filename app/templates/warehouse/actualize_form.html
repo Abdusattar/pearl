@@ -32,6 +32,7 @@
       <label>Товар</label>
       <select name="product_id" id="product_sel" class="form-control" onchange="onSelect(this)" required>
         <option value="">— выберите товар —</option>
+        <option value="new">＋ Новый продукт (нет в каталоге)</option>
         {% for r in rows %}
         <option value="{{ r.product.id }}"
                 data-balance="{{ r.balance }}"
@@ -41,6 +42,32 @@
         </option>
         {% endfor %}
       </select>
+    </div>
+
+    <div id="new_product_block" style="display:none;background:var(--bg);border-radius:8px;padding:16px;margin-bottom:18px">
+      <div style="font-size:12px;font-weight:600;color:var(--text-muted);margin-bottom:12px;text-transform:uppercase">Новый продукт</div>
+      <div class="form-group" style="margin-bottom:12px">
+        <label>Название</label>
+        <input type="text" name="new_product_name" class="form-control" placeholder="напр. Мука пшеничная">
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+        <div class="form-group" style="margin:0">
+          <label>Единица</label>
+          <select name="new_product_unit" class="form-control" onchange="showDelta()">
+            {% for u in units %}
+            <option value="{{ u }}" {% if u == 'кг' %}selected{% endif %}>{{ u }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="form-group" style="margin:0">
+          <label>Категория</label>
+          <select name="new_product_category" class="form-control">
+            {% for c in categories %}
+            <option value="{{ c }}">{{ c }}</option>
+            {% endfor %}
+          </select>
+        </div>
+      </div>
     </div>
 
     <div class="form-group">
@@ -70,6 +97,18 @@
 <script>
 function onSelect(sel) {
   const opt = sel.options[sel.selectedIndex];
+  const newBlock = document.getElementById('new_product_block');
+
+  if (sel.value === 'new') {
+    newBlock.style.display = '';
+    document.getElementById('unit_lbl').textContent = 'ед.';
+    document.getElementById('unit_lbl2').textContent = 'ед.';
+    document.getElementById('price_input').placeholder = '0.00';
+    showDelta();
+    return;
+  }
+  newBlock.style.display = 'none';
+
   const unit = opt.dataset.unit || 'ед.';
   document.getElementById('unit_lbl').textContent = unit;
   document.getElementById('unit_lbl2').textContent = unit;
@@ -84,6 +123,19 @@ function showDelta() {
   const hint = document.getElementById('delta_hint');
   const priceBlock = document.getElementById('price_block');
   if (!opt || !opt.value) { hint.textContent = ''; priceBlock.style.display = 'none'; return; }
+
+  if (sel.value === 'new') {
+    const actual = parseFloat(document.getElementById('actual_input').value);
+    if (!isNaN(actual) && actual > 0) {
+      hint.textContent = 'Будет создан новый продукт и приход на склад';
+      hint.style.color = 'var(--success)';
+      priceBlock.style.display = '';
+    } else {
+      hint.textContent = '';
+      priceBlock.style.display = 'none';
+    }
+    return;
+  }
 
   const balance = parseFloat(opt.dataset.balance) || 0;
   const unit = opt.dataset.unit || 'ед.';

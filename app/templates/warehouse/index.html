@@ -5,9 +5,6 @@
 <div class="page-header">
   <h1>Склад</h1>
   <div style="display:flex;gap:10px">
-    {% if current_user.role != "staff" %}
-    <a href="/warehouse/receipt/add?org_id={{ current_org_id }}" class="btn btn-primary">+ Приход</a>
-    {% endif %}
     <a href="/warehouse/writeoff/meal?org_id={{ current_org_id }}" class="btn btn-primary">− Списание на приём пищи</a>
     <a href="/warehouse/writeoff/add?org_id={{ current_org_id }}" class="btn btn-secondary">− Списание (порча/прочее)</a>
     {% if current_user.role != "staff" %}
@@ -72,8 +69,8 @@
 <div class="card" style="text-align:center;padding:60px 20px;color:var(--text-muted)">
   <div style="font-size:48px;margin-bottom:16px">📦</div>
   {% if current_user.role != "staff" %}
-  <div style="font-size:16px;margin-bottom:24px">Склад пуст — добавьте первый приход</div>
-  <a href="/warehouse/receipt/add?org_id={{ current_org_id }}" class="btn btn-primary btn-lg">+ Добавить приход</a>
+  <div style="font-size:16px;margin-bottom:24px">Склад пуст — заполнится из проведённых квитанций, или занеси остаток вручную</div>
+  <a href="/warehouse/actualize?org_id={{ current_org_id }}" class="btn btn-primary btn-lg">🔍 Актуализация</a>
   {% else %}
   <div style="font-size:16px">Склад пуст — заполнится автоматически из проведённых квитанций</div>
   {% endif %}
