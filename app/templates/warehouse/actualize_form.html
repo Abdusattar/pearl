@@ -7,17 +7,20 @@
   <a href="/warehouse/?org_id={{ current_org_id }}" class="btn btn-secondary">← Назад</a>
 </div>
 
-<div class="card" style="max-width:560px">
-  {% if result %}
-  <div class="alert alert-success">{{ result }}</div>
+<div class="card" style="max-width:680px">
+  {% if results %}
+  <div class="alert alert-success">
+    {% for r in results %}<div>{{ r }}</div>{% endfor %}
+  </div>
   {% endif %}
   {% if error %}
   <div class="alert alert-error">{{ error }}</div>
   {% endif %}
 
   <div style="font-size:13px;color:var(--text-muted);margin-bottom:16px">
-    Выбери товар, впиши, сколько его реально сейчас на складе — система сама посчитает
-    разницу с тем, что числится в системе, и создаст приход или списание.
+    Впиши товар и сколько его реально сейчас на складе — система сама посчитает
+    разницу с системой и создаст приход или списание. Товар не найден в
+    подсказках — при сохранении создастся новый.
   </div>
 
   <form method="post" action="/warehouse/actualize">
@@ -25,137 +28,102 @@
 
     <div class="form-group">
       <label>Дата пересчёта</label>
-      <input type="date" name="actualize_date" class="form-control" value="{{ today }}" required>
+      <input type="date" name="actualize_date" class="form-control" value="{{ today }}" required style="max-width:200px">
     </div>
 
     <div class="form-group">
-      <label>Товар</label>
-      <select name="product_id" id="product_sel" class="form-control" onchange="onSelect(this)" required>
-        <option value="">— выберите товар —</option>
-        <option value="new">＋ Новый продукт (нет в каталоге)</option>
-        {% for r in rows %}
-        <option value="{{ r.product.id }}"
-                data-balance="{{ r.balance }}"
-                data-price="{{ r.avg_price }}"
-                data-unit="{{ r.product.unit or 'кг' }}">
-          {{ r.product.name }} — по системе {{ "%.3f"|format(r.balance)|replace('.000','') }} {{ r.product.unit or 'кг' }}
-        </option>
-        {% endfor %}
-      </select>
+      <label>Товары</label>
+      <table style="width:100%;border-collapse:collapse;font-size:13px" id="items-table">
+        <thead>
+          <tr style="border-bottom:2px solid var(--border);text-align:left">
+            <th style="padding:6px 4px;width:65%">Товар</th>
+            <th style="padding:6px 4px;width:25%">Факт. остаток</th>
+            <th style="padding:6px 4px;width:10%"></th>
+          </tr>
+        </thead>
+        <tbody id="items-body"></tbody>
+      </table>
+      <button type="button" onclick="addRow()" style="margin-top:8px;font-size:12px;color:var(--primary);background:none;border:none;cursor:pointer;padding:4px 0">+ добавить строку</button>
     </div>
 
-    <div id="new_product_block" style="display:none;background:var(--bg);border-radius:8px;padding:16px;margin-bottom:18px">
-      <div style="font-size:12px;font-weight:600;color:var(--text-muted);margin-bottom:12px;text-transform:uppercase">Новый продукт</div>
-      <div class="form-group" style="margin-bottom:12px">
-        <label>Название</label>
-        <input type="text" name="new_product_name" class="form-control" placeholder="напр. Мука пшеничная">
-      </div>
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
-        <div class="form-group" style="margin:0">
-          <label>Единица</label>
-          <select name="new_product_unit" class="form-control" onchange="showDelta()">
-            {% for u in units %}
-            <option value="{{ u }}" {% if u == 'кг' %}selected{% endif %}>{{ u }}</option>
-            {% endfor %}
-          </select>
-        </div>
-        <div class="form-group" style="margin:0">
-          <label>Категория</label>
-          <select name="new_product_category" class="form-control">
-            {% for c in categories %}
-            <option value="{{ c }}">{{ c }}</option>
-            {% endfor %}
-          </select>
-        </div>
-      </div>
-    </div>
-
-    <div class="form-group">
-      <label>Фактический остаток (<span id="unit_lbl">ед.</span>)</label>
-      <input type="number" name="actual_qty" id="actual_input" class="form-control"
-             step="0.001" min="0" placeholder="0.000" oninput="showDelta()" required>
-      <div id="delta_hint" style="font-size:13px;margin-top:6px;min-height:18px"></div>
-    </div>
-
-    <div class="form-group" id="price_block" style="display:none">
-      <label>Цена за <span id="unit_lbl2">ед.</span> для новой позиции (сом)</label>
-      <input type="number" name="price_per_unit" id="price_input" class="form-control" step="0.01" min="0" placeholder="0.00">
-      <div style="font-size:11px;color:var(--text-muted);margin-top:4px">
-        По умолчанию — средняя цена товара. Нужна только когда фактический остаток больше, чем в системе.
-      </div>
-    </div>
-
-    <div style="display:flex;gap:10px;margin-top:8px">
-      <button type="submit" class="btn btn-primary">Сохранить</button>
-      <a href="/warehouse/?org_id={{ current_org_id }}" class="btn btn-secondary">Отмена</a>
-    </div>
+    <button type="submit" class="btn btn-primary" style="margin-top:8px">Сохранить всё</button>
   </form>
 </div>
 {% endblock %}
 
 {% block scripts %}
 <script>
-function onSelect(sel) {
-  const opt = sel.options[sel.selectedIndex];
-  const newBlock = document.getElementById('new_product_block');
+const PRODUCTS = {{ products_json | tojson }};
 
-  if (sel.value === 'new') {
-    newBlock.style.display = '';
-    document.getElementById('unit_lbl').textContent = 'ед.';
-    document.getElementById('unit_lbl2').textContent = 'ед.';
-    document.getElementById('price_input').placeholder = '0.00';
-    showDelta();
-    return;
-  }
-  newBlock.style.display = 'none';
-
-  const unit = opt.dataset.unit || 'ед.';
-  document.getElementById('unit_lbl').textContent = unit;
-  document.getElementById('unit_lbl2').textContent = unit;
-  const price = parseFloat(opt.dataset.price) || 0;
-  document.getElementById('price_input').placeholder = price ? price.toFixed(2) : '0.00';
-  showDelta();
+function addRow() {
+  const tbody = document.getElementById('items-body');
+  const row = document.createElement('tr');
+  row.style.borderBottom = '1px solid var(--border)';
+  row.innerHTML = `
+    <td style="padding:4px;position:relative">
+      <input type="hidden" class="item-pid" name="item_product_id" value="">
+      <input type="text" class="form-control item-name" name="item_name" autocomplete="off"
+             placeholder="Начни печатать..." style="font-size:13px;padding:5px 8px">
+      <div class="ac-dropdown" style="display:none;position:absolute;z-index:100;left:4px;right:4px;top:100%;background:#fff;border:1px solid var(--border);border-radius:6px;box-shadow:0 4px 12px rgba(0,0,0,.1);max-height:200px;overflow-y:auto"></div>
+      <div class="balance-hint" style="font-size:11px;color:var(--text-muted);margin-top:2px"></div>
+    </td>
+    <td style="padding:4px">
+      <input type="text" class="form-control item-qty" name="item_qty" placeholder="0.000" style="font-size:13px;padding:5px 8px;text-align:right">
+    </td>
+    <td style="padding:4px;text-align:center">
+      <button type="button" onclick="this.closest('tr').remove()" style="background:none;border:none;color:var(--text-muted);cursor:pointer;font-size:16px">×</button>
+    </td>
+  `;
+  tbody.appendChild(row);
+  initRow(row);
 }
 
-function showDelta() {
-  const sel = document.getElementById('product_sel');
-  const opt = sel.options[sel.selectedIndex];
-  const hint = document.getElementById('delta_hint');
-  const priceBlock = document.getElementById('price_block');
-  if (!opt || !opt.value) { hint.textContent = ''; priceBlock.style.display = 'none'; return; }
+function initRow(row) {
+  const input = row.querySelector('.item-name');
+  const dropdown = row.querySelector('.ac-dropdown');
+  const hiddenId = row.querySelector('.item-pid');
+  const hint = row.querySelector('.balance-hint');
 
-  if (sel.value === 'new') {
-    const actual = parseFloat(document.getElementById('actual_input').value);
-    if (!isNaN(actual) && actual > 0) {
-      hint.textContent = 'Будет создан новый продукт и приход на склад';
+  function render(items) {
+    if (!items.length) { dropdown.style.display = 'none'; return; }
+    dropdown.innerHTML = items.map(p => `
+      <div class="ac-item" data-id="${p.id}" data-name="${p.name.replace(/"/g,'&quot;')}"
+           style="padding:7px 10px;cursor:pointer;font-size:13px;display:flex;justify-content:space-between">
+        <span>${p.name}</span>
+        <span style="color:var(--text-muted);font-size:11px">по системе: ${p.balance.toFixed(3).replace(/\.?0+$/,'')} ${p.unit}</span>
+      </div>`).join('');
+    dropdown.style.display = '';
+    dropdown.querySelectorAll('.ac-item').forEach(el => {
+      el.addEventListener('mousedown', e => {
+        e.preventDefault();
+        const p = PRODUCTS.find(x => x.id == el.dataset.id);
+        input.value = p.name;
+        hiddenId.value = p.id;
+        hint.textContent = 'по системе: ' + p.balance.toFixed(3).replace(/\.?0+$/,'') + ' ' + p.unit;
+        dropdown.style.display = 'none';
+      });
+    });
+  }
+
+  input.addEventListener('input', () => {
+    hiddenId.value = '';
+    hint.textContent = '';
+    const q = input.value.trim().toLowerCase();
+    if (!q) { dropdown.style.display = 'none'; return; }
+    render(PRODUCTS.filter(p => p.name.toLowerCase().includes(q)).slice(0, 8));
+  });
+  input.addEventListener('focus', () => {
+    if (input.value.trim()) render(PRODUCTS.filter(p => p.name.toLowerCase().includes(input.value.trim().toLowerCase())).slice(0, 8));
+  });
+  input.addEventListener('blur', () => setTimeout(() => {
+    dropdown.style.display = 'none';
+    if (!hiddenId.value && input.value.trim()) {
+      hint.textContent = '＋ новый товар — будет создан';
       hint.style.color = 'var(--success)';
-      priceBlock.style.display = '';
-    } else {
-      hint.textContent = '';
-      priceBlock.style.display = 'none';
     }
-    return;
-  }
-
-  const balance = parseFloat(opt.dataset.balance) || 0;
-  const unit = opt.dataset.unit || 'ед.';
-  const actual = parseFloat(document.getElementById('actual_input').value);
-  if (isNaN(actual)) { hint.textContent = ''; priceBlock.style.display = 'none'; return; }
-
-  const delta = actual - balance;
-  if (Math.abs(delta) < 0.001) {
-    hint.textContent = '✓ Совпадает с системой — ничего создано не будет';
-    hint.style.color = 'var(--text-muted)';
-    priceBlock.style.display = 'none';
-  } else if (delta > 0) {
-    hint.textContent = `Будет добавлен приход: +${delta.toFixed(3).replace(/\.?0+$/,'')} ${unit}`;
-    hint.style.color = 'var(--success)';
-    priceBlock.style.display = '';
-  } else {
-    hint.textContent = `Будет создано списание: ${delta.toFixed(3).replace(/\.?0+$/,'')} ${unit}`;
-    hint.style.color = 'var(--danger)';
-    priceBlock.style.display = 'none';
-  }
+  }, 180));
 }
+
+addRow();
 </script>
 {% endblock %}

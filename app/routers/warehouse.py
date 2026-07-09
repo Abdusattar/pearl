@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.dependencies import get_current_user, get_accessible_orgs, resolve_org
 from app.models import ExpenseCategory, Organization, Product, WarehouseReceipt, WriteOff
+from app.services.products import get_or_create_product
 
 router = APIRouter(prefix="/warehouse", tags=["warehouse"])
 templates = Jinja2Templates(directory=str(Path(__file__).parent.parent / "templates"))
@@ -293,12 +294,16 @@ def actualize_form(request: Request, org_id: str | None = None, db: Session = De
     all_orgs = db.query(Organization).all()
     org_ids = _descendants(ctx["current_org"].id, all_orgs) if ctx["current_org"] else set()
     balance_map = _get_balance_map(db, org_ids)
-    products = db.query(Product).order_by(Product.category.nullslast(), Product.name).all()
-    rows = [{"product": p, **balance_map.get(p.id, {"balance": 0, "avg_price": 0})} for p in products]
+    products = db.query(Product).order_by(Product.name).all()
+    products_json = [
+        {"id": p.id, "name": p.name, "unit": p.unit or "кг",
+         "balance": balance_map.get(p.id, {"balance": 0})["balance"]}
+        for p in products
+    ]
 
     ctx.update({
-        "rows": rows, "units": UNITS, "categories": CATEGORIES,
-        "today": date_type.today().isoformat(), "error": None, "result": None,
+        "products_json": products_json,
+        "today": date_type.today().isoformat(), "error": None, "results": None,
     })
     return templates.TemplateResponse("warehouse/actualize_form.html", ctx)
 
@@ -307,13 +312,10 @@ def actualize_form(request: Request, org_id: str | None = None, db: Session = De
 def actualize_save(
     request: Request,
     org_id: str | None = Form(None),
-    product_id: str = Form(...),
-    new_product_name: str = Form(""),
-    new_product_unit: str = Form("кг"),
-    new_product_category: str = Form("прочее"),
-    actual_qty: float = Form(...),
-    price_per_unit: float = Form(None),
     actualize_date: str = Form(...),
+    item_name: List[str] = Form(default=[]),
+    item_product_id: List[str] = Form(default=[]),
+    item_qty: List[str] = Form(default=[]),
     db: Session = Depends(get_db),
 ):
     ctx = _base_ctx(request, db, org_id)
@@ -325,53 +327,62 @@ def actualize_save(
     all_orgs = db.query(Organization).all()
     org_ids = _descendants(ctx["current_org"].id, all_orgs) if ctx["current_org"] else set()
     balance_map = _get_balance_map(db, org_ids)
-
-    if product_id == "new":
-        name = new_product_name.strip()
-        if not name:
-            products = db.query(Product).order_by(Product.category.nullslast(), Product.name).all()
-            rows = [{"product": p, **balance_map.get(p.id, {"balance": 0, "avg_price": 0})} for p in products]
-            ctx.update({"rows": rows, "units": UNITS, "categories": CATEGORIES,
-                        "today": actualize_date, "error": "Введите название нового продукта", "result": None})
-            return templates.TemplateResponse("warehouse/actualize_form.html", ctx)
-        product = db.query(Product).filter(func.lower(Product.name) == name.lower()).first()
-        if not product:
-            product = Product(name=name, unit=new_product_unit, category=new_product_category)
-            db.add(product)
-            db.flush()
-        current = balance_map.get(product.id, {"balance": 0, "avg_price": 0})
-    else:
-        product = db.query(Product).filter(Product.id == int(product_id)).first()
-        current = balance_map.get(product.id, {"balance": 0, "avg_price": 0})
-
-    delta = round(actual_qty - current["balance"], 3)
     d = date_type.fromisoformat(actualize_date)
 
-    if delta > 0.001:
-        price = price_per_unit if price_per_unit else current["avg_price"]
-        db.add(WarehouseReceipt(
-            date=d, product_id=product.id, quantity=delta, price_per_unit=price,
-            total_cost=round(delta * price, 2), organization_id=ctx["current_org"].id,
-            supplier_name="Инвентаризация", created_by=ctx["current_user"].id,
-        ))
-        result = f"Найдено больше: +{delta:.3f} {product.unit or 'кг'} — добавлено на склад"
-    elif delta < -0.001:
-        db.add(WriteOff(
-            date=d, product_id=product.id, quantity=abs(delta), organization_id=ctx["current_org"].id,
-            reason="инвентаризация", created_by=ctx["current_user"].id,
-        ))
-        result = f"Найдено меньше: {delta:.3f} {product.unit or 'кг'} — списано"
-    else:
-        result = "Остаток совпадает — ничего не изменено"
+    results = []
+    for i, name in enumerate(item_name):
+        name = name.strip()
+        qty_str = item_qty[i].strip() if i < len(item_qty) else ""
+        if not name or not qty_str:
+            continue
+        try:
+            actual_qty = float(qty_str.replace(",", "."))
+        except ValueError:
+            continue
+
+        pid_str = item_product_id[i].strip() if i < len(item_product_id) else ""
+        if pid_str and pid_str.isdigit():
+            product = db.get(Product, int(pid_str))
+            if not product:
+                product = get_or_create_product(db, name)
+        else:
+            product = get_or_create_product(db, name)
+        db.flush()
+
+        current = balance_map.get(product.id, {"balance": 0, "avg_price": 0})
+        delta = round(actual_qty - current["balance"], 3)
+
+        if delta > 0.001:
+            price = current["avg_price"]
+            db.add(WarehouseReceipt(
+                date=d, product_id=product.id, quantity=delta, price_per_unit=price,
+                total_cost=round(delta * price, 2), organization_id=ctx["current_org"].id,
+                supplier_name="Инвентаризация", created_by=ctx["current_user"].id,
+            ))
+            results.append(f"{product.name}: +{delta:.3f} {product.unit or 'кг'}")
+        elif delta < -0.001:
+            db.add(WriteOff(
+                date=d, product_id=product.id, quantity=abs(delta), organization_id=ctx["current_org"].id,
+                reason="инвентаризация", created_by=ctx["current_user"].id,
+            ))
+            results.append(f"{product.name}: {delta:.3f} {product.unit or 'кг'}")
+        else:
+            results.append(f"{product.name}: совпадает")
+
     db.commit()
 
-    all_orgs = db.query(Organization).all()
-    org_ids = _descendants(ctx["current_org"].id, all_orgs) if ctx["current_org"] else set()
+    products = db.query(Product).order_by(Product.name).all()
     balance_map = _get_balance_map(db, org_ids)
-    products = db.query(Product).order_by(Product.category.nullslast(), Product.name).all()
-    rows = [{"product": p, **balance_map.get(p.id, {"balance": 0, "avg_price": 0})} for p in products]
-    ctx.update({"rows": rows, "units": UNITS, "categories": CATEGORIES,
-                "today": date_type.today().isoformat(), "error": None, "result": result})
+    products_json = [
+        {"id": p.id, "name": p.name, "unit": p.unit or "кг",
+         "balance": balance_map.get(p.id, {"balance": 0})["balance"]}
+        for p in products
+    ]
+    ctx.update({
+        "products_json": products_json, "today": date_type.today().isoformat(),
+        "error": None if results else "Ничего не сохранено — заполни хотя бы одну строку",
+        "results": results,
+    })
     return templates.TemplateResponse("warehouse/actualize_form.html", ctx)
 
 
