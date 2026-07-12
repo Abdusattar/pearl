@@ -20,10 +20,13 @@ def require_user(request: Request, db: Session) -> User | RedirectResponse:
 
 
 # Пилот только на Садике Сокулук (решено 08.07, реально закреплено в коде 12.07 —
-# до этого owner/founder технически видели все объекты, дыра в решении). Уточнить/
-# убрать, когда Школа и Кожомкул тоже будут обкатаны — тогда owner/founder/manager
-# должны снова видеть весь список.
+# до этого owner/founder технически видели все объекты, дыра в решении).
+# Ограничены конкретные тестировщики по user_id, не роль целиком — иначе
+# реальный владелец (Талас/Абдусаттар после снятия пилота) тоже терял бы
+# доступ к Школе/Кожомкулу на проде. Убрать запись из PILOT_USER_IDS, когда
+# конкретный человек больше не участвует в пилоте (13.07).
 PILOT_ORG_IDS = {4}
+PILOT_USER_IDS = {1, 3, 61, 64}  # Абдусаттар, Мунара, Айдай, Талас
 
 
 def get_accessible_orgs(user: User, db: Session) -> list[Organization]:
@@ -31,8 +34,10 @@ def get_accessible_orgs(user: User, db: Session) -> list[Organization]:
     if user.role == "director":
         # Айжан — директор школы, видит только свой объект (Школа), не садики
         return [o for o in all_orgs if o.id == user.organization_id]
-    if user.role in ("owner", "founder", "manager"):
+    if user.id in PILOT_USER_IDS:
         return [o for o in all_orgs if o.id in PILOT_ORG_IDS]
+    if user.role in ("owner", "founder", "manager"):
+        return all_orgs
     return [o for o in all_orgs if o.id == user.organization_id]
 
 

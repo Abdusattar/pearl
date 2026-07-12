@@ -27,10 +27,14 @@ MEDIA_DIR = Path(__file__).parent.parent.parent / "media" / "receipts"
 MEDIA_DIR.mkdir(parents=True, exist_ok=True)
 
 ORG_KINDERGARTENS = 3
-# см. app/dependencies.py:PILOT_ORG_IDS — тот же смысл, продублировано, т.к. этот
-# файл держит свою копию get_accessible_orgs/resolve_org (известный техдолг,
-# стоило бы удалить дубликат и импортировать из dependencies.py, не сегодня)
+# см. app/dependencies.py:PILOT_ORG_IDS/PILOT_USER_IDS — тот же смысл,
+# продублировано, т.к. этот файл держит свою копию get_accessible_orgs/
+# resolve_org (известный техдолг, стоило бы удалить дубликат и импортировать
+# из dependencies.py, не сегодня). Ограничение по конкретным user_id, не по
+# роли целиком — иначе реальный владелец терял бы доступ к Школе/Кожомкулу
+# на проде (13.07)
 PILOT_ORG_IDS = {4}
+PILOT_USER_IDS = {1, 3, 61, 64}  # Абдусаттар, Мунара, Айдай, Талас
 
 
 def get_accessible_orgs(user: User, db: Session, all_orgs: list[Organization] | None = None) -> list[Organization]:
@@ -39,8 +43,10 @@ def get_accessible_orgs(user: User, db: Session, all_orgs: list[Organization] | 
         all_orgs = db.query(Organization).all()
     if user.role == "director":
         return [o for o in all_orgs if o.id == user.organization_id]
-    if user.role in ("owner", "founder", "manager"):
+    if user.id in PILOT_USER_IDS:
         return [o for o in all_orgs if o.id in PILOT_ORG_IDS]
+    if user.role in ("owner", "founder", "manager"):
+        return all_orgs
     return [o for o in all_orgs if o.id == user.organization_id]
 
 
