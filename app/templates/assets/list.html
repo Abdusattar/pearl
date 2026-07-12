@@ -16,9 +16,14 @@
 </div>
 
 <div style="font-size:13px;color:var(--text-muted);margin-bottom:16px;max-width:640px">
-  Реестр капитальных покупок (мебель, оборудование, игровые комплексы) — без расчёта
-  амортизации, просто факт: что купили, когда, за сколько. База для бухгалтера, когда
-  дело дойдёт до амортизации.
+  Реестр капитальных покупок (мебель, оборудование, игровые комплексы). Амортизация
+  считается как управленческая оценка (линейно, от срока службы) — не официальная
+  бухгалтерская проводка, для картины расходов и юнит-экономики.
+</div>
+
+<div class="card" style="max-width:640px;margin-bottom:20px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
+  <div style="font-size:14px;color:var(--text-muted)">Амортизация в этом месяце</div>
+  <div style="font-size:22px;font-weight:700">{{ "{:,.0f}".format(total_amortization) }} сом</div>
 </div>
 
 <div class="card" style="max-width:640px;margin-bottom:20px">
@@ -32,7 +37,7 @@
       </div>
       <div class="form-group" style="margin-bottom:0">
         <label>Категория</label>
-        <select name="category" class="form-control">
+        <select name="category" id="category-select" class="form-control" onchange="updateLifePlaceholder()">
           {% for c in categories %}
           <option value="{{ c }}">{{ c }}</option>
           {% endfor %}
@@ -47,6 +52,14 @@
       <div class="form-group" style="margin-bottom:0">
         <label>Стоимость (сом)</label>
         <input type="number" name="cost" class="form-control" step="0.01" min="0" required placeholder="0.00">
+      </div>
+    </div>
+    <div class="form-group" style="margin-bottom:0">
+      <label>Срок службы (мес.) — для амортизации</label>
+      <input type="number" name="useful_life_months" id="life-input" class="form-control" min="1"
+             placeholder="по умолчанию из категории">
+      <div style="font-size:12px;color:var(--text-muted);margin-top:4px">
+        Предзаполняется по категории, можно поправить. Пусто = не амортизируется (управленческая оценка, не официальная проводка).
       </div>
     </div>
     <div class="form-group" style="margin-bottom:0">
@@ -66,6 +79,7 @@
         <th>Категория</th>
         <th>Дата</th>
         <th style="text-align:right">Стоимость</th>
+        <th style="text-align:right">Амортизация/мес.</th>
         <th></th>
       </tr>
     </thead>
@@ -79,6 +93,9 @@
         <td data-label="Категория" style="color:var(--text-muted)">{{ a.category or '—' }}</td>
         <td data-label="Дата">{{ a.purchase_date.strftime('%d.%m.%Y') }}</td>
         <td data-label="Стоимость" style="text-align:right;font-weight:600">{{ "{:,.0f}".format(a.cost) }} с</td>
+        <td data-label="Амортизация/мес." style="text-align:right;color:var(--text-muted)">
+          {% if a.useful_life_months %}{{ "{:,.0f}".format(amortization_by_id[a.id]) }} с{% else %}—{% endif %}
+        </td>
         <td class="actions">
           <form method="post" action="/assets/{{ a.id }}/delete" style="display:inline"
                 onsubmit="return confirm('Удалить «{{ a.name }}» из реестра?')">
@@ -103,4 +120,16 @@
   </div>
   {% endif %}
 </div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+const DEFAULT_LIFE = {{ default_life | tojson }};
+function updateLifePlaceholder() {
+  const cat = document.getElementById('category-select').value;
+  const life = DEFAULT_LIFE[cat];
+  document.getElementById('life-input').placeholder = life ? `по умолчанию: ${life} мес.` : 'не амортизируется по умолчанию';
+}
+updateLifePlaceholder();
+</script>
 {% endblock %}

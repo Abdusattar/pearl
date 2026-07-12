@@ -54,6 +54,15 @@ class Student(Base):
     parent_contact  = Column(String(200))
     status          = Column(String(10), default="active")
     extra           = Column(JSONB)
+    # Скидка на тариф — % от (учёба+услуги), решено 12.07. С обязательной
+    # причиной и аудитом (кто/когда) — старую безусловную ручную корректировку
+    # баланса убрали 04.07 именно из-за отсутствия этого. Не путать со
+    # "скидкой за пропуски" (100 сом/день, решено 10.07, не реализовано) —
+    # это два разных механизма.
+    discount_percent = Column(Numeric(5, 2), nullable=False, default=0, server_default='0')
+    discount_reason  = Column(Text)
+    discount_set_by  = Column(Integer, ForeignKey("users.id"))
+    discount_set_at  = Column(DateTime)
     created_at      = Column(DateTime, server_default=func.now())
     updated_at      = Column(DateTime, server_default=func.now(), onupdate=func.now())
     deleted_at      = Column(DateTime)
@@ -152,6 +161,12 @@ class Transaction(Base):
     description     = Column(Text)
     date            = Column(Date, nullable=False)
     external_txn_id = Column(String(50), unique=True)  # Optima txn_id — идемпотентность
+    recurring_template_id = Column(Integer, ForeignKey("recurring_expense_templates.id"), nullable=True)
+    # За какой месяц расход (первое число месяца) — НЕ дата фактической оплаты
+    # (`date`). Нужно отдельно: расход за июль иногда проводят в начале августа
+    # (решено 12.07). Заполняется только для recurring_template_id — обычные
+    # транзакции NULL, месяц для них не отслеживается отдельно от date.
+    period = Column(Date, nullable=True)
     created_by      = Column(Integer, ForeignKey("users.id"))
     created_at      = Column(DateTime, server_default=func.now())
     updated_at      = Column(DateTime, server_default=func.now(), onupdate=func.now())
@@ -186,6 +201,33 @@ class ProductAlias(Base):
     created_at = Column(DateTime, server_default=func.now())
 
     product = relationship("Product", back_populates="aliases")
+
+
+class Dish(Base):
+    """Каталог блюд — глобальный, не org-scoped (по аналогии с Product).
+    Создаётся через get_or_create_dish() с fuzzy-защитой от опечаток —
+    см. app/services/dishes.py и wiki/blueprints/menu_module.md."""
+    __tablename__ = "dishes"
+    id         = Column(Integer, primary_key=True)
+    name       = Column(String(150), nullable=False, unique=True)
+    created_at = Column(DateTime, server_default=func.now())
+
+
+class MenuEntry(Base):
+    """Меню на дату/приём пищи. Несколько строк на один (date, meal_type)
+    допустимо — обед может состоять из супа+второго+компота отдельными
+    записями (решено 10.07)."""
+    __tablename__ = "menu_entries"
+    id              = Column(Integer, primary_key=True)
+    organization_id = Column(Integer, ForeignKey("organizations.id"), nullable=False)
+    date            = Column(Date, nullable=False)
+    meal_type       = Column(String(20), nullable=False)
+    dish_id         = Column(Integer, ForeignKey("dishes.id"), nullable=False)
+    created_by      = Column(Integer, ForeignKey("users.id"))
+    created_at      = Column(DateTime, server_default=func.now())
+
+    dish         = relationship("Dish")
+    organization = relationship("Organization")
 
 
 class ReceiptItem(Base):
@@ -230,12 +272,14 @@ class WriteOff(Base):
     children_count  = Column(Integer)
     reason          = Column(String(100), default="питание детей")
     meal_type       = Column(String(20))  # завтрак/обед/полдник/ужин — заполняется через /warehouse/writeoff/meal
+    dish_id         = Column(Integer, ForeignKey("dishes.id"), nullable=True)  # nullable — списание должно проходить и без выбранного блюда
     created_by      = Column(Integer, ForeignKey("users.id"))
     created_at      = Column(DateTime, server_default=func.now())
     deleted_at      = Column(DateTime)
 
     product      = relationship("Product")
     organization = relationship("Organization")
+    dish         = relationship("Dish")
 
 
 class Asset(Base):
@@ -249,12 +293,58 @@ class Asset(Base):
     category        = Column(String(50))  # мебель, оборудование, игровой инвентарь, прочее
     purchase_date   = Column(Date, nullable=False)
     cost            = Column(Numeric(12, 2), nullable=False)
+    useful_life_months = Column(Integer, nullable=True)  # NULL = не амортизируется (10.07)
     organization_id = Column(Integer, ForeignKey("organizations.id"), nullable=False)
     created_by      = Column(Integer, ForeignKey("users.id"))
     created_at      = Column(DateTime, server_default=func.now())
     deleted_at      = Column(DateTime)
 
     organization = relationship("Organization")
+
+
+class Employee(Base):
+    """Реестр сотрудников. ФОТ на `/employees/` по-прежнему считается на лету
+    (SUM оклада активных) как оценка текущего месяца — но с 12.07 может
+    также подтверждаться проводкой через RecurringExpenseTemplate
+    (source='employees_sum'), которая становится источником истины для уже
+    закрытых месяцев. См. wiki/blueprints/unit_economics_module.md."""
+    __tablename__ = "employees"
+    id              = Column(Integer, primary_key=True)
+    organization_id = Column(Integer, ForeignKey("organizations.id"), nullable=False)
+    full_name       = Column(String(150), nullable=False)
+    role            = Column(String(100))
+    salary          = Column(Numeric(12, 2), nullable=False)
+    status          = Column(String(20), nullable=False, default="active")  # active|terminated
+    created_by      = Column(Integer, ForeignKey("users.id"))
+    created_at      = Column(DateTime, server_default=func.now())
+
+    organization = relationship("Organization")
+
+
+class RecurringExpenseTemplate(Base):
+    """Справочник ежемесячных расходов (ФОТ/Охрана/Коммуналка и т.п.) —
+    полуавтомат: система подсказывает сумму, человек подтверждает кнопкой,
+    подтверждение создаёт обычный Transaction (не отдельная сущность —
+    список статусов строится на лету по Transaction.recurring_template_id).
+    Решено 12.07 (см. logs/terminal/2026-07-12.md): НЕ строгая идемпотентность
+    "одна проводка на месяц" — аванс+остаток зарплаты это две проводки в
+    одном месяце по одному шаблону, осознанно."""
+    __tablename__ = "recurring_expense_templates"
+    id              = Column(Integer, primary_key=True)
+    organization_id = Column(Integer, ForeignKey("organizations.id"), nullable=False)
+    name            = Column(String(150), nullable=False)
+    category_id     = Column(Integer, ForeignKey("expense_categories.id"), nullable=False)
+    # 'employees_sum' — подсказка = живой SUM(Employee.salary активных);
+    # 'last_amount' — подсказка = сумма последней проводки по этому шаблону;
+    # 'manual' — без подсказки (коммуналка меняется каждый месяц по счётчику)
+    amount_source   = Column(String(20), nullable=False, default="manual")
+    owner_only      = Column(Boolean, nullable=False, default=False)  # видят/подтверждают только owner/founder
+    active          = Column(Boolean, nullable=False, default=True)
+    created_by      = Column(Integer, ForeignKey("users.id"))
+    created_at      = Column(DateTime, server_default=func.now())
+
+    organization = relationship("Organization")
+    category     = relationship("ExpenseCategory")
 
 
 class Service(Base):

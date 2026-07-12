@@ -13,6 +13,8 @@ from app.models import User
 
 NEW_USERS = [
     {"name": "Махабат", "role": "staff", "organization_id": 4, "password": "003"},
+    {"name": "Айдай", "role": "founder", "organization_id": 4, "password": "004"},
+    {"name": "Талас", "role": "owner", "organization_id": 4, "password": "005"},
 ]
 
 
@@ -28,7 +30,7 @@ def main():
             user.role = spec["role"]
             user.organization_id = spec["organization_id"]
             user.password_hash = bcrypt.hashpw(spec["password"].encode(), bcrypt.gensalt()).decode()
-            print(f"  ✓ {spec['name']} → role={spec['role']} org_id={spec['organization_id']} пароль установлен")
+            print(f"  OK {spec['name']} -> role={spec['role']} org_id={spec['organization_id']} пароль установлен")
         db.commit()
         print("\nГотово.")
     finally:

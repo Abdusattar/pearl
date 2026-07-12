@@ -19,14 +19,20 @@ def require_user(request: Request, db: Session) -> User | RedirectResponse:
     return user
 
 
+# Пилот только на Садике Сокулук (решено 08.07, реально закреплено в коде 12.07 —
+# до этого owner/founder технически видели все объекты, дыра в решении). Уточнить/
+# убрать, когда Школа и Кожомкул тоже будут обкатаны — тогда owner/founder/manager
+# должны снова видеть весь список.
+PILOT_ORG_IDS = {4}
+
+
 def get_accessible_orgs(user: User, db: Session) -> list[Organization]:
     all_orgs = db.query(Organization).all()
-    if user.role in ("owner", "director"):
-        return all_orgs
-    if user.role == "manager":
-        kinder_ids = {3}
-        kinder_ids |= {o.id for o in all_orgs if o.parent_id == 3}
-        return [o for o in all_orgs if o.id in kinder_ids]
+    if user.role == "director":
+        # Айжан — директор школы, видит только свой объект (Школа), не садики
+        return [o for o in all_orgs if o.id == user.organization_id]
+    if user.role in ("owner", "founder", "manager"):
+        return [o for o in all_orgs if o.id in PILOT_ORG_IDS]
     return [o for o in all_orgs if o.id == user.organization_id]
 
 
@@ -36,4 +42,15 @@ def resolve_org(org_id: int | None, user: User, db: Session) -> Organization:
         org = next((o for o in accessible if o.id == org_id), None)
         if org:
             return org
+    # Без явного org_id в ссылке (большинство пунктов меню) — сначала пробуем
+    # "родной" объект пользователя (user.organization_id), а не первый
+    # попавшийся в списке. Раньше падало на accessible[0] всегда — для
+    # owner/founder/director это буквально первая организация в таблице
+    # (Жемчужина, не листовая), что молча расходилось с тем, что реально
+    # назначено пользователю. Баг найден 12.07, когда organization_id
+    # тестировщиков перевели на Садик Сокулук, а навигация продолжала
+    # молча показывать другое.
+    own = next((o for o in accessible if o.id == user.organization_id), None)
+    if own:
+        return own
     return accessible[0] if accessible else None

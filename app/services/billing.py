@@ -40,16 +40,18 @@ def generate_monthly_charges(db: Session) -> int:
         tuition = _tuition_fee(student)
         services = _active_services(db, student.id)
         services_total = sum(float(ss.service.price) for ss in services)
-        total = tuition + services_total
+        subtotal = tuition + services_total
+
+        discount_pct = float(student.discount_percent or 0)
+        discount_amount = round(subtotal * discount_pct / 100, 2) if discount_pct else 0.0
+        total = subtotal - discount_amount
         if total <= 0:
             continue
 
-        parts = []
-        if tuition:
-            parts.append(f"учёба {tuition:,.0f}".replace(",", " "))
-        for ss in services:
-            parts.append(f"{ss.service.name} {float(ss.service.price):,.0f}".replace(",", " "))
-
+        # description намеренно фиксированная строка, не расшифровка состава —
+        # именно по ней already_charged проверяет идемпотентность выше;
+        # причина скидки видна на карточке ребёнка (Student.discount_reason),
+        # а не в этом тексте.
         db.add(Charge(
             student_id=student.id,
             amount=total,

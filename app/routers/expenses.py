@@ -12,11 +12,12 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.models import (
     ExpenseCategory, Organization, Product, Receipt, ReceiptItem, ReceiptTransaction,
-    Transaction, User, AuditLog, WarehouseReceipt, Supplier,
+    Transaction, User, AuditLog, WarehouseReceipt, Supplier, RecurringExpenseTemplate,
 )
 from app.services.ocr import compute_hash, analyze_receipt
 from app.services.products import match_product, rank_candidates, get_or_create_product, ensure_alias
 from app.services.normalize import normalize_items
+from app.services import recurring_expenses
 from app.dependencies import get_current_user
 
 router = APIRouter(prefix="/expenses", tags=["expenses"])
@@ -26,21 +27,20 @@ MEDIA_DIR = Path(__file__).parent.parent.parent / "media" / "receipts"
 MEDIA_DIR.mkdir(parents=True, exist_ok=True)
 
 ORG_KINDERGARTENS = 3
+# см. app/dependencies.py:PILOT_ORG_IDS — тот же смысл, продублировано, т.к. этот
+# файл держит свою копию get_accessible_orgs/resolve_org (известный техдолг,
+# стоило бы удалить дубликат и импортировать из dependencies.py, не сегодня)
+PILOT_ORG_IDS = {4}
 
 
 def get_accessible_orgs(user: User, db: Session, all_orgs: list[Organization] | None = None) -> list[Organization]:
     """Орги доступные пользователю по роли."""
     if all_orgs is None:
         all_orgs = db.query(Organization).all()
-    if user.role == "owner":
-        return all_orgs
     if user.role == "director":
-        return all_orgs  # видит всё, но фильтр применяется при запросах
-    if user.role == "manager":
-        # Мунара видит только садики и их детей
-        kinder_ids = {ORG_KINDERGARTENS}
-        kinder_ids |= {o.id for o in all_orgs if o.parent_id == ORG_KINDERGARTENS}
-        return [o for o in all_orgs if o.id in kinder_ids]
+        return [o for o in all_orgs if o.id == user.organization_id]
+    if user.role in ("owner", "founder", "manager"):
+        return [o for o in all_orgs if o.id in PILOT_ORG_IDS]
     return [o for o in all_orgs if o.id == user.organization_id]
 
 
@@ -59,6 +59,10 @@ def resolve_org(org_id: int | None, user: User, db: Session, all_orgs: list[Orga
         org = next((o for o in accessible if o.id == org_id), None)
         if org:
             return org
+    # см. комментарий в app/dependencies.py:resolve_org — тот же баг, та же правка (12.07)
+    own = next((o for o in accessible if o.id == user.organization_id), None)
+    if own:
+        return own
     return accessible[0] if accessible else None
 
 
@@ -66,6 +70,19 @@ def get_categories(db: Session) -> list[ExpenseCategory]:
     return db.query(ExpenseCategory).order_by(
         ExpenseCategory.parent_id.nullsfirst(), ExpenseCategory.name
     ).all()
+
+
+RECURRING_ONLY_NAMES = {"ежемесячные расходы"}
+
+
+def get_manual_form_categories(db: Session) -> list[ExpenseCategory]:
+    """Категории для `/expenses/add` — без ФОТ/Охраны/Коммуналки, у них свой
+    экран `/expenses/recurring/` (без обязательного поставщика, с подсказкой
+    суммы). Показывать их здесь тоже — тупик для пользователя (баг найден
+    12.07: форма требовала "поставщика" для зарплаты)."""
+    all_cats = get_categories(db)
+    recurring_root_ids = {c.id for c in all_cats if c.parent_id is None and c.name.lower() in RECURRING_ONLY_NAMES}
+    return [c for c in all_cats if c.id not in recurring_root_ids and c.parent_id not in recurring_root_ids]
 
 
 def audit(db: Session, entity_type: str, entity_id: int, action: str,
@@ -853,12 +870,13 @@ def add_form(request: Request, org_id: int | None = None, db: Session = Depends(
         return RedirectResponse("/login", status_code=302)
     accessible = get_accessible_orgs(user, db)
     current_org = resolve_org(org_id, user, db)
-    all_cats = get_categories(db)
+    visible_cats = get_manual_form_categories(db)
     # Позиции показываем для всех "товарных" категорий — не показываем только для
-    # услуг (Транспорт, Прочее), там пока нет смысла в товарных позициях.
-    SERVICE_CAT_NAMES = {"транспорт", "прочее"}
-    service_root_ids = {c.id for c in all_cats if c.parent_id is None and c.name.lower() in SERVICE_CAT_NAMES}
-    food_cat_ids = [c.id for c in all_cats if c.id not in service_root_ids and c.parent_id not in service_root_ids]
+    # услуг. Транспорт/Прочее/Банк.комиссии объединены в одну "Сервисные расходы"
+    # (12.07) — различаются описанием проводки, не отдельными категориями.
+    SERVICE_CAT_NAMES = {"сервисные расходы"}
+    service_root_ids = {c.id for c in visible_cats if c.parent_id is None and c.name.lower() in SERVICE_CAT_NAMES}
+    food_cat_ids = [c.id for c in visible_cats if c.id not in service_root_ids and c.parent_id not in service_root_ids]
     all_suppliers = db.query(Supplier).order_by(Supplier.name).all()
     return templates.TemplateResponse("expenses/add.html", {
         "request": request,
@@ -866,7 +884,7 @@ def add_form(request: Request, org_id: int | None = None, db: Session = Depends(
         "accessible_orgs": accessible,
         "current_org_id": current_org.id if current_org else None,
         "upload_orgs": get_upload_orgs(user, db),
-        "categories": all_cats,
+        "categories": visible_cats,
         "food_cat_ids": food_cat_ids,
         "suppliers": all_suppliers,
         "today": date.today().isoformat(),
@@ -906,7 +924,7 @@ def handle_add(
             "accessible_orgs": accessible,
             "current_org_id": org_id,
             "upload_orgs": get_upload_orgs(user, db),
-            "categories": get_categories(db),
+            "categories": get_manual_form_categories(db),
             "suppliers": db.query(Supplier).order_by(Supplier.name).all(),
             "food_cat_ids": [],
             "today": date.today().isoformat(),
@@ -922,7 +940,7 @@ def handle_add(
             "accessible_orgs": accessible,
             "current_org_id": current_org.id,
             "upload_orgs": get_upload_orgs(user, db),
-            "categories": get_categories(db),
+            "categories": get_manual_form_categories(db),
             "suppliers": db.query(Supplier).order_by(Supplier.name).all(),
             "food_cat_ids": [],
             "today": date.today().isoformat(),
@@ -1000,6 +1018,70 @@ def handle_add(
 
     db.commit()
     return RedirectResponse(f"/expenses/?org_id={org_id}", status_code=303)
+
+
+# ── RECURRING EXPENSES (справочник ежемесячных расходов: ФОТ/Охрана/Коммуналка) ─
+
+@router.get("/recurring", response_class=HTMLResponse)
+def recurring_list(request: Request, org_id: int | None = None, month: str | None = None,
+                    db: Session = Depends(get_db)):
+    user = get_current_user(request, db)
+    if not user:
+        return RedirectResponse("/login", status_code=302)
+    accessible = get_accessible_orgs(user, db)
+    current_org = resolve_org(org_id, user, db)
+    if not current_org:
+        return RedirectResponse("/expenses/", status_code=302)
+
+    m_start = date.fromisoformat(month) if month else recurring_expenses.month_start()
+    rows = recurring_expenses.list_for_month(db, current_org.id, user.role, m_start)
+
+    return templates.TemplateResponse("expenses/recurring.html", {
+        "request": request,
+        "current_user": user,
+        "accessible_orgs": accessible,
+        "current_org_id": current_org.id,
+        "rows": rows,
+        "month": m_start.isoformat(),
+        "month_label": m_start.strftime("%m.%Y"),
+        "today": date.today().isoformat(),
+    })
+
+
+@router.post("/recurring/{template_id}/post")
+def recurring_post(
+    template_id: int,
+    request: Request,
+    org_id: int = Form(...),
+    amount: float = Form(...),
+    date_: str = Form(None, alias="date"),
+    description: str = Form(None),
+    month: str = Form(...),
+    db: Session = Depends(get_db),
+):
+    user = get_current_user(request, db)
+    if not user:
+        return RedirectResponse("/login", status_code=302)
+
+    tmpl = db.get(RecurringExpenseTemplate, template_id)
+    if not tmpl or not tmpl.active or tmpl.organization_id != org_id:
+        return RedirectResponse(f"/expenses/recurring?org_id={org_id}&month={month}", status_code=303)
+    if tmpl.owner_only and user.role not in ("owner", "founder"):
+        return RedirectResponse("/expenses/", status_code=302)
+    if amount <= 0:
+        return RedirectResponse(f"/expenses/recurring?org_id={org_id}&month={month}", status_code=303)
+
+    tx_date = date.fromisoformat(date_) if date_ else date.today()
+    tx = Transaction(
+        organization_id=tmpl.organization_id, type="expense", amount=amount,
+        category_id=tmpl.category_id, description=description or tmpl.name,
+        date=tx_date, period=date.fromisoformat(month), recurring_template_id=tmpl.id, created_by=user.id,
+    )
+    db.add(tx)
+    db.flush()
+    audit(db, "transaction", tx.id, "insert", user.id, {"recurring": tmpl.name, "amount": amount})
+    db.commit()
+    return RedirectResponse(f"/expenses/recurring?org_id={org_id}&month={month}", status_code=303)
 
 
 # ── EDIT MANUAL TRANSACTION ───────────────────────────────────────────────────

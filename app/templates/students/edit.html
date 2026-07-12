@@ -147,11 +147,24 @@
       <div>{{ "{:,.0f}".format(student.extra.monthly_fee) if student.extra and student.extra.monthly_fee else "— не задан —" }}</div>
     </div>
     {% if services %}
-    <div class="form-group" style="margin-bottom:0">
+    <div class="form-group">
       <label>Доп. услуги</label>
       <div>{{ active_services|map(attribute='name')|join(', ') if active_services else "— нет —" }}</div>
     </div>
     {% endif %}
+    <div class="form-group" style="margin-bottom:0">
+      <label>Скидка</label>
+      {% if student.discount_percent and student.discount_percent > 0 %}
+      <div>
+        <strong>{{ student.discount_percent|float|round(2) }}%</strong> — {{ student.discount_reason or "без причины" }}
+        <div style="font-size:12px;color:var(--text-muted)">
+          поставил {{ student.discount_set_by }}{% if student.discount_set_at %}, {{ student.discount_set_at.strftime("%d.%m.%Y") }}{% endif %}
+        </div>
+      </div>
+      {% else %}
+      <div>— нет —</div>
+      {% endif %}
+    </div>
   </div>
 
   <form method="post" action="/students/{{ student.id }}/billing" id="billing-form" style="display:none"

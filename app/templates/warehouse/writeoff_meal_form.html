@@ -36,14 +36,20 @@
       </div>
     </div>
 
+    <div id="no-menu-hint" class="alert alert-warning" style="display:none">
+      Меню на эту дату/приём пищи не заполнено — списать можно и так, блюдо
+      просто останется не указано.
+    </div>
+
     <div class="form-group">
       <label>Продукты</label>
       <table style="width:100%;border-collapse:collapse;font-size:13px" id="items-table">
         <thead>
           <tr style="border-bottom:2px solid var(--border);text-align:left">
-            <th style="padding:6px 4px;width:55%">Товар</th>
-            <th style="padding:6px 4px;width:30%">Количество</th>
-            <th style="padding:6px 4px;width:15%"></th>
+            <th style="padding:6px 4px;width:40%">Товар</th>
+            <th style="padding:6px 4px;width:20%">Количество</th>
+            <th style="padding:6px 4px;width:30%">Блюдо (необяз.)</th>
+            <th style="padding:6px 4px;width:10%"></th>
           </tr>
         </thead>
         <tbody id="items-body"></tbody>
@@ -76,12 +82,18 @@ function addRow() {
     <td style="padding:4px">
       <input type="text" class="form-control item-qty" name="item_quantity" placeholder="0.000" style="font-size:13px;padding:5px 8px;text-align:right">
     </td>
+    <td style="padding:4px">
+      <select class="form-control item-dish" name="item_dish_id" style="font-size:13px;padding:5px 8px">
+        <option value="">—</option>
+      </select>
+    </td>
     <td style="padding:4px;text-align:center">
-      <button type="button" onclick="this.closest('tr').remove()" style="background:none;border:none;color:var(--text-muted);cursor:pointer;font-size:16px">×</button>
+      <button type="button" onclick="this.closest('tr').remove()" style="background:none;border:none;color:var(--text-muted);cursor:pointer;font-size:16px;padding:10px">×</button>
     </td>
   `;
   tbody.appendChild(row);
   initRow(row);
+  fillDishSelect(row.querySelector('.item-dish'));
 }
 
 function initRow(row) {
@@ -123,6 +135,33 @@ function initRow(row) {
   input.addEventListener('blur', () => setTimeout(() => { dropdown.style.display = 'none'; }, 180));
 }
 
+let CURRENT_DISHES = [];
+
+function fillDishSelect(select) {
+  const prev = select.value;
+  select.innerHTML = '<option value="">—</option>' +
+    CURRENT_DISHES.map(d => `<option value="${d.id}">${d.name}</option>`).join('');
+  if (CURRENT_DISHES.some(d => String(d.id) === prev)) select.value = prev;
+}
+
+function reloadDishes() {
+  const orgId = document.querySelector('input[name=org_id]').value;
+  const date = document.querySelector('input[name=writeoff_date]').value;
+  const mealType = document.querySelector('select[name=meal_type]').value;
+  if (!date || !mealType) return;
+  fetch(`/menu/dishes/for-meal?org_id=${orgId}&date=${date}&meal_type=${encodeURIComponent(mealType)}`)
+    .then(r => r.json())
+    .then(dishes => {
+      CURRENT_DISHES = dishes;
+      document.getElementById('no-menu-hint').style.display = dishes.length ? 'none' : '';
+      document.querySelectorAll('.item-dish').forEach(fillDishSelect);
+    });
+}
+
+document.querySelector('input[name=writeoff_date]').addEventListener('change', reloadDishes);
+document.querySelector('select[name=meal_type]').addEventListener('change', reloadDishes);
+
 addRow();
+reloadDishes();
 </script>
 {% endblock %}

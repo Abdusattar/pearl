@@ -1,3 +1,4 @@
+from datetime import datetime
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, Form, Request
@@ -6,7 +7,7 @@ from fastapi.templating import Jinja2Templates
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.models import Organization, Student, User, Group, Enrollment, Service, StudentService
+from app.models import Organization, Student, User, Group, Enrollment, Service, StudentService, AuditLog
 from app.services.students import (
     get_next_free_pin, update_student, compose_name, archive_stale_students,
 )
@@ -302,6 +303,8 @@ def edit_student_billing(
     request: Request,
     monthly_fee: str = Form(""),
     service_ids: list[int] = Form(default=[]),
+    discount_percent: str = Form(""),
+    discount_reason: str = Form(""),
     db: Session = Depends(get_db),
 ):
     user = get_current_user(request, db)
@@ -312,6 +315,20 @@ def edit_student_billing(
     if not student:
         return RedirectResponse("/students/", status_code=302)
 
+    try:
+        discount_pct = float(discount_percent.strip()) if discount_percent.strip() else 0.0
+    except ValueError:
+        discount_pct = -1  # заведомо невалидное — попадёт в проверку ниже
+
+    if not (0 <= discount_pct <= 100):
+        ctx = _edit_context(db, student, error="Скидка должна быть числом от 0 до 100%")
+        ctx.update({"request": request, "accessible_orgs": get_accessible_orgs(user, db), "current_user": user})
+        return templates.TemplateResponse("students/edit.html", ctx)
+    if discount_pct > 0 and not discount_reason.strip():
+        ctx = _edit_context(db, student, error="Укажи причину скидки — без неё скидку не поставить")
+        ctx.update({"request": request, "accessible_orgs": get_accessible_orgs(user, db), "current_user": user})
+        return templates.TemplateResponse("students/edit.html", ctx)
+
     extra = dict(student.extra or {})
     if monthly_fee.strip():
         try:
@@ -321,6 +338,19 @@ def edit_student_billing(
     else:
         extra.pop("monthly_fee", None)
     student.extra = extra or None
+
+    old_pct = float(student.discount_percent or 0)
+    if discount_pct != old_pct or (discount_pct > 0 and discount_reason.strip() != (student.discount_reason or "")):
+        db.add(AuditLog(
+            entity_type="student_discount", entity_id=student.id, action="update", user_id=user.id,
+            old_data={"discount_percent": old_pct, "discount_reason": student.discount_reason},
+            new_data={"discount_percent": discount_pct, "discount_reason": discount_reason.strip() or None},
+        ))
+        student.discount_set_by = user.id
+        student.discount_set_at = datetime.now()
+
+    student.discount_percent = discount_pct
+    student.discount_reason = discount_reason.strip() or None
 
     set_student_services(db, student_id, service_ids)
     db.commit()

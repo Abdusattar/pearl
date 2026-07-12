@@ -1,0 +1,138 @@
+{% extends "base.html" %}
+{% block title %}Меню — Жемчужина{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <h1>Меню на неделю</h1>
+  <a href="/warehouse/?org_id={{ current_org_id }}" class="btn btn-secondary">← Назад</a>
+</div>
+
+{% if warning_date %}
+<div class="alert alert-warning">
+  Меню на {{ warning_date }} ещё не заполнено — списание всё равно можно сделать,
+  но заполнить меню лучше заранее.
+</div>
+{% endif %}
+
+<form method="post" action="/menu/">
+  <input type="hidden" name="org_id" value="{{ current_org_id }}">
+  <input type="hidden" name="start" value="{{ start_date }}">
+  <input type="hidden" name="weeks" value="{{ weeks }}">
+
+  <div class="card" style="margin-bottom:16px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
+    <div style="color:var(--text-muted);font-size:14px">
+      Период: {{ day_cards[0].label }} — {{ day_cards[-1].label }}
+    </div>
+    <div style="display:flex;gap:8px">
+      <a href="/menu/?org_id={{ current_org_id }}&start={{ next_start }}&weeks={{ weeks }}"
+         class="btn btn-secondary" style="font-size:13px">+ Добавить ещё неделю</a>
+      <button type="submit" class="btn btn-primary">Сохранить меню</button>
+    </div>
+  </div>
+
+  {% for day in day_cards %}
+  <div class="card" style="margin-bottom:16px">
+    <h3 style="margin:0 0 12px">{{ day.label }}</h3>
+    {% for mt in meal_types %}
+    {% set cell = loop.index0 ~ '_' ~ day.date.isoformat() %}
+    <div style="margin-bottom:14px">
+      <label style="font-size:13px;font-weight:600;color:var(--text-muted);display:block;margin-bottom:6px">{{ mt }}</label>
+
+      {% if chips_by_meal[mt] %}
+      <div style="margin-bottom:6px">
+        {% for d in chips_by_meal[mt] %}
+        <button type="button" class="chip-pick" onclick="addChip('{{ cell }}','{{ day.date.isoformat() }}','{{ mt }}',{{ d.name|tojson }})">{{ d.name }}</button>
+        {% endfor %}
+      </div>
+      {% endif %}
+
+      <div id="chips_{{ cell }}" class="chip-list">
+        {% for d in day.meals[mt] %}
+        <span class="chip">
+          <input type="hidden" name="entry_date" value="{{ day.date.isoformat() }}">
+          <input type="hidden" name="entry_meal" value="{{ mt }}">
+          <input type="hidden" name="entry_dish" value="{{ d.name }}">
+          {{ d.name }}
+          <button type="button" onclick="this.closest('.chip').remove()">×</button>
+        </span>
+        {% endfor %}
+      </div>
+
+      <div style="position:relative;max-width:320px;margin-top:4px">
+        <input type="text" class="form-control dish-input" autocomplete="off"
+               placeholder="Напечатать блюдо и Enter..." style="font-size:13px;padding:6px 10px"
+               data-cell="{{ cell }}" data-date="{{ day.date.isoformat() }}" data-meal="{{ mt }}">
+        <div class="ac-dropdown" style="display:none;position:absolute;z-index:100;left:0;right:0;top:100%;background:#fff;border:1px solid var(--border);border-radius:6px;box-shadow:0 4px 12px rgba(0,0,0,.1);max-height:160px;overflow-y:auto"></div>
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+  {% endfor %}
+
+  <button type="submit" class="btn btn-primary">Сохранить меню</button>
+</form>
+{% endblock %}
+
+{% block scripts %}
+<script>
+function addChip(cellId, dateIso, meal, name) {
+  name = (name || '').trim();
+  if (!name) return;
+  const list = document.getElementById('chips_' + cellId);
+  const chip = document.createElement('span');
+  chip.className = 'chip';
+  chip.innerHTML = `
+    <input type="hidden" name="entry_date" value="${dateIso}">
+    <input type="hidden" name="entry_meal" value="${meal}">
+    <input type="hidden" name="entry_dish" value="${name.replace(/"/g,'&quot;')}">
+    ${name}
+    <button type="button" onclick="this.closest('.chip').remove()">×</button>
+  `;
+  list.appendChild(chip);
+}
+
+document.querySelectorAll('.dish-input').forEach(input => {
+  const dropdown = input.parentElement.querySelector('.ac-dropdown');
+  const cell = input.dataset.cell, date = input.dataset.date, meal = input.dataset.meal;
+  let timer = null;
+
+  function render(items) {
+    if (!items.length) { dropdown.style.display = 'none'; return; }
+    dropdown.innerHTML = items.map(d => `
+      <div class="ac-item" data-name="${d.name.replace(/"/g,'&quot;')}"
+           style="padding:7px 10px;cursor:pointer;font-size:13px">${d.name}</div>`).join('');
+    dropdown.style.display = '';
+    dropdown.querySelectorAll('.ac-item').forEach(el => {
+      el.addEventListener('mousedown', e => {
+        e.preventDefault();
+        addChip(cell, date, meal, el.dataset.name);
+        input.value = '';
+        dropdown.style.display = 'none';
+      });
+    });
+  }
+
+  input.addEventListener('input', () => {
+    clearTimeout(timer);
+    const q = input.value.trim();
+    if (!q) { dropdown.style.display = 'none'; return; }
+    timer = setTimeout(() => {
+      fetch('/menu/dishes/search?q=' + encodeURIComponent(q))
+        .then(r => r.json()).then(render);
+    }, 150);
+  });
+
+  input.addEventListener('keydown', e => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      if (input.value.trim()) {
+        addChip(cell, date, meal, input.value);
+        input.value = '';
+        dropdown.style.display = 'none';
+      }
+    }
+  });
+  input.addEventListener('blur', () => setTimeout(() => { dropdown.style.display = 'none'; }, 180));
+});
+</script>
+{% endblock %}

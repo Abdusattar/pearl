@@ -256,6 +256,7 @@ def writeoff_meal_save(
     meal_type: str = Form(...),
     item_product_id: List[str] = Form(default=[]),
     item_quantity: List[str] = Form(default=[]),
+    item_dish_id: List[str] = Form(default=[]),
     db: Session = Depends(get_db),
 ):
     ctx = _base_ctx(request, db, org_id)
@@ -274,10 +275,12 @@ def writeoff_meal_save(
             continue
         if qty <= 0:
             continue
+        dish_str = item_dish_id[i].strip() if i < len(item_dish_id) else ""
         db.add(WriteOff(
             date=d, product_id=int(pid_str), quantity=qty,
             organization_id=ctx["current_org"].id, reason="питание детей",
-            meal_type=meal_type, created_by=ctx["current_user"].id,
+            meal_type=meal_type, dish_id=int(dish_str) if dish_str else None,
+            created_by=ctx["current_user"].id,
         ))
     db.commit()
     return RedirectResponse(f"/warehouse/?org_id={ctx['current_org_id']}", status_code=302)

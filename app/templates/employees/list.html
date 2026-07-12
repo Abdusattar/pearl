@@ -1,0 +1,80 @@
+{% extends "base.html" %}
+{% set active_page = "employees" %}
+
+{% block title %}Сотрудники — Жемчужина{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <h1>Сотрудники</h1>
+</div>
+
+<div class="card" style="max-width:640px;margin-bottom:20px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
+  <div style="font-size:14px;color:var(--text-muted)">ФОТ в этом месяце</div>
+  <div style="font-size:22px;font-weight:700">
+    {{ "{:,.0f}".format(payroll) }} сом
+    <span style="font-size:13px;font-weight:400;color:var(--text-muted)">({{ active_count }} активных)</span>
+  </div>
+</div>
+
+<div class="card" style="max-width:640px;margin-bottom:20px">
+  <h3 style="font-size:15px;margin-bottom:14px">Добавить сотрудника</h3>
+  <form method="post" action="/employees/" style="display:flex;flex-direction:column;gap:10px">
+    <input type="hidden" name="org_id" value="{{ current_org_id or '' }}">
+    <div class="form-group" style="margin-bottom:0">
+      <label>ФИО *</label>
+      <input type="text" name="full_name" class="form-control" required placeholder="Фамилия Имя">
+    </div>
+    <div class="split-row">
+      <div class="form-group" style="margin-bottom:0">
+        <label>Роль</label>
+        <input type="text" name="role" class="form-control" placeholder="напр. Воспитатель, Повар">
+      </div>
+      <div class="form-group" style="margin-bottom:0">
+        <label>Оклад (сом) *</label>
+        <input type="number" name="salary" class="form-control" step="0.01" min="0" required placeholder="0.00">
+      </div>
+    </div>
+    <button type="submit" class="btn btn-primary" style="align-self:flex-start">+ Добавить</button>
+  </form>
+</div>
+
+<div class="card">
+  {% if employees %}
+  <table class="table">
+    <thead>
+      <tr>
+        <th>ФИО</th>
+        <th>Роль</th>
+        <th style="text-align:right">Оклад</th>
+        <th>Статус</th>
+        <th></th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for e in employees %}
+      <tr>
+        <td data-label="ФИО" style="font-weight:500">{{ e.full_name }}</td>
+        <td data-label="Роль" style="color:var(--text-muted)">{{ e.role or '—' }}</td>
+        <td data-label="Оклад" style="text-align:right;font-weight:600">{{ "{:,.0f}".format(e.salary) }} с</td>
+        <td data-label="Статус">
+          {% if e.status == 'active' %}
+          <span class="badge badge-confirmed">Активен</span>
+          {% else %}
+          <span class="badge badge-pending">Уволен</span>
+          {% endif %}
+        </td>
+        <td class="actions">
+          <a href="/employees/{{ e.id }}/edit" class="btn btn-secondary" style="padding:4px 10px;font-size:12px">Изменить</a>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <div style="text-align:center;padding:32px;color:var(--text-muted)">
+    <div style="font-size:36px;margin-bottom:10px">👥</div>
+    <div>Пока пусто. Добавь первого сотрудника.</div>
+  </div>
+  {% endif %}
+</div>
+{% endblock %}
