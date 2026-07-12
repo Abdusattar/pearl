@@ -969,6 +969,21 @@ def handle_add(
             "error": "Выбери поставщика — без него нельзя провести расход",
         })
 
+    if is_service_mode and not (description or "").strip():
+        return templates.TemplateResponse("expenses/add.html", {
+            "request": request, "current_user": user,
+            "accessible_orgs": accessible,
+            "current_org_id": current_org.id,
+            "upload_orgs": get_upload_orgs(user, db),
+            "categories": get_manual_form_categories(db),
+            "suppliers": db.query(Supplier).order_by(Supplier.name).all(),
+            "food_cat_ids": [],
+            "preselect_category_id": category_id,
+            "is_service_mode": is_service_mode,
+            "today": date.today().isoformat(),
+            "error": "Укажи в комментарии, за что заплатили — без поставщика это единственная зацепка",
+        })
+
     def _parse_amount(s):
         try:
             return float(str(s).replace(",", ".")) if s else None
@@ -1092,6 +1107,14 @@ def recurring_post(
         return RedirectResponse("/expenses/", status_code=302)
     if amount <= 0:
         return RedirectResponse(f"/expenses/recurring?org_id={org_id}&month={month}", status_code=303)
+    # ФОТ — аванс+остаток допустимы двумя проводками в одном месяце. Всё
+    # остальное (Охрана/Коммуналка/Интернет) — счёт приходит раз в месяц,
+    # повторное проведение заблокировано: сначала удали или исправь то, что
+    # уже провели (решено 13.07)
+    if tmpl.amount_source != "employees_sum":
+        already_posted = recurring_expenses.month_postings(db, tmpl, date.fromisoformat(month))
+        if already_posted:
+            return RedirectResponse(f"/expenses/recurring?org_id={org_id}&month={month}", status_code=303)
 
     tx_date = date.fromisoformat(date_) if date_ else date.today()
     tx = Transaction(
@@ -1104,6 +1127,29 @@ def recurring_post(
     audit(db, "transaction", tx.id, "insert", user.id, {"recurring": tmpl.name, "amount": amount})
     db.commit()
     return RedirectResponse(f"/expenses/recurring?org_id={org_id}&month={month}", status_code=303)
+
+
+@router.post("/tx/{tx_id}/delete")
+def delete_tx(tx_id: int, request: Request, org_id: int = Form(...), month: str | None = Form(None), db: Session = Depends(get_db)):
+    user = get_current_user(request, db)
+    if not user:
+        return RedirectResponse("/login", status_code=302)
+    tx = db.query(Transaction).get(tx_id)
+    if not tx or tx.deleted_at:
+        return RedirectResponse(f"/expenses/?org_id={org_id}", status_code=302)
+    if tx.recurring_template_id:
+        template = db.query(RecurringExpenseTemplate).get(tx.recurring_template_id)
+        if template and template.amount_source == "employees_sum":
+            # ФОТ — тот же принцип, что и с правкой: не удаляем проводку
+            # напрямую, источник истины — оклады сотрудников
+            return RedirectResponse(f"/employees/?org_id={org_id}", status_code=302)
+    tx.deleted_at = datetime.utcnow()
+    audit(db, "transaction", tx.id, "delete", user.id, {"amount": float(tx.amount)})
+    db.commit()
+    if tx.recurring_template_id:
+        m = month or (tx.period.isoformat() if tx.period else recurring_expenses.month_start().isoformat())
+        return RedirectResponse(f"/expenses/recurring?org_id={org_id}&month={m}", status_code=303)
+    return RedirectResponse(f"/expenses/?org_id={org_id}", status_code=303)
 
 
 # ── EDIT MANUAL TRANSACTION ───────────────────────────────────────────────────

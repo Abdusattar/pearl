@@ -1,13 +1,22 @@
 {% extends "base.html" %}
 {% set active_page = "expenses" %}
 
-{% block title %}Ручная запись — Жемчужина{% endblock %}
+{% block title %}{% if is_service_mode %}Сервисный расход{% else %}Ручная запись{% endif %} — Жемчужина{% endblock %}
 
 {% block content %}
 <div class="page-header">
+  {% if is_service_mode %}
+  <h1>Сервисный расход</h1>
+  {% else %}
   <h1>Запись без квитанции</h1>
+  {% endif %}
   <a href="/expenses/?org_id={{ current_org_id or '' }}" class="btn btn-secondary">← Назад</a>
 </div>
+{% if is_service_mode %}
+<div style="font-size:12px;color:var(--text-muted);margin:-8px 0 12px">
+  Такси, доставка, мелкий ремонт и другие разовые расходы. Обязательно опишите в комментарии, за что заплатили.
+</div>
+{% endif %}
 
 {% if error %}
 <div class="alert alert-error">{{ error }}</div>
@@ -121,8 +130,13 @@
     {% endif %}
 
     <div class="form-group">
+      {% if is_service_mode %}
+      <label>Комментарий — за что заплатили</label>
+      <input type="text" name="description" class="form-control" placeholder="Например: такси до банка" required>
+      {% else %}
       <label>Описание (необязательно)</label>
       <input type="text" name="description" class="form-control" placeholder="Комментарий...">
+      {% endif %}
     </div>
 
     <button type="submit" class="btn btn-success"

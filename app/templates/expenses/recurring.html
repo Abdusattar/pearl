@@ -39,20 +39,28 @@
   <div class="recur-row">
     <div class="recur-name">
       <div>{{ row.template.name }}</div>
+      {% set is_payroll = row.template.amount_source == "employees_sum" %}
       {% if row.postings %}
         {% for p in row.postings %}
         <div class="recur-posting">
           ✓ {{ "{:,.0f}".format(p.amount) }} с, {{ p.date.strftime("%d.%m") }}
-          {% if row.template.amount_source == "employees_sum" %}
+          {% if is_payroll %}
           <a href="/employees/?org_id={{ current_org_id }}">Исправить оклад →</a>
           {% else %}
           <a href="/expenses/tx/{{ p.id }}/edit?org_id={{ current_org_id }}">Исправить</a>
+          <form method="post" action="/expenses/tx/{{ p.id }}/delete" style="display:inline"
+                onsubmit="return confirm('Удалить проводку {{ '{:,.0f}'.format(p.amount) }} с?')">
+            <input type="hidden" name="org_id" value="{{ current_org_id }}">
+            <input type="hidden" name="month" value="{{ month }}">
+            <button type="submit" style="background:none;border:none;color:#dc2626;cursor:pointer;padding:0;font-size:12px">Удалить</button>
+          </form>
           {% endif %}
         </div>
         {% endfor %}
       {% endif %}
     </div>
 
+    {% if is_payroll or not row.postings %}
     <form method="post" action="/expenses/recurring/{{ row.template.id }}/post"
           style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
       <input type="hidden" name="org_id" value="{{ current_org_id }}">
@@ -65,6 +73,7 @@
         {% if row.postings %}+ Ещё одна{% else %}Подтвердить{% endif %}
       </button>
     </form>
+    {% endif %}
   </div>
   {% endfor %}
   {% else %}
