@@ -43,7 +43,11 @@
         {% for p in row.postings %}
         <div class="recur-posting">
           ✓ {{ "{:,.0f}".format(p.amount) }} с, {{ p.date.strftime("%d.%m") }}
+          {% if row.template.amount_source == "employees_sum" %}
+          <a href="/employees/?org_id={{ current_org_id }}">Исправить оклад →</a>
+          {% else %}
           <a href="/expenses/tx/{{ p.id }}/edit?org_id={{ current_org_id }}">Исправить</a>
+          {% endif %}
         </div>
         {% endfor %}
       {% endif %}
