@@ -73,6 +73,16 @@ def get_categories(db: Session) -> list[ExpenseCategory]:
 
 
 RECURRING_ONLY_NAMES = {"ежемесячные расходы"}
+SERVICE_CAT_NAMES = {"сервисные расходы"}
+
+
+def get_service_category_id(db: Session) -> int | None:
+    cat = (
+        db.query(ExpenseCategory)
+        .filter(ExpenseCategory.parent_id.is_(None), func.lower(ExpenseCategory.name).in_(SERVICE_CAT_NAMES))
+        .first()
+    )
+    return cat.id if cat else None
 
 
 def get_manual_form_categories(db: Session) -> list[ExpenseCategory]:
@@ -874,10 +884,11 @@ def add_form(request: Request, org_id: int | None = None, category_id: int | Non
     # Позиции показываем для всех "товарных" категорий — не показываем только для
     # услуг. Транспорт/Прочее/Банк.комиссии объединены в одну "Сервисные расходы"
     # (12.07) — различаются описанием проводки, не отдельными категориями.
-    SERVICE_CAT_NAMES = {"сервисные расходы"}
-    service_root_ids = {c.id for c in visible_cats if c.parent_id is None and c.name.lower() in SERVICE_CAT_NAMES}
+    service_category_id = get_service_category_id(db)
+    service_root_ids = {service_category_id} if service_category_id else set()
     food_cat_ids = [c.id for c in visible_cats if c.id not in service_root_ids and c.parent_id not in service_root_ids]
     all_suppliers = db.query(Supplier).order_by(Supplier.name).all()
+    is_service_mode = bool(category_id) and category_id == service_category_id
     return templates.TemplateResponse("expenses/add.html", {
         "request": request,
         "current_user": user,
@@ -889,6 +900,7 @@ def add_form(request: Request, org_id: int | None = None, category_id: int | Non
         "suppliers": all_suppliers,
         "today": date.today().isoformat(),
         "preselect_category_id": category_id,
+        "is_service_mode": is_service_mode,
         "error": None,
     })
 
@@ -918,6 +930,8 @@ def handle_add(
     accessible = get_accessible_orgs(user, db)
     current_org = resolve_org(org_id, user, db)
     category_id = int(category_id) if category_id and str(category_id).isdigit() else None
+    service_category_id = get_service_category_id(db)
+    is_service_mode = bool(category_id) and category_id == service_category_id
 
     if not current_org:
         return templates.TemplateResponse("expenses/add.html", {
@@ -928,14 +942,19 @@ def handle_add(
             "categories": get_manual_form_categories(db),
             "suppliers": db.query(Supplier).order_by(Supplier.name).all(),
             "food_cat_ids": [],
+            "preselect_category_id": category_id,
+            "is_service_mode": is_service_mode,
             "today": date.today().isoformat(),
             "error": "Объект не найден",
         })
 
     tx_date = date.fromisoformat(date_) if date_ else date.today()
-    sid = resolve_supplier(db, supplier_id, new_supplier_name, new_supplier_phone)
+    # «Сервисные расходы» — без привязки к конкретному поставщику: таксисты,
+    # курьеры и т.п. меняются от раза к разу, отслеживать их как поставщиков
+    # с задолженностью не имеет смысла (решено 12.07)
+    sid = None if is_service_mode else resolve_supplier(db, supplier_id, new_supplier_name, new_supplier_phone)
 
-    if not sid:
+    if not sid and not is_service_mode:
         return templates.TemplateResponse("expenses/add.html", {
             "request": request, "current_user": user,
             "accessible_orgs": accessible,
@@ -944,6 +963,8 @@ def handle_add(
             "categories": get_manual_form_categories(db),
             "suppliers": db.query(Supplier).order_by(Supplier.name).all(),
             "food_cat_ids": [],
+            "preselect_category_id": category_id,
+            "is_service_mode": is_service_mode,
             "today": date.today().isoformat(),
             "error": "Выбери поставщика — без него нельзя провести расход",
         })
@@ -1095,6 +1116,12 @@ def edit_tx_form(tx_id: int, request: Request, org_id: int | None = None, db: Se
     tx = db.query(Transaction).get(tx_id)
     if not tx or tx.deleted_at:
         return HTMLResponse("Запись не найдена", status_code=404)
+    if tx.recurring_template_id:
+        template = db.query(RecurringExpenseTemplate).get(tx.recurring_template_id)
+        if template and template.amount_source == "employees_sum":
+            # ФОТ считается от окладов сотрудников — проводку саму не
+            # правим, источник истины для суммы — их зарплаты
+            return RedirectResponse(f"/employees/?org_id={org_id or tx.organization_id}", status_code=302)
     accessible = get_accessible_orgs(user, db)
     current_org = resolve_org(org_id, user, db)
 
@@ -1154,6 +1181,10 @@ def handle_edit_tx(
     tx = db.query(Transaction).get(tx_id)
     if not tx or tx.deleted_at:
         return HTMLResponse("Запись не найдена", status_code=404)
+    if tx.recurring_template_id:
+        template = db.query(RecurringExpenseTemplate).get(tx.recurring_template_id)
+        if template and template.amount_source == "employees_sum":
+            return RedirectResponse(f"/employees/?org_id={org_id or tx.organization_id}", status_code=303)
 
     def _parse_amount(s):
         try:

@@ -27,6 +27,10 @@
 
     <div class="form-group">
       <label>Категория</label>
+      {% if is_service_mode %}
+      <input type="text" class="form-control" value="Сервисные расходы" disabled>
+      <input type="hidden" name="category_id" value="{{ preselect_category_id }}">
+      {% else %}
       <select name="category_id" class="form-control" required id="cat-select">
         <option value="">Выберите категорию</option>
         {% set ns = namespace(parent_ids=[]) %}
@@ -39,6 +43,7 @@
           {% endif %}
         {% endfor %}
       </select>
+      {% endif %}
     </div>
 
     <!-- Позиции — для всех товарных категорий, не для «Сервисных расходов» -->
@@ -99,6 +104,7 @@
       <input type="date" name="date" class="form-control" value="{{ today }}" required>
     </div>
 
+    {% if not is_service_mode %}
     <div class="form-group">
       <label>Поставщик</label>
       <select name="supplier_id" id="supplier-select" class="form-control" required>
@@ -112,6 +118,7 @@
         Если купили не у конкретного продавца — выбери «Рынок».
       </div>
     </div>
+    {% endif %}
 
     <div class="form-group">
       <label>Описание (необязательно)</label>
@@ -142,27 +149,32 @@ function onCategoryChange(categoryId) {
   }
 }
 
-// Запомнить последнюю категорию по объекту
-const catKey = () => 'pearl_last_cat_' + orgSel.value;
-if (PRESELECT_CATEGORY_ID !== null) {
-  catSel.value = String(PRESELECT_CATEGORY_ID);
-} else {
-  const savedCat = localStorage.getItem(catKey());
-  if (savedCat && [...catSel.options].some(o => o.value === savedCat && !o.disabled)) {
-    catSel.value = savedCat;
+// Запомнить последнюю категорию по объекту (не применимо — в сервис-режиме
+// категория зафиксирована, селекта categорий на странице нет)
+if (catSel) {
+  const catKey = () => 'pearl_last_cat_' + orgSel.value;
+  if (PRESELECT_CATEGORY_ID !== null) {
+    catSel.value = String(PRESELECT_CATEGORY_ID);
+  } else {
+    const savedCat = localStorage.getItem(catKey());
+    if (savedCat && [...catSel.options].some(o => o.value === savedCat && !o.disabled)) {
+      catSel.value = savedCat;
+    }
   }
+  catSel.addEventListener('change', () => {
+    localStorage.setItem(catKey(), catSel.value);
+    onCategoryChange(catSel.value);
+  });
+  orgSel.addEventListener('change', () => {
+    const saved = localStorage.getItem(catKey());
+    if (saved && [...catSel.options].some(o => o.value === saved && !o.disabled)) catSel.value = saved;
+    else catSel.value = '';
+    onCategoryChange(catSel.value);
+  });
+  onCategoryChange(catSel.value);
+} else {
+  onCategoryChange(PRESELECT_CATEGORY_ID);
 }
-catSel.addEventListener('change', () => {
-  localStorage.setItem(catKey(), catSel.value);
-  onCategoryChange(catSel.value);
-});
-orgSel.addEventListener('change', () => {
-  const saved = localStorage.getItem(catKey());
-  if (saved && [...catSel.options].some(o => o.value === saved && !o.disabled)) catSel.value = saved;
-  else catSel.value = '';
-  onCategoryChange(catSel.value);
-});
-onCategoryChange(catSel.value);
 
 function _num(v) {
   const n = parseFloat(String(v).replace(',', '.'));
