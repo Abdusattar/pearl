@@ -41,7 +41,7 @@
       </select>
     </div>
 
-    <!-- Позиции — для всех товарных категорий (не для услуг вроде Транспорта/Прочего) -->
+    <!-- Позиции — для всех товарных категорий, не для «Сервисных расходов» -->
     <div id="items-block" style="display:none" class="form-group">
       <label style="display:flex;align-items:center;justify-content:space-between">
         <span>Позиции</span>
@@ -129,6 +129,7 @@
 {% block scripts %}
 <script>
 const FOOD_CATEGORY_IDS = new Set({{ food_cat_ids | tojson }});
+const PRESELECT_CATEGORY_ID = {{ preselect_category_id | default(none) | tojson }};
 const orgSel = document.getElementById('org-select');
 const catSel = document.getElementById('cat-select');
 
@@ -143,9 +144,13 @@ function onCategoryChange(categoryId) {
 
 // Запомнить последнюю категорию по объекту
 const catKey = () => 'pearl_last_cat_' + orgSel.value;
-const savedCat = localStorage.getItem(catKey());
-if (savedCat && [...catSel.options].some(o => o.value === savedCat && !o.disabled)) {
-  catSel.value = savedCat;
+if (PRESELECT_CATEGORY_ID !== null) {
+  catSel.value = String(PRESELECT_CATEGORY_ID);
+} else {
+  const savedCat = localStorage.getItem(catKey());
+  if (savedCat && [...catSel.options].some(o => o.value === savedCat && !o.disabled)) {
+    catSel.value = savedCat;
+  }
 }
 catSel.addEventListener('change', () => {
   localStorage.setItem(catKey(), catSel.value);

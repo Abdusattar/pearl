@@ -17,6 +17,10 @@
   <h1>Закуп</h1>
   <a href="/expenses/upload?org_id={{ current_org_id }}" class="btn btn-primary">+ Добавить квитанцию</a>
   <a href="/expenses/add?org_id={{ current_org_id }}" class="btn btn-secondary">+ Вручную</a>
+  {% set service_cat = categories | selectattr("name", "equalto", "Сервисные расходы") | first %}
+  {% if service_cat %}
+  <a href="/expenses/add?org_id={{ current_org_id }}&category_id={{ service_cat.id }}" class="btn btn-secondary">🚕 Сервис</a>
+  {% endif %}
   <a href="/expenses/recurring?org_id={{ current_org_id }}" class="btn btn-secondary">📅 Ежемесячные</a>
 </div>
 

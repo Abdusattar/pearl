@@ -864,7 +864,7 @@ def handle_confirm(
 # ── MANUAL ENTRY (без квитанции) ──────────────────────────────────────────────
 
 @router.get("/add", response_class=HTMLResponse)
-def add_form(request: Request, org_id: int | None = None, db: Session = Depends(get_db)):
+def add_form(request: Request, org_id: int | None = None, category_id: int | None = None, db: Session = Depends(get_db)):
     user = get_current_user(request, db)
     if not user:
         return RedirectResponse("/login", status_code=302)
@@ -888,6 +888,7 @@ def add_form(request: Request, org_id: int | None = None, db: Session = Depends(
         "food_cat_ids": food_cat_ids,
         "suppliers": all_suppliers,
         "today": date.today().isoformat(),
+        "preselect_category_id": category_id,
         "error": None,
     })
 
