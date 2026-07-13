@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% set active_page = "expenses" %}
 
-{% block title %}Закуп — Жемчужина{% endblock %}
+{% block title %}Расходы — Жемчужина{% endblock %}
 
 {% block content %}
 <style>
@@ -14,14 +14,14 @@
 </style>
 
 <div class="page-header">
-  <h1>Закуп</h1>
+  <h1>Расходы</h1>
   <a href="/expenses/upload?org_id={{ current_org_id }}" class="btn btn-primary">+ Добавить квитанцию</a>
   <a href="/expenses/add?org_id={{ current_org_id }}" class="btn btn-secondary">+ Вручную</a>
   {% set service_cat = categories | selectattr("name", "equalto", "Сервисные расходы") | first %}
   {% if service_cat %}
-  <a href="/expenses/add?org_id={{ current_org_id }}&category_id={{ service_cat.id }}" class="btn btn-secondary">🚕 Сервис</a>
+  <a href="/expenses/add?org_id={{ current_org_id }}&category_id={{ service_cat.id }}" class="btn btn-secondary">Сервис</a>
   {% endif %}
-  <a href="/expenses/recurring?org_id={{ current_org_id }}" class="btn btn-secondary">📅 Ежемесячные</a>
+  <a href="/expenses/recurring?org_id={{ current_org_id }}" class="btn btn-secondary">Ежемесячные</a>
 </div>
 
 <div class="card">
@@ -61,7 +61,6 @@
     <thead>
       <tr>
         <th>Дата</th>
-        <th>Объект</th>
         <th>Категория</th>
         <th>Поставщик</th>
         <th>Сумма</th>
@@ -73,8 +72,12 @@
       {% for r in receipts %}
       <tr {% if r.href %}data-href="{{ r.href }}" style="cursor:pointer"{% endif %}>
         <td data-label="Дата">{{ r.date_display }}</td>
-        <td data-label="Объект">{{ r.org_name }}</td>
-        <td data-label="Категория">{{ r.category_name or '—' }}</td>
+        <td data-label="Категория">
+          {{ r.category_name or '—' }}
+          {% if r.row_type == 'manual' and r.description %}
+          <div style="font-size:11px;color:var(--text-muted);margin-top:2px">{{ r.description }}</div>
+          {% endif %}
+        </td>
         <td data-label="Поставщик" style="color:var(--text-muted);font-size:13px">{{ r.supplier_name or '—' }}</td>
         <td data-label="Сумма">
           {% if r.amount_confirmed %}
@@ -104,6 +107,7 @@
         </td>
         <td class="actions">
           <span style="color:var(--text-muted);font-size:18px;margin-right:4px">›</span>
+          {% if r.row_type == 'receipt' and r.ocr_status != 'confirmed' %}
           <form method="post" action="/expenses/{{ r.id }}/delete" style="display:inline"
                 onsubmit="return confirm('Удалить квитанцию и фото?')">
             <input type="hidden" name="org_id" value="{{ current_org_id or '' }}">
@@ -111,6 +115,7 @@
                     style="background:none;border:none;color:#dc2626;cursor:pointer;font-size:16px;padding:4px 6px"
                     title="Удалить">🗑</button>
           </form>
+          {% endif %}
         </td>
       </tr>
       {% endfor %}

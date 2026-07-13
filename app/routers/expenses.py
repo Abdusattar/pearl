@@ -256,6 +256,7 @@ def list_expenses(
             "id": r.id,
             "tx_id": tx_id,
             "href": href,
+            "is_recurring": False,
             "sort_date": r.created_at.date() if hasattr(r.created_at, 'date') else r.created_at,
             "date_display": r.created_at.strftime('%d.%m.%Y'),
             "org_name": org_map.get(r.organization_id, "—"),
@@ -288,15 +289,23 @@ def list_expenses(
             except Exception:
                 pass
         for tx in manual_q.order_by(Transaction.date.desc()).limit(200).all():
+            is_recurring = tx.recurring_template_id is not None
+            if is_recurring:
+                rec_month = tx.period.isoformat() if tx.period else recurring_expenses.month_start().isoformat()
+                href = f"/expenses/recurring?org_id={current_org_id}&month={rec_month}"
+            else:
+                href = f"/expenses/tx/{tx.id}/edit?org_id={current_org_id}"
             receipts.append({
                 "row_type": "manual",
                 "id": None,
                 "tx_id": tx.id,
-                "href": f"/expenses/tx/{tx.id}/edit?org_id={current_org_id}",
+                "href": href,
+                "is_recurring": is_recurring,
                 "sort_date": tx.date,
                 "date_display": tx.date.strftime('%d.%m.%Y') if tx.date else "—",
                 "org_name": org_map.get(tx.organization_id, "—"),
                 "category_name": _cat_name(tx.category_id),
+                "description": tx.description,
                 "supplier_name": supplier_map.get(tx.supplier_id),
                 "amount_detected": None,
                 "amount_confirmed": tx.amount,
@@ -1076,7 +1085,8 @@ def recurring_list(request: Request, org_id: int | None = None, month: str | Non
     if not current_org:
         return RedirectResponse("/expenses/", status_code=302)
 
-    m_start = date.fromisoformat(month) if month else recurring_expenses.month_start()
+    # <input type="month"> отдаёт браузером "YYYY-MM" (не полную дату) — нормализуем к 1-му числу
+    m_start = date.fromisoformat(f"{month[:7]}-01") if month else recurring_expenses.month_start()
     rows = recurring_expenses.list_for_month(db, current_org.id, user.role, m_start)
 
     return templates.TemplateResponse("expenses/recurring.html", {
@@ -1113,14 +1123,13 @@ def recurring_post(
         return RedirectResponse("/expenses/", status_code=302)
     if amount <= 0:
         return RedirectResponse(f"/expenses/recurring?org_id={org_id}&month={month}", status_code=303)
-    # ФОТ — аванс+остаток допустимы двумя проводками в одном месяце. Всё
-    # остальное (Охрана/Коммуналка/Интернет) — счёт приходит раз в месяц,
-    # повторное проведение заблокировано: сначала удали или исправь то, что
-    # уже провели (решено 13.07)
-    if tmpl.amount_source != "employees_sum":
-        already_posted = recurring_expenses.month_postings(db, tmpl, date.fromisoformat(month))
-        if already_posted:
-            return RedirectResponse(f"/expenses/recurring?org_id={org_id}&month={month}", status_code=303)
+    # Счёт/начисление приходит раз в месяц — повторное проведение заблокировано:
+    # сначала удали или исправь то, что уже провели (решено 13.07, распространено
+    # на ФОТ 14.07 — это агрегированная сумма по всем сотрудникам, а не выплата
+    # одному человеку, деления на аванс/остаток на уровне этой проводки нет)
+    already_posted = recurring_expenses.month_postings(db, tmpl, date.fromisoformat(month))
+    if already_posted:
+        return RedirectResponse(f"/expenses/recurring?org_id={org_id}&month={month}", status_code=303)
 
     tx_date = date.fromisoformat(date_) if date_ else date.today()
     tx = Transaction(
@@ -1205,8 +1214,10 @@ def edit_tx_form(tx_id: int, request: Request, org_id: int | None = None, db: Se
             "debt": (tx.amount - tx.amount_paid) if tx.amount_paid is not None else None,
             "date": tx.date.isoformat() if tx.date else date.today().isoformat(),
             "category_id": tx.category_id,
+            "category_name": db.query(ExpenseCategory).get(tx.category_id).name if tx.category_id else None,
             "description": tx.description or "",
             "org_id": tx.organization_id,
+            "org_name": db.query(Organization).get(tx.organization_id).name,
         },
         "items": items,
         "categories": get_categories(db),
@@ -1275,12 +1286,17 @@ def delete_receipt(
     if not receipt:
         return HTMLResponse("Квитанция не найдена", status_code=404)
 
-    # Удалить связанные транзакции и склад
+    # Удалить связанные транзакции и склад — порядок важен: сначала снять
+    # ReceiptTransaction (FK на transaction_id), иначе удаление Transaction
+    # падает нарушением внешнего ключа (баг был всегда, просто не всплывал —
+    # ни разу не удаляли квитанцию с уже проведённой транзакцией)
     rts = db.query(ReceiptTransaction).filter(ReceiptTransaction.receipt_id == receipt_id).all()
-    for rt in rts:
-        db.query(WarehouseReceipt).filter(WarehouseReceipt.transaction_id == rt.transaction_id).delete()
-        db.query(Transaction).filter(Transaction.id == rt.transaction_id).delete()
+    tx_ids = [rt.transaction_id for rt in rts]
+    if tx_ids:
+        db.query(WarehouseReceipt).filter(WarehouseReceipt.transaction_id.in_(tx_ids)).delete(synchronize_session=False)
     db.query(ReceiptTransaction).filter(ReceiptTransaction.receipt_id == receipt_id).delete()
+    if tx_ids:
+        db.query(Transaction).filter(Transaction.id.in_(tx_ids)).delete(synchronize_session=False)
     db.query(ReceiptItem).filter(ReceiptItem.receipt_id == receipt_id).delete()
 
     # Удалить файл фото

@@ -1,19 +1,80 @@
 {% extends "base.html" %}
 {% set active_page = "expenses" %}
 
-{% block title %}Редактировать запись — Жемчужина{% endblock %}
+{% block title %}Расход — Жемчужина{% endblock %}
 
 {% block content %}
 <div class="page-header">
-  <h1>Редактировать запись</h1>
+  <h1>Расход</h1>
   <a href="/expenses/?org_id={{ current_org_id or '' }}" class="btn btn-secondary">← Назад</a>
 </div>
 
 {% if error %}
-<div class="alert alert-error">{{ error }}</div>
+<div class="alert alert-error" style="max-width:480px">{{ error }}</div>
 {% endif %}
 
 <div class="card" style="max-width:480px">
+  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
+    <h3 style="font-size:15px;margin:0">Детали</h3>
+    <button type="button" id="tx-edit-btn" class="btn btn-secondary"
+            style="padding:4px 10px;font-size:12px" onclick="toggleBlock('tx', true)">
+      Изменить
+    </button>
+  </div>
+
+  <div id="tx-view">
+    <div class="form-group">
+      <label>Объект</label>
+      <div>{{ tx.org_name }}</div>
+    </div>
+    <div class="form-group">
+      <label>Сумма</label>
+      <div style="font-size:20px;font-weight:700">{{ "{:,.0f}".format(tx.amount) }} сом</div>
+      {% if tx.debt and tx.debt > 0 %}
+      <div style="font-size:12px;color:#b45309;margin-top:2px">Долг поставщику: {{ "{:,.0f}".format(tx.debt) }} сом{% if tx.due_date %}, погасить до {{ tx.due_date }}{% endif %}</div>
+      {% endif %}
+    </div>
+    <div class="form-group">
+      <label>Категория</label>
+      <div>{{ tx.category_name or "— без категории —" }}</div>
+    </div>
+    <div class="form-group">
+      <label>Дата</label>
+      <div>{{ tx.date[8:10] }}.{{ tx.date[5:7] }}.{{ tx.date[0:4] }}</div>
+    </div>
+    <div class="form-group" style="margin-bottom:0">
+      <label>Описание</label>
+      <div>{{ tx.description or "—" }}</div>
+    </div>
+
+    {% if items %}
+    <div class="form-group" style="margin-top:14px;margin-bottom:0">
+      <label>Позиции</label>
+      <table style="width:100%;border-collapse:collapse;font-size:13px">
+        <thead>
+          <tr style="border-bottom:2px solid var(--border);text-align:left;color:var(--text-muted)">
+            <th style="padding:4px;width:50%">Наименование</th>
+            <th style="padding:4px;width:15%;text-align:right">Кол-во</th>
+            <th style="padding:4px;width:20%;text-align:right">Цена</th>
+            <th style="padding:4px;width:15%;text-align:right">Сумма</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for item in items %}
+          <tr style="border-bottom:1px solid var(--border)">
+            <td style="padding:6px 4px">{{ item.name }}</td>
+            <td style="padding:6px 4px;text-align:right">{{ item.qty or '—' }}</td>
+            <td style="padding:6px 4px;text-align:right">{{ "{:,.0f}".format(item.unit_price) if item.unit_price else '—' }}</td>
+            <td style="padding:6px 4px;text-align:right"><strong>{{ "{:,.0f}".format(item.total_price) }}</strong></td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% endif %}
+  </div>
+
+  <div id="tx-form" style="display:none">
   <form method="post" action="/expenses/tx/{{ tx.id }}/edit">
     <input type="hidden" name="org_id" value="{{ current_org_id or '' }}">
 
@@ -87,41 +148,38 @@
     </div>
 
     {% if items %}
-    <div class="form-group">
-      <label>Позиции</label>
-      <table style="width:100%;border-collapse:collapse;font-size:13px">
-        <thead>
-          <tr style="border-bottom:2px solid var(--border);text-align:left;color:var(--text-muted)">
-            <th style="padding:4px;width:50%">Наименование</th>
-            <th style="padding:4px;width:15%;text-align:right">Кол-во</th>
-            <th style="padding:4px;width:20%;text-align:right">Цена</th>
-            <th style="padding:4px;width:15%;text-align:right">Сумма</th>
-          </tr>
-        </thead>
-        <tbody>
-          {% for item in items %}
-          <tr style="border-bottom:1px solid var(--border)">
-            <td style="padding:6px 4px">{{ item.name }}</td>
-            <td style="padding:6px 4px;text-align:right">{{ item.qty or '—' }}</td>
-            <td style="padding:6px 4px;text-align:right">{{ "{:,.0f}".format(item.unit_price) if item.unit_price else '—' }}</td>
-            <td style="padding:6px 4px;text-align:right"><strong>{{ "{:,.0f}".format(item.total_price) }}</strong></td>
-          </tr>
-          {% endfor %}
-        </tbody>
-      </table>
+    <div style="font-size:12px;color:var(--text-muted);margin-bottom:12px">
+      Позиции чека тут не редактируются — только сумма/категория/дата/описание проводки.
     </div>
     {% endif %}
 
     <div style="display:flex;gap:12px;margin-top:8px">
       <button type="submit" class="btn btn-success"
               style="flex:1;min-height:48px;font-size:16px">Сохранить</button>
-      <a href="/expenses/?org_id={{ current_org_id or '' }}" class="btn btn-secondary"
-         style="min-height:48px;display:inline-flex;align-items:center">Отмена</a>
+      <button type="button" class="btn btn-secondary" onclick="toggleBlock('tx', false)"
+              style="min-height:48px">Отмена</button>
     </div>
   </form>
-</div>
 
+    <div style="margin-top:16px;padding-top:16px;border-top:1px solid var(--border)">
+      <form method="post" action="/expenses/tx/{{ tx.id }}/delete"
+            onsubmit="return confirm('Удалить проводку {{ '{:,.0f}'.format(tx.amount) }} сом?')">
+        <input type="hidden" name="org_id" value="{{ current_org_id or '' }}">
+        <button type="submit" class="btn btn-danger" style="width:100%">Удалить проводку</button>
+      </form>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
 <script>
+function toggleBlock(name, editing) {
+  document.getElementById(name + '-view').style.display = editing ? 'none' : '';
+  document.getElementById(name + '-form').style.display = editing ? '' : 'none';
+  document.getElementById(name + '-edit-btn').style.display = editing ? 'none' : '';
+}
+
 function _num(v) {
   const n = parseFloat(String(v).replace(',', '.'));
   return isNaN(n) ? null : n;

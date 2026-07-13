@@ -80,6 +80,11 @@
             <a href="/expenses/?org_id={{ current_org_id or '' }}"
                style="font-size:12px;color:var(--text-muted)">← К списку</a>
           </div>
+          <form method="post" action="/expenses/{{ receipt.id }}/delete" style="margin-top:12px"
+                onsubmit="return confirm('Удалить квитанцию и фото? Отменить нельзя.')">
+            <input type="hidden" name="org_id" value="{{ current_org_id or '' }}">
+            <button type="submit" style="background:none;border:none;color:#dc2626;cursor:pointer;font-size:12px;padding:0;text-decoration:underline">Удалить квитанцию</button>
+          </form>
         </div>
       </div>
     </div>

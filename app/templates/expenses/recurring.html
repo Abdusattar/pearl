@@ -10,68 +10,76 @@
   .page-header h1 { width: 100%; }
 }
 .recur-amount-input { font-size: 16px; padding: 8px; width: 110px; }
-.recur-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 12px 0;
-  border-bottom: 1px solid var(--border, #e5e7eb); }
+.recur-row { padding: 14px 0; border-bottom: 1px solid var(--border, #e5e7eb); }
 .recur-row:last-child { border-bottom: none; }
-.recur-name { flex: 1; min-width: 160px; }
-.recur-posting { font-size: 12px; color: var(--text-muted); }
+.recur-name { font-weight: 500; margin-bottom: 8px; }
+.recur-posted { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 6px; }
+.recur-posted:last-child { margin-bottom: 0; }
+.recur-field { display: flex; flex-direction: column; }
+.recur-field-label { font-size: 11px; color: var(--text-muted); margin-bottom: 2px; }
+.recur-form { display: flex; align-items: flex-end; gap: 10px; flex-wrap: wrap; }
 </style>
 
 <div class="page-header">
   <h1>Ежемесячные расходы</h1>
-  <a href="/expenses/?org_id={{ current_org_id }}" class="btn btn-secondary">← Закуп</a>
+  <a href="/expenses/?org_id={{ current_org_id }}" class="btn btn-secondary">← Расходы</a>
 </div>
 
 <div class="card">
   <form method="get" class="filters" style="margin-bottom:12px">
     <input type="hidden" name="org_id" value="{{ current_org_id or '' }}">
-    <input type="month" name="month" value="{{ month[:7] }}" class="form-control" style="width:auto">
-    <button type="submit" class="btn btn-secondary">Показать</button>
+    <input type="month" name="month" value="{{ month[:7] }}" class="form-control" style="width:auto"
+           onchange="this.form.submit()">
   </form>
   <div style="font-weight:600;margin-bottom:2px">{{ month_label }}</div>
   <div style="font-size:12px;color:var(--text-muted);margin-bottom:8px">
-    Расход относится к этому месяцу независимо от поля «Дата» — платите за июль в августе?
-    Выберите здесь июль, а в дате поставьте настоящий день оплаты.
+    Расход относится к этому месяцу независимо от даты оплаты — платите за июль в августе?
+    Выберите здесь июль, а датой оплаты поставьте настоящий день.
   </div>
 
   {% if rows %}
   {% for row in rows %}
   <div class="recur-row">
-    <div class="recur-name">
-      <div>{{ row.template.name }}</div>
-      {% set is_payroll = row.template.amount_source == "employees_sum" %}
-      {% if row.postings %}
-        {% for p in row.postings %}
-        <div class="recur-posting">
-          ✓ {{ "{:,.0f}".format(p.amount) }} с, {{ p.date.strftime("%d.%m") }}
-          {% if is_payroll %}
-          <a href="/employees/?org_id={{ current_org_id }}">Исправить оклад →</a>
-          {% else %}
-          <a href="/expenses/tx/{{ p.id }}/edit?org_id={{ current_org_id }}">Исправить</a>
-          <form method="post" action="/expenses/tx/{{ p.id }}/delete" style="display:inline"
-                onsubmit="return confirm('Удалить проводку {{ '{:,.0f}'.format(p.amount) }} с?')">
-            <input type="hidden" name="org_id" value="{{ current_org_id }}">
-            <input type="hidden" name="month" value="{{ month }}">
-            <button type="submit" style="background:none;border:none;color:#dc2626;cursor:pointer;padding:0;font-size:12px">Удалить</button>
-          </form>
-          {% endif %}
-        </div>
-        {% endfor %}
-      {% endif %}
-    </div>
+    <div class="recur-name">{{ row.template.name }}</div>
 
-    {% if is_payroll or not row.postings %}
-    <form method="post" action="/expenses/recurring/{{ row.template.id }}/post"
-          style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
+    {% set is_payroll = row.template.amount_source == "employees_sum" %}
+    {% if row.postings %}
+      {% for p in row.postings %}
+      <div class="recur-posted">
+        <span class="badge badge-confirmed">Проведено {{ "{:,.0f}".format(p.amount) }} с, {{ p.date.strftime("%d.%m") }}</span>
+        {% if is_payroll %}
+        <a href="/employees/?org_id={{ current_org_id }}" class="btn btn-secondary">Оклады сотрудников →</a>
+        {% else %}
+        <a href="/expenses/tx/{{ p.id }}/edit?org_id={{ current_org_id }}" class="btn btn-secondary">Исправить</a>
+        <form method="post" action="/expenses/tx/{{ p.id }}/delete" style="display:inline"
+              onsubmit="return confirm('Удалить проводку {{ '{:,.0f}'.format(p.amount) }} с?')">
+          <input type="hidden" name="org_id" value="{{ current_org_id }}">
+          <input type="hidden" name="month" value="{{ month }}">
+          <button type="submit" class="btn btn-danger">Удалить</button>
+        </form>
+        {% endif %}
+      </div>
+      {% endfor %}
+    {% else %}
+    <form method="post" action="/expenses/recurring/{{ row.template.id }}/post" class="recur-form">
       <input type="hidden" name="org_id" value="{{ current_org_id }}">
       <input type="hidden" name="month" value="{{ month }}">
-      <input type="number" step="0.01" min="0.01" name="amount" class="recur-amount-input"
-             placeholder="сумма"
-             {% if row.suggested is not none %}value="{{ row.suggested }}"{% endif %}>
-      <input type="date" name="date" value="{{ today }}" class="form-control" style="width:auto;font-size:16px">
-      <button type="submit" class="btn btn-primary">
-        {% if row.postings %}+ Ещё одна{% else %}Подтвердить{% endif %}
-      </button>
+      <div class="recur-field">
+        <span class="recur-field-label">{% if is_payroll %}Сумма (оклады сотрудников){% else %}Сумма{% endif %}</span>
+        {% if is_payroll %}
+        <input type="text" class="recur-amount-input" value="{{ '{:,.0f}'.format(row.suggested) if row.suggested is not none else 0 }} с" disabled>
+        <input type="hidden" name="amount" value="{{ row.suggested or 0 }}">
+        {% else %}
+        <input type="number" step="0.01" min="0.01" name="amount" class="recur-amount-input"
+               placeholder="сумма"
+               {% if row.suggested is not none %}value="{{ row.suggested }}"{% endif %}>
+        {% endif %}
+      </div>
+      <div class="recur-field">
+        <span class="recur-field-label">Дата оплаты</span>
+        <input type="date" name="date" value="{{ today }}" class="form-control" style="width:auto;font-size:16px">
+      </div>
+      <button type="submit" class="btn btn-primary">Подтвердить</button>
     </form>
     {% endif %}
   </div>
