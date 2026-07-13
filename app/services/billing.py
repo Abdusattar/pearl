@@ -6,10 +6,22 @@ from sqlalchemy import func
 from app.models import Student, StudentService, Service, Charge, Transaction
 
 
-def _tuition_fee(student: Student) -> float:
-    if student.extra and student.extra.get("monthly_fee"):
-        return float(student.extra["monthly_fee"])
-    return 0.0
+def get_tuition_service(db: Session, organization_id: int) -> Service | None:
+    """Базовая услуга «Обучение» объекта — цена редактируется на /services/,
+    не захардкожена в коде (тариф будет расти). Применяется автоматически
+    всем активным детям объекта, не через чекбокс StudentService."""
+    return (
+        db.query(Service)
+        .filter(Service.organization_id == organization_id, Service.is_tuition.is_(True), Service.deleted_at.is_(None))
+        .first()
+    )
+
+
+def _tuition_fee(db: Session, student: Student) -> float:
+    tuition_service = get_tuition_service(db, student.organization_id)
+    base = float(tuition_service.price) if tuition_service else 0.0
+    discount = float(student.discount_amount or 0)
+    return max(0.0, base - discount)
 
 
 def _active_services(db: Session, student_id: int) -> list[StudentService]:
@@ -37,14 +49,10 @@ def generate_monthly_charges(db: Session) -> int:
         if student.id in already_charged:
             continue
 
-        tuition = _tuition_fee(student)
+        tuition = _tuition_fee(db, student)  # уже с учётом скидки на тариф (Student.discount_amount)
         services = _active_services(db, student.id)
         services_total = sum(float(ss.service.price) for ss in services)
-        subtotal = tuition + services_total
-
-        discount_pct = float(student.discount_percent or 0)
-        discount_amount = round(subtotal * discount_pct / 100, 2) if discount_pct else 0.0
-        total = subtotal - discount_amount
+        total = tuition + services_total
         if total <= 0:
             continue
 

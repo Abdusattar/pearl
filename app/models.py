@@ -54,12 +54,15 @@ class Student(Base):
     parent_contact  = Column(String(200))
     status          = Column(String(10), default="active")
     extra           = Column(JSONB)
-    # Скидка на тариф — % от (учёба+услуги), решено 12.07. С обязательной
-    # причиной и аудитом (кто/когда) — старую безусловную ручную корректировку
-    # баланса убрали 04.07 именно из-за отсутствия этого. Не путать со
-    # "скидкой за пропуски" (100 сом/день, решено 10.07, не реализовано) —
-    # это два разных механизма.
-    discount_percent = Column(Numeric(5, 2), nullable=False, default=0, server_default='0')
+    # Скидка на тариф за учёбу — в сомах от базового тарифа
+    # (DEFAULT_MONTHLY_FEE в services/billing.py), не в процентах — так
+    # реально считает Мунара/Абдусаттар (13.07, было испробовано с
+    # discount_percent 12.07, ни разу не заполнилось на практике). С
+    # обязательной причиной и аудитом (кто/когда) — старую безусловную
+    # ручную корректировку баланса убрали 04.07 именно из-за отсутствия
+    # этого. Не путать со "скидкой за пропуски" (100 сом/день, решено
+    # 10.07, не реализовано) — это два разных механизма.
+    discount_amount = Column(Numeric(10, 2), nullable=False, default=0, server_default='0')
     discount_reason  = Column(Text)
     discount_set_by  = Column(Integer, ForeignKey("users.id"))
     discount_set_at  = Column(DateTime)
@@ -348,13 +351,19 @@ class RecurringExpenseTemplate(Base):
 
 
 class Service(Base):
-    """Доп. услуга с фиксированной ценой (проезд, секция и т.п.).
-    Учёба сюда не входит — у неё индивидуальный тариф на Student.extra.monthly_fee."""
+    """Услуга с ценой за месяц. Обычные (проезд, секция и т.п.) — опциональные,
+    подключаются по ребёнку через StudentService (чекбокс на карточке).
+    is_tuition=True — базовый тариф за учёбу (13.07): один такой на объект,
+    применяется автоматически всем активным детям, не через чекбокс, цена
+    редактируется здесь же (на /services/), чтобы поднять тариф не деплоем
+    кода, а обычной правкой. Скидка ребёнку — Student.discount_amount, в сомах
+    от этой цены."""
     __tablename__ = "services"
     id              = Column(Integer, primary_key=True)
     organization_id = Column(Integer, ForeignKey("organizations.id"), nullable=False)
     name            = Column(String(100), nullable=False)
     price           = Column(Numeric(10, 2), nullable=False)
+    is_tuition      = Column(Boolean, nullable=False, default=False, server_default='false')
     created_at      = Column(DateTime, server_default=func.now())
     deleted_at      = Column(DateTime)
 

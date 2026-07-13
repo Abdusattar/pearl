@@ -144,7 +144,7 @@
   <div id="billing-view">
     <div class="form-group">
       <label>Тариф за учёбу, сом/мес</label>
-      <div>{{ "{:,.0f}".format(student.extra.monthly_fee) if student.extra and student.extra.monthly_fee else "— не задан —" }}</div>
+      <div>{{ "{:,.0f}".format(tuition_fee) }} <span style="font-size:12px;color:var(--text-muted)">(база {{ "{:,.0f}".format(default_monthly_fee) }}{% if student.discount_amount and student.discount_amount > 0 %} − скидка {{ "{:,.0f}".format(student.discount_amount) }}{% endif %})</span></div>
     </div>
     {% if services %}
     <div class="form-group">
@@ -154,11 +154,11 @@
     {% endif %}
     <div class="form-group" style="margin-bottom:0">
       <label>Скидка</label>
-      {% if student.discount_percent and student.discount_percent > 0 %}
+      {% if student.discount_amount and student.discount_amount > 0 %}
       <div>
-        <strong>{{ student.discount_percent|float|round(2) }}%</strong> — {{ student.discount_reason or "без причины" }}
+        <strong>{{ "{:,.0f}".format(student.discount_amount) }} сом/мес</strong> — {{ student.discount_reason or "без причины" }}
         <div style="font-size:12px;color:var(--text-muted)">
-          поставил {{ student.discount_set_by }}{% if student.discount_set_at %}, {{ student.discount_set_at.strftime("%d.%m.%Y") }}{% endif %}
+          {% if student.discount_set_at %}поставлено {{ student.discount_set_at.strftime("%d.%m.%Y") }}{% endif %}
         </div>
       </div>
       {% else %}
@@ -170,10 +170,21 @@
   <form method="post" action="/students/{{ student.id }}/billing" id="billing-form" style="display:none"
         onsubmit="return confirm('Сохранить изменения?')">
     <div class="form-group">
-      <label for="monthly_fee">Тариф за учёбу, сом/мес</label>
-      <input type="number" id="monthly_fee" name="monthly_fee" class="form-control"
-             value="{{ student.extra.monthly_fee if student.extra and student.extra.monthly_fee else '' }}"
-             placeholder="7500">
+      <label>Тариф за учёбу</label>
+      <div style="font-size:13px;color:var(--text-muted)">Базовый тариф {{ "{:,.0f}".format(default_monthly_fee) }} сом/мес — общий для всех, ниже можно назначить скидку конкретному ребёнку.</div>
+    </div>
+
+    <div class="form-group">
+      <label for="discount_amount">Скидка, сом/мес</label>
+      <input type="number" id="discount_amount" name="discount_amount" class="form-control"
+             value="{{ student.discount_amount if student.discount_amount and student.discount_amount > 0 else '' }}"
+             placeholder="0" min="0" max="{{ default_monthly_fee|int }}" step="1">
+    </div>
+
+    <div class="form-group">
+      <label for="discount_reason">Причина скидки</label>
+      <input type="text" id="discount_reason" name="discount_reason" class="form-control"
+             value="{{ student.discount_reason or '' }}" placeholder="например: многодетная семья">
     </div>
 
     {% if services %}

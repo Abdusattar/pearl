@@ -12,7 +12,7 @@ from app.services.students import (
     get_next_free_pin, update_student, compose_name, archive_stale_students,
 )
 from app.services.billing import (
-    generate_monthly_charges, get_balance, get_ledger, set_student_services,
+    generate_monthly_charges, get_balance, get_ledger, set_student_services, get_tuition_service,
 )
 from app.dependencies import get_current_user, get_accessible_orgs, resolve_org
 
@@ -226,9 +226,15 @@ def _edit_context(db: Session, student: Student, error: str | None = None):
         .filter(Enrollment.student_id == student.id, Enrollment.end_date.is_(None))
         .first()
     )
+    # «Обучение» (is_tuition) — не чекбокс, применяется автоматически всем,
+    # в список опциональных доп.услуг не попадает
     services = (
         db.query(Service)
-        .filter(Service.organization_id == student.organization_id, Service.deleted_at.is_(None))
+        .filter(
+            Service.organization_id == student.organization_id,
+            Service.deleted_at.is_(None),
+            Service.is_tuition.is_(False),
+        )
         .order_by(Service.name)
         .all()
     )
@@ -238,6 +244,8 @@ def _edit_context(db: Session, student: Student, error: str | None = None):
         )
     }
     active_services = [s for s in services if s.id in active_service_ids]
+    tuition_service = get_tuition_service(db, student.organization_id)
+    base_tuition_price = float(tuition_service.price) if tuition_service else 0.0
     return {
         "student": student,
         "groups": groups,
@@ -249,6 +257,8 @@ def _edit_context(db: Session, student: Student, error: str | None = None):
         "current_org_id": student.organization_id,
         "active_page": "students",
         "error": error,
+        "default_monthly_fee": base_tuition_price,
+        "tuition_fee": max(0.0, base_tuition_price - float(student.discount_amount or 0)),
     }
 
 
@@ -313,9 +323,8 @@ def edit_student(
 def edit_student_billing(
     student_id: int,
     request: Request,
-    monthly_fee: str = Form(""),
     service_ids: list[int] = Form(default=[]),
-    discount_percent: str = Form(""),
+    discount_amount: str = Form(""),
     discount_reason: str = Form(""),
     db: Session = Depends(get_db),
 ):
@@ -328,40 +337,32 @@ def edit_student_billing(
         return RedirectResponse("/students/", status_code=302)
 
     try:
-        discount_pct = float(discount_percent.strip()) if discount_percent.strip() else 0.0
+        discount_som = float(discount_amount.strip()) if discount_amount.strip() else 0.0
     except ValueError:
-        discount_pct = -1  # заведомо невалидное — попадёт в проверку ниже
+        discount_som = -1  # заведомо невалидное — попадёт в проверку ниже
 
-    if not (0 <= discount_pct <= 100):
-        ctx = _edit_context(db, student, error="Скидка должна быть числом от 0 до 100%")
+    tuition_service = get_tuition_service(db, student.organization_id)
+    base_price = float(tuition_service.price) if tuition_service else 0.0
+    if not (0 <= discount_som <= base_price):
+        ctx = _edit_context(db, student, error=f"Скидка должна быть числом от 0 до {base_price:.0f} сом")
         ctx.update({"request": request, "accessible_orgs": get_accessible_orgs(user, db), "current_user": user})
         return templates.TemplateResponse("students/edit.html", ctx)
-    if discount_pct > 0 and not discount_reason.strip():
+    if discount_som > 0 and not discount_reason.strip():
         ctx = _edit_context(db, student, error="Укажи причину скидки — без неё скидку не поставить")
         ctx.update({"request": request, "accessible_orgs": get_accessible_orgs(user, db), "current_user": user})
         return templates.TemplateResponse("students/edit.html", ctx)
 
-    extra = dict(student.extra or {})
-    if monthly_fee.strip():
-        try:
-            extra["monthly_fee"] = float(monthly_fee.strip())
-        except ValueError:
-            pass
-    else:
-        extra.pop("monthly_fee", None)
-    student.extra = extra or None
-
-    old_pct = float(student.discount_percent or 0)
-    if discount_pct != old_pct or (discount_pct > 0 and discount_reason.strip() != (student.discount_reason or "")):
+    old_amount = float(student.discount_amount or 0)
+    if discount_som != old_amount or (discount_som > 0 and discount_reason.strip() != (student.discount_reason or "")):
         db.add(AuditLog(
             entity_type="student_discount", entity_id=student.id, action="update", user_id=user.id,
-            old_data={"discount_percent": old_pct, "discount_reason": student.discount_reason},
-            new_data={"discount_percent": discount_pct, "discount_reason": discount_reason.strip() or None},
+            old_data={"discount_amount": old_amount, "discount_reason": student.discount_reason},
+            new_data={"discount_amount": discount_som, "discount_reason": discount_reason.strip() or None},
         ))
         student.discount_set_by = user.id
         student.discount_set_at = datetime.now()
 
-    student.discount_percent = discount_pct
+    student.discount_amount = discount_som
     student.discount_reason = discount_reason.strip() or None
 
     set_student_services(db, student_id, service_ids)

@@ -39,9 +39,22 @@
     <tbody>
       {% for s in services %}
       <tr>
-        <td data-label="Название" style="font-weight:500">{{ s.name }}</td>
-        <td data-label="Цена">{{ "{:,.0f}".format(s.price) }} с</td>
+        <td data-label="Название" style="font-weight:500">
+          {{ s.name }}
+          {% if s.is_tuition %}
+          <span class="badge" style="background:#e0e7ff;color:#3730a3;margin-left:6px">база, для всех</span>
+          {% endif %}
+        </td>
+        <td data-label="Цена">
+          <form method="post" action="/services/{{ s.id }}/price" style="display:flex;gap:6px;align-items:center">
+            <input type="hidden" name="org_id" value="{{ current_org_id or '' }}">
+            <input type="number" name="price" value="{{ s.price|int }}" class="form-control"
+                   style="width:100px;padding:4px 8px;font-size:13px">
+            <button type="submit" class="btn btn-secondary" style="padding:4px 10px;font-size:12px">Сохранить</button>
+          </form>
+        </td>
         <td class="actions">
+          {% if not s.is_tuition %}
           <form method="post" action="/services/{{ s.id }}/delete" style="display:inline"
                 onsubmit="return confirm('Удалить услугу «{{ s.name }}»?')">
             <input type="hidden" name="org_id" value="{{ current_org_id or '' }}">
@@ -49,6 +62,7 @@
                     style="background:none;border:none;color:#dc2626;cursor:pointer;font-size:16px;padding:4px 6px"
                     title="Удалить">🗑</button>
           </form>
+          {% endif %}
         </td>
       </tr>
       {% endfor %}

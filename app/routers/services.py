@@ -25,7 +25,7 @@ def service_list(request: Request, org_id: str | None = None, db: Session = Depe
     query = db.query(Service).filter(Service.deleted_at.is_(None))
     if current_org:
         query = query.filter(Service.organization_id == current_org.id)
-    services = query.order_by(Service.name).all()
+    services = query.order_by(Service.is_tuition.desc(), Service.name).all()
 
     return templates.TemplateResponse("services/list.html", {
         "request": request,
@@ -62,6 +62,29 @@ def create_service(
     return RedirectResponse(f"/services/?org_id={org_id}", status_code=303)
 
 
+@router.post("/{service_id}/price")
+def update_service_price(
+    service_id: int,
+    request: Request,
+    price: str = Form(...),
+    org_id: str = Form(default=""),
+    db: Session = Depends(get_db),
+):
+    user = get_current_user(request, db)
+    if not user:
+        return RedirectResponse("/login", status_code=302)
+    s = db.query(Service).get(service_id)
+    try:
+        price_val = float(price)
+    except ValueError:
+        price_val = 0
+    if s and price_val > 0:
+        s.price = price_val
+        db.commit()
+    redirect_url = f"/services/?org_id={org_id}" if org_id else "/services/"
+    return RedirectResponse(redirect_url, status_code=303)
+
+
 @router.post("/{service_id}/delete")
 def delete_service(
     service_id: int,
@@ -73,7 +96,9 @@ def delete_service(
     if not user:
         return RedirectResponse("/login", status_code=302)
     s = db.query(Service).get(service_id)
-    if s:
+    # «Обучение» — базовый тариф, а не опциональная услуга; удаление обнулило
+    # бы начисление учёбы всем детям объекта молча. Не удаляем.
+    if s and not s.is_tuition:
         s.deleted_at = datetime.utcnow()
         db.commit()
     redirect_url = f"/services/?org_id={org_id}" if org_id else "/services/"
