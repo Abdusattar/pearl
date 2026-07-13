@@ -287,8 +287,7 @@
   <a href="/income/" class="{% if active_page == 'income' %}active{% endif %}">Оплаты</a>
   <a href="/suppliers/" class="{% if active_page == 'suppliers' %}active{% endif %}">Поставщики</a>
   <div class="section">Учёт</div>
-  <a href="/students/" class="{% if active_page == 'students' %}active{% endif %}">Ученики</a>
-  <a href="/attendance/" class="{% if active_page == 'attendance' %}active{% endif %}">Посещаемость</a>
+  <a href="/students/" class="{% if active_page == 'students' or active_page == 'attendance' %}active{% endif %}">Дети</a>
   <a href="/services/" class="{% if active_page == 'services' %}active{% endif %}">Услуги</a>
   <a href="/warehouse/" class="{% if active_page == 'warehouse' %}active{% endif %}">Склад</a>
   <a href="/menu/" class="{% if active_page == 'menu' %}active{% endif %}">Меню</a>
@@ -314,8 +313,8 @@
     <li><a href="/income/" class="{% if active_page == 'income' %}active{% endif %}">
       <span class="nav-icon">💰</span>Оплаты
     </a></li>
-    <li><a href="/students/" class="{% if active_page == 'students' %}active{% endif %}">
-      <span class="nav-icon">👦</span>Ученики
+    <li><a href="/students/" class="{% if active_page == 'students' or active_page == 'attendance' %}active{% endif %}">
+      <span class="nav-icon">👦</span>Дети
     </a></li>
     <li><a href="/warehouse/" class="{% if active_page == 'warehouse' %}active{% endif %}">
       <span class="nav-icon">📦</span>Склад

@@ -1,10 +1,11 @@
 {% extends "base.html" %}
-{% block title %}Ученики — Жемчужина{% endblock %}
+{% block title %}Дети — Жемчужина{% endblock %}
 
 {% block content %}
 <div class="page-header">
-  <h1>Ученики</h1>
+  <h1>Дети</h1>
   <a href="/students/add?org_id={{ current_org_id }}" class="btn btn-primary">+ Добавить</a>
+  <a href="/attendance/?org_id={{ current_org_id }}" class="btn btn-secondary">Посещаемость</a>
 </div>
 
 <div class="card">
@@ -49,8 +50,15 @@
         <th style="width:90px">Статус</th>
       </tr>
     </thead>
+    {% for grp in grouped_students %}
     <tbody>
-      {% for s in students %}
+      <tr>
+        <td colspan="4" style="background:var(--bg);font-size:13px;text-transform:uppercase;
+            letter-spacing:.5px;color:var(--text-muted);padding:8px 12px">
+          {{ grp.name }} <span style="font-weight:400;text-transform:none;letter-spacing:0">({{ grp.students|length }})</span>
+        </td>
+      </tr>
+      {% for s in grp.students %}
       <tr data-href="/students/{{ s.id }}/edit" style="cursor:pointer">
         <td data-label="PIN">
           <span style="font-family:monospace;font-weight:700;font-size:15px;color:var(--primary)">
@@ -71,6 +79,7 @@
       </tr>
       {% endfor %}
     </tbody>
+    {% endfor %}
   </table>
 
   <div style="padding-top:16px;border-top:1px solid var(--border);margin-top:4px;

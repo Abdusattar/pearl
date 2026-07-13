@@ -97,9 +97,21 @@ def list_students(
         .all()
     )
 
+    # Список по умолчанию сгруппирован по группе (алфавитный порядок групп,
+    # внутри группы — по PIN, как и раньше). Дети без группы — секцией в конце.
+    grouped_students = []
+    for g in available_groups:
+        members = [s for s in students if groups_by_student.get(s.id) == g.name]
+        if members:
+            grouped_students.append({"name": g.name, "students": members})
+    no_group = [s for s in students if s.id not in groups_by_student]
+    if no_group:
+        grouped_students.append({"name": "Без группы", "students": no_group})
+
     return templates.TemplateResponse("students/list.html", {
         "request": request,
         "students": students,
+        "grouped_students": grouped_students,
         "available_groups": available_groups,
         "current_group_id": group_id_int,
         "groups_by_student": groups_by_student,

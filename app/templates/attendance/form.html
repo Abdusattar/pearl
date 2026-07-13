@@ -15,6 +15,7 @@
 
 <div class="page-header">
   <h1>Посещаемость</h1>
+  <a href="/students/?org_id={{ current_org_id or '' }}" class="btn btn-secondary">← Дети</a>
 </div>
 
 {% if request.query_params.get('saved') %}
@@ -35,7 +36,30 @@
   Нет активных детей с группой на этом объекте.
 </div>
 {% else %}
-<form method="post" action="/attendance/">
+
+{% if has_saved %}
+<div id="att-view">
+  <div class="card" style="max-width:640px">
+    {% for g in groups %}
+    <div class="att-group">
+      <h3>{{ g.group.name }} <span class="att-count">({{ g.students|length }} детей)</span></h3>
+      {% set absent_list = g.students | selectattr("absent") | list %}
+      {% if absent_list %}
+      <div style="font-size:14px;color:#b45309">
+        Отсутствуют: {{ absent_list | map(attribute="name") | join(", ") }}
+      </div>
+      {% else %}
+      <div style="font-size:14px;color:var(--text-muted)">Все пришли</div>
+      {% endif %}
+    </div>
+    {% endfor %}
+    <button type="button" id="att-edit-btn" class="btn btn-secondary"
+            onclick="toggleBlock('att', true)">Изменить</button>
+  </div>
+</div>
+{% endif %}
+
+<form method="post" action="/attendance/" id="att-form" style="{% if has_saved %}display:none{% endif %}">
   <input type="hidden" name="org_id" value="{{ current_org_id or '' }}">
   <input type="hidden" name="date" value="{{ target_date }}">
 
@@ -60,7 +84,21 @@
     Отмечай галочкой только тех, кого сегодня НЕТ. Остальные по умолчанию — пришли.
   </div>
 
-  <button type="submit" class="btn btn-primary btn-lg" style="max-width:640px;width:100%">Сохранить посещаемость</button>
+  <div style="display:flex;gap:12px;max-width:640px">
+    <button type="submit" class="btn btn-primary btn-lg" style="flex:1">Сохранить посещаемость</button>
+    {% if has_saved %}
+    <button type="button" class="btn btn-secondary" onclick="toggleBlock('att', false)">Отмена</button>
+    {% endif %}
+  </div>
 </form>
 {% endif %}
+{% endblock %}
+
+{% block scripts %}
+<script>
+function toggleBlock(name, editing) {
+  document.getElementById(name + '-view').style.display = editing ? 'none' : '';
+  document.getElementById(name + '-form').style.display = editing ? '' : 'none';
+}
+</script>
 {% endblock %}

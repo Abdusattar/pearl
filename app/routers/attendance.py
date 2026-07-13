@@ -70,6 +70,7 @@ def attendance_form(
         "accessible_orgs": accessible,
         "current_org_id": current_org.id if current_org else None,
         "groups": groups,
+        "has_saved": bool(existing) if current_org else False,
         "target_date": target_date.isoformat(),
         "today": date_type.today().isoformat(),
         "active_page": "attendance",
