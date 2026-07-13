@@ -76,13 +76,39 @@ def upgrade():
             "UPDATE transactions SET category_id = :new_id WHERE category_id = :old_id"
         ), {"new_id": tekushiy_id, "old_id": old_remont_id})
 
+    # products.expense_category_id тоже может ссылаться на старые корневые
+    # категории напрямую (пропущено в первой версии — упало на проде: часть
+    # товаров заведена ещё до появления подкатегорий, expense_category_id
+    # указывал прямо на корень). Переносим на generic-дочернюю перед удалением.
+    STRAY_PRODUCT_DEFAULT = {
+        "Питание": "Продукты питания",
+        "Хозяйство": "Хозяйственные материалы",
+        "Ремонт": "Текущий ремонт имущества",
+    }
+    for old_name, default_child in STRAY_PRODUCT_DEFAULT.items():
+        old_id = conn.execute(sa.text(
+            "SELECT id FROM expense_categories WHERE name = :name AND parent_id IS NULL"
+        ), {"name": old_name}).scalar()
+        if not old_id:
+            continue
+        default_child_id = conn.execute(sa.text(
+            "SELECT id FROM expense_categories WHERE name = :name AND parent_id = :parent_id"
+        ), {"name": default_child, "parent_id": new_parent_id}).scalar()
+        if default_child_id:
+            conn.execute(sa.text(
+                "UPDATE products SET expense_category_id = :new_id WHERE expense_category_id = :old_id"
+            ), {"new_id": default_child_id, "old_id": old_id})
+
     # старые пустые родители (Питание/Хозяйство/Ремонт) удаляем — теперь без
-    # детей и без прямых проводок
+    # детей, без прямых проводок и без товаров. NOT EXISTS на products —
+    # доп. страховка: если всё же что-то осталось, родитель просто не
+    # удалится (безвредный осиротевший корень), а не уронит всю миграцию.
     for name in OLD_PARENT_NAMES:
         conn.execute(sa.text(
             "DELETE FROM expense_categories "
             "WHERE name = :name AND parent_id IS NULL "
             "AND NOT EXISTS (SELECT 1 FROM transactions WHERE category_id = expense_categories.id) "
+            "AND NOT EXISTS (SELECT 1 FROM products WHERE expense_category_id = expense_categories.id) "
             "AND NOT EXISTS (SELECT 1 FROM expense_categories c2 WHERE c2.parent_id = expense_categories.id)"
         ), {"name": name})
 
