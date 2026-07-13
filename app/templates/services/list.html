@@ -8,6 +8,10 @@
   <h1>Доп. услуги</h1>
 </div>
 
+{% if error %}
+<div class="alert alert-error" style="max-width:560px">{{ error }}</div>
+{% endif %}
+
 <div class="card" style="max-width:560px;margin-bottom:20px">
   <h3 style="font-size:15px;margin-bottom:14px">Добавить услугу</h3>
   <form method="post" action="/services/" style="display:flex;flex-direction:column;gap:10px">
@@ -48,9 +52,12 @@
         <td data-label="Цена">
           <div id="price-view-{{ s.id }}" style="display:flex;align-items:center;gap:8px">
             <span>{{ "{:,.0f}".format(s.price) }} с</span>
+            {% if can_edit_price %}
             <button type="button" class="btn btn-secondary" style="padding:3px 8px;font-size:11px"
                     onclick="toggleBlock({{ s.id }}, true)">Изменить</button>
+            {% endif %}
           </div>
+          {% if can_edit_price %}
           <form method="post" action="/services/{{ s.id }}/price" id="price-form-{{ s.id }}"
                 style="display:none;align-items:center;gap:6px"
                 onsubmit="return confirm('Сохранить новую цену для «{{ s.name }}»?')">
@@ -61,6 +68,7 @@
             <button type="button" class="btn btn-secondary" style="padding:4px 10px;font-size:12px"
                     onclick="toggleBlock({{ s.id }}, false)">Отмена</button>
           </form>
+          {% endif %}
         </td>
         <td class="actions">
           {% if not s.is_tuition %}

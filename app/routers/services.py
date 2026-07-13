@@ -1,5 +1,6 @@
 from datetime import datetime
 from pathlib import Path
+from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, Form, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
@@ -13,9 +14,14 @@ from app.models import Service
 router = APIRouter(prefix="/services", tags=["services"])
 templates = Jinja2Templates(directory=str(Path(__file__).parent.parent / "templates"))
 
+# Менять уже установленную цену услуги — только реальные собственники
+# (Айдай/Талас), по прямому запросу Абдусаттара (13.07). Заводить новую
+# услугу с ценой (создание) — не ограничено, только правка существующей.
+PRICE_EDITORS = {61, 64}  # Айдай (founder), Талас (owner)
+
 
 @router.get("/", response_class=HTMLResponse)
-def service_list(request: Request, org_id: str | None = None, db: Session = Depends(get_db)):
+def service_list(request: Request, org_id: str | None = None, error: str | None = None, db: Session = Depends(get_db)):
     user = get_current_user(request, db)
     if not user:
         return RedirectResponse("/login", status_code=302)
@@ -34,6 +40,8 @@ def service_list(request: Request, org_id: str | None = None, db: Session = Depe
         "current_org_id": current_org.id if current_org else None,
         "services": services,
         "active_page": "services",
+        "can_edit_price": user.id in PRICE_EDITORS,
+        "error": error,
     })
 
 
@@ -73,6 +81,11 @@ def update_service_price(
     user = get_current_user(request, db)
     if not user:
         return RedirectResponse("/login", status_code=302)
+    base_url = f"/services/?org_id={org_id}" if org_id else "/services/"
+    if user.id not in PRICE_EDITORS:
+        sep = "&" if "?" in base_url else "?"
+        msg = quote("Менять цену может только Айдай или Талас")
+        return RedirectResponse(f"{base_url}{sep}error={msg}", status_code=303)
     s = db.query(Service).get(service_id)
     try:
         price_val = float(price)
@@ -81,8 +94,7 @@ def update_service_price(
     if s and price_val > 0:
         s.price = price_val
         db.commit()
-    redirect_url = f"/services/?org_id={org_id}" if org_id else "/services/"
-    return RedirectResponse(redirect_url, status_code=303)
+    return RedirectResponse(base_url, status_code=303)
 
 
 @router.post("/{service_id}/delete")
