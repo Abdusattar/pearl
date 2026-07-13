@@ -403,3 +403,21 @@ class AuditLog(Base):
     old_data    = Column(JSONB)
     new_data    = Column(JSONB)
     created_at  = Column(DateTime, server_default=func.now())
+
+
+class OptimaLog(Base):
+    """Каждый входящий запрос от Optima (check/pay), включая отклонённые —
+    неверный PIN, ребёнок выбыл, дубликат и т.п. Отдельно от Transaction,
+    потому что многие попытки вообще не доходят до создания транзакции.
+    Видно только системному интегратору (13.07) — раньше приходилось
+    смотреть логи Railway через CLI на каждый вопрос банка."""
+    __tablename__ = "optima_log"
+    id          = Column(Integer, primary_key=True)
+    command     = Column(String(20))
+    account     = Column(String(20))
+    txn_id      = Column(String(50))
+    sum         = Column(String(20))
+    result_code = Column(Integer, nullable=False)
+    comment     = Column(Text)
+    client_ip   = Column(String(50))
+    created_at  = Column(DateTime, server_default=func.now())

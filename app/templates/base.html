@@ -299,6 +299,10 @@
   {% endif %}
   <div class="section">Аналитика</div>
   <a href="/reports/" class="{% if active_page == 'reports' %}active{% endif %}">Отчёты</a>
+  {% if current_user.id == 1 %}
+  <div class="section">Интеграции</div>
+  <a href="/optima/log" class="{% if active_page == 'optima_log' %}active{% endif %}">Optima — лог</a>
+  {% endif %}
 </aside>
 
 <main class="main">
