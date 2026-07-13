@@ -76,7 +76,7 @@ def test_billing_save_does_not_touch_personal(client, db):
 
     resp = client.post(
         f"/students/{student.id}/billing",
-        data={"monthly_fee": "5000"},
+        data={"discount_amount": "1000", "discount_reason": "__тест причина__"},
         follow_redirects=False,
     )
     assert resp.status_code == 303
@@ -84,7 +84,8 @@ def test_billing_save_does_not_touch_personal(client, db):
 
     db.expire_all()
     student = db.query(Student).filter(Student.id == student.id).first()
-    assert student.extra["monthly_fee"] == 5000.0
+    assert float(student.discount_amount) == 1000.0
+    assert student.discount_reason == "__тест причина__"
     assert student.name == "__Тест Ребёнок__"  # личные данные не тронуты
 
     open_enrollment = db.query(Enrollment).filter(
