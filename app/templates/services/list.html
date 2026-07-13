@@ -46,11 +46,20 @@
           {% endif %}
         </td>
         <td data-label="Цена">
-          <form method="post" action="/services/{{ s.id }}/price" style="display:flex;gap:6px;align-items:center">
+          <div id="price-view-{{ s.id }}" style="display:flex;align-items:center;gap:8px">
+            <span>{{ "{:,.0f}".format(s.price) }} с</span>
+            <button type="button" class="btn btn-secondary" style="padding:3px 8px;font-size:11px"
+                    onclick="toggleBlock({{ s.id }}, true)">Изменить</button>
+          </div>
+          <form method="post" action="/services/{{ s.id }}/price" id="price-form-{{ s.id }}"
+                style="display:none;align-items:center;gap:6px"
+                onsubmit="return confirm('Сохранить новую цену для «{{ s.name }}»?')">
             <input type="hidden" name="org_id" value="{{ current_org_id or '' }}">
             <input type="number" name="price" value="{{ s.price|int }}" class="form-control"
                    style="width:100px;padding:4px 8px;font-size:13px">
-            <button type="submit" class="btn btn-secondary" style="padding:4px 10px;font-size:12px">Сохранить</button>
+            <button type="submit" class="btn btn-primary" style="padding:4px 10px;font-size:12px">Сохранить</button>
+            <button type="button" class="btn btn-secondary" style="padding:4px 10px;font-size:12px"
+                    onclick="toggleBlock({{ s.id }}, false)">Отмена</button>
           </form>
         </td>
         <td class="actions">
@@ -74,4 +83,13 @@
   </div>
   {% endif %}
 </div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+function toggleBlock(id, editing) {
+  document.getElementById('price-view-' + id).style.display = editing ? 'none' : 'flex';
+  document.getElementById('price-form-' + id).style.display = editing ? 'flex' : 'none';
+}
+</script>
 {% endblock %}
