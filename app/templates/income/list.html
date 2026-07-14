@@ -71,15 +71,15 @@
           {% endif %}
         </td>
         <td data-label="Сумма" style="text-align:right;font-weight:600">
-          {{ "{:,.0f}".format(txn.amount) }} с
+          {{ "{:,.2f}".format(txn.amount) }} с
         </td>
         <td data-label="Баланс сейчас" style="text-align:right;font-size:13px">
           {% if balance is none %}
           <span style="color:var(--text-muted)">—</span>
           {% elif balance > 0 %}
-          <span style="color:#dc2626">−{{ "{:,.0f}".format(balance) }}</span>
+          <span style="color:#dc2626">−{{ "{:,.2f}".format(balance) }}</span>
           {% elif balance < 0 %}
-          <span style="color:#16a34a">+{{ "{:,.0f}".format(-balance) }}</span>
+          <span style="color:#16a34a">+{{ "{:,.2f}".format(-balance) }}</span>
           {% else %}
           <span style="color:var(--text-muted)">0</span>
           {% endif %}
@@ -101,7 +101,7 @@
       Платежей: <strong>{{ rows|length }}</strong>
     </div>
     <div class="total-item">
-      Итого: <strong>{{ "{:,.0f}".format(total) }} с</strong>
+      Итого: <strong>{{ "{:,.2f}".format(total) }} с</strong>
     </div>
   </div>
 

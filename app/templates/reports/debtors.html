@@ -9,11 +9,11 @@
 <div class="card" style="margin-bottom:16px;display:flex;gap:24px;flex-wrap:wrap">
   <div>
     <div style="font-size:12px;color:var(--text-muted)">Общий долг</div>
-    <div style="font-size:22px;font-weight:700;color:#dc2626">{{ "{:,.0f}".format(total_debt) }} с</div>
+    <div style="font-size:22px;font-weight:700;color:#dc2626">{{ "{:,.2f}".format(total_debt) }} с</div>
   </div>
   <div>
     <div style="font-size:12px;color:var(--text-muted)">Общая переплата</div>
-    <div style="font-size:22px;font-weight:700;color:#16a34a">{{ "{:,.0f}".format(total_overpaid) }} с</div>
+    <div style="font-size:22px;font-weight:700;color:#16a34a">{{ "{:,.2f}".format(total_overpaid) }} с</div>
   </div>
 </div>
 
@@ -67,9 +67,9 @@
         </td>
         <td data-label="Баланс" style="text-align:right;font-weight:600">
           {% if balance > 0 %}
-            <span style="color:#dc2626">−{{ "{:,.0f}".format(balance) }}</span>
+            <span style="color:#dc2626">−{{ "{:,.2f}".format(balance) }}</span>
           {% elif balance < 0 %}
-            <span style="color:#16a34a">+{{ "{:,.0f}".format(-balance) }}</span>
+            <span style="color:#16a34a">+{{ "{:,.2f}".format(-balance) }}</span>
           {% else %}
             <span style="color:var(--text-muted)">0</span>
           {% endif %}

@@ -10,9 +10,9 @@
 <div class="card" style="max-width:560px;margin-bottom:20px">
   <h3 style="font-size:15px;margin-bottom:10px">Баланс</h3>
   {% if balance > 0 %}
-    <div style="font-size:20px;font-weight:700;color:#dc2626">Долг: {{ "{:,.0f}".format(balance) }} с</div>
+    <div style="font-size:20px;font-weight:700;color:#dc2626">Долг: {{ "{:,.2f}".format(balance) }} с</div>
   {% elif balance < 0 %}
-    <div style="font-size:20px;font-weight:700;color:#16a34a">Переплата: {{ "{:,.0f}".format(-balance) }} с</div>
+    <div style="font-size:20px;font-weight:700;color:#16a34a">Переплата: {{ "{:,.2f}".format(-balance) }} с</div>
   {% else %}
     <div style="font-size:20px;font-weight:700;color:var(--text-muted)">Баланс: 0 с</div>
   {% endif %}
@@ -27,9 +27,9 @@
           <td data-label="Дата">{{ row.date.strftime("%d.%m.%Y") }}</td>
           <td data-label="Сумма">
             {% if row.kind == 'charge' %}
-            <span style="color:#dc2626">+{{ "{:,.0f}".format(row.amount) }} с</span>
+            <span style="color:#dc2626">+{{ "{:,.2f}".format(row.amount) }} с</span>
             {% else %}
-            <span style="color:#16a34a">−{{ "{:,.0f}".format(row.amount) }} с</span>
+            <span style="color:#16a34a">−{{ "{:,.2f}".format(row.amount) }} с</span>
             {% endif %}
           </td>
           <td data-label="Описание">
