@@ -228,9 +228,11 @@
           <input type="number" name="amount" id="total-amount" class="form-control" step="0.01"
                  inputmode="decimal" readonly
                  value="" required placeholder="0.00"
+                 data-ocr-amount="{{ receipt.amount_detected or '' }}"
                  style="font-size:28px;font-weight:700;text-align:center;padding:14px;
                         border:2px solid var(--primary);border-radius:12px;background:var(--bg-secondary,#f3f4f6)">
           <div id="items-sum-hint" style="font-size:12px;color:var(--text-muted);text-align:center;margin-top:4px"></div>
+          <div id="ocr-mismatch-hint" style="display:none;font-size:12px;color:#b45309;background:#fef3c7;border:1px solid #fcd34d;border-radius:6px;padding:6px 10px;margin-top:6px;text-align:center"></div>
         </div>
 
         {% set has_debt = is_confirmed and confirmed_tx and confirmed_tx.amount_paid is not none %}
@@ -360,8 +362,27 @@ function updateGrandTotal() {
   const amountInput = document.getElementById('total-amount');
   if (hint) hint.textContent = 'Сумма позиций: ' + sum.toLocaleString('ru-RU', {maximumFractionDigits:2}) + ' с';
   if (amountInput) amountInput.value = sum.toFixed(2);
+  checkOcrMismatch(sum, amountInput);
   updateWarehouseHint();
   updateDebtHint();
+}
+
+function checkOcrMismatch(sum, amountInput) {
+  const mismatchHint = document.getElementById('ocr-mismatch-hint');
+  if (!mismatchHint) return;
+  const ocrAmount = _num(amountInput?.dataset.ocrAmount);
+  if (ocrAmount === null || ocrAmount <= 0 || sum <= 0) {
+    mismatchHint.style.display = 'none';
+    return;
+  }
+  const diffRatio = Math.abs(sum - ocrAmount) / ocrAmount;
+  if (diffRatio > 0.15) {
+    mismatchHint.textContent = '⚠ OCR распознал на чеке итог ' + ocrAmount.toLocaleString('ru-RU', {maximumFractionDigits:2}) +
+      ' с, а сумма позиций — ' + sum.toLocaleString('ru-RU', {maximumFractionDigits:2}) + ' с. Сверься с фото — похоже, где-то неверно распознано количество или цена.';
+    mismatchHint.style.display = '';
+  } else {
+    mismatchHint.style.display = 'none';
+  }
 }
 
 function togglePaidFull() {

@@ -1,5 +1,6 @@
 import base64
 import hashlib
+import io
 import json
 import os
 import re
@@ -8,6 +9,7 @@ from pathlib import Path
 
 import httpx
 from dotenv import load_dotenv
+from PIL import Image, ImageOps
 
 _LOG_FILE = Path(__file__).parent.parent.parent / "logs" / "openrouter_usage.jsonl"
 
@@ -40,8 +42,11 @@ _OR_URL = "https://openrouter.ai/api/v1/chat/completions"
 
 _USER_PROMPT = (
     "Look at this receipt image — it may be handwritten, printed, or a mix, and different "
-    "receipts use very different layouts. Extract all product line items. Return ONLY valid "
-    "JSON, no markdown.\n\n"
+    "receipts use very different layouts. These receipts are from Kyrgyzstan and are written "
+    "in Russian, using the Cyrillic alphabet — expect Cyrillic letters, not Latin. If handwriting "
+    "is unclear, transcribe your best guess using Cyrillic letters that match the pen strokes; "
+    "never substitute similar-looking Latin letters or output a Latin/English word instead of an "
+    "illegible Cyrillic one. Extract all product line items. Return ONLY valid JSON, no markdown.\n\n"
     "Rules:\n"
     "1. If you see format 'NAME  N×P' or 'NAME  NxP' (quantity × price), parse as: "
     "name=NAME, qty=N, unit_price=P, total_price=N*P (compute it).\n"
@@ -74,6 +79,21 @@ def compute_hash(file_bytes: bytes) -> str:
     return hashlib.sha256(file_bytes).hexdigest()
 
 
+def _normalize_orientation(img_bytes: bytes) -> bytes:
+    """Повернуть фото по EXIF-тегу orientation перед отправкой в OCR —
+    телефоны часто пишут повёрнутое фото + флаг поворота вместо готовых пикселей,
+    а vision-модель читает пиксели как есть."""
+    try:
+        img = Image.open(io.BytesIO(img_bytes))
+        fmt = img.format or "JPEG"
+        transposed = ImageOps.exif_transpose(img)
+        buf = io.BytesIO()
+        transposed.save(buf, format=fmt)
+        return buf.getvalue()
+    except Exception:
+        return img_bytes
+
+
 def analyze_receipt(file_path: str) -> dict | None:
     """Send receipt image to OpenRouter vision model, return structured data."""
     if not _OR_KEY:
@@ -83,6 +103,7 @@ def analyze_receipt(file_path: str) -> dict | None:
     try:
         with open(file_path, "rb") as f:
             img_bytes = f.read()
+        img_bytes = _normalize_orientation(img_bytes)
         b64 = base64.b64encode(img_bytes).decode()
         ext = str(file_path).rsplit(".", 1)[-1].lower()
         mime = "image/jpeg" if ext in ("jpg", "jpeg") else f"image/{ext}"
