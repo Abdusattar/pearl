@@ -613,109 +613,134 @@ def confirm_form(
     current_org = resolve_org(org_id, user, db)
     raw_items = db.query(ReceiptItem).filter(ReceiptItem.receipt_id == receipt_id).all()
 
-    # AI-нормализация: сопоставить OCR-строки с эталонным каталогом
-    ocr_payload = [
-        {"name": it.name, "qty": it.qty, "unit_price": it.unit_price, "total_price": it.total_price}
-        for it in raw_items
-    ]
-    normalized = normalize_items(db, ocr_payload) if ocr_payload else []
-
     items = []
     unmatched_count = 0
-    for it, norm in zip(raw_items, normalized):
-        exact = match_product(db, it.name)
-        ai_pid = norm.get("matched_product_id")
-        ai_name = norm.get("matched_name")
-        match_type = norm.get("match_type", "none")     # ai_standard | ai_provisional | none
-        ai_is_standard = norm.get("is_standard", False)
-        ai_suggested = False
 
-        if exact:
-            # Точный alias → зелёный
-            display_name = exact.name
-            display_product_id = exact.id
-            product_matched = True
-            fuzzy_matched = False
-            provisional_matched = False
-        elif ai_pid and ai_is_standard:
-            # AI нашёл эталонный → жёлтый
-            display_name = ai_name
-            display_product_id = ai_pid
-            product_matched = False
-            fuzzy_matched = True
-            provisional_matched = False
-        elif ai_pid and not ai_is_standard:
-            # AI нашёл временный → оранжевый
-            display_name = ai_name
-            display_product_id = ai_pid
-            product_matched = False
-            fuzzy_matched = False
-            provisional_matched = True
-        else:
-            # Нет в каталоге вообще → если товар читаемый, ИИ предлагает
-            # стандартизированное имя (без бренда/сорта/веса) — человек проверяет/правит.
-            suggested_name = norm.get("suggested_name")
-            ai_suggested = bool(suggested_name)
-            if not ai_suggested:
-                # ИИ сам не считает эту строку товаром (см. normalize.py) — не
-                # показываем как редактируемую позицию. Сумму НЕ переносим никуда:
-                # сумма — всегда только кол-во × цена, введённые человеком; для
-                # непризнанной строки таких чисел нет, значит и суммы нет. Если
-                # это реальная покупка — человек допишет позицию сам, глядя на чек.
-                unmatched_count += 1
-                continue
-            display_name = suggested_name
-            display_product_id = None
-            product_matched = False
-            fuzzy_matched = False
-            provisional_matched = False
+    if receipt.ocr_status == "confirmed":
+        # Уже подтверждено — товар каждой позиции уже разрешён при первом проведении,
+        # незачем гонять AI-сопоставление заново на неизменных данных (только тратить
+        # вызовы ИИ) — просто показываем сохранённое, как в edit-manual для закупа без фото.
+        for it in raw_items:
+            product = db.get(Product, it.product_id) if it.product_id else None
+            items.append({
+                "id": it.id,
+                "raw_name": it.name,
+                "display_name": product.name if product else it.name,
+                "display_product_id": it.product_id,
+                "product_matched": True,
+                "fuzzy_matched": False,
+                "provisional_matched": False,
+                "is_standard_match": True,
+                "needs_check": False,
+                "check_hint": "",
+                "unit": product.unit if product else "",
+                "candidates": [],
+                "qty": it.qty,
+                "unit_price": it.unit_price,
+                "total_price": it.total_price,
+            })
+    else:
+        # AI-нормализация: сопоставить OCR-строки с эталонным каталогом
+        ocr_payload = [
+            {"name": it.name, "qty": it.qty, "unit_price": it.unit_price, "total_price": it.total_price}
+            for it in raw_items
+        ]
+        normalized = normalize_items(db, ocr_payload) if ocr_payload else []
 
-        display_name = display_name[:1].upper() + display_name[1:] if display_name else display_name
-        # unit: берём из продукта если найден, иначе пустая строка (пользователь укажет)
-        is_standard_match = product_matched or fuzzy_matched
-        matched_product = db.get(Product, display_product_id) if display_product_id else None
-        display_unit = matched_product.unit if matched_product else ""
-        # Для персонала — только 2 состояния: точный алиас = не трогать,
-        # всё остальное (AI-догадка/временное/не найдено) = проверь глазами.
-        # На период обучения намеренно строго: даже уверенная AI-догадка требует взгляда.
-        needs_check = not product_matched
-        # Сумма всегда считается из кол-во × цена — если одного из них нет,
-        # позиция не готова, даже если OCR где-то распознал итоговое число.
-        # Поле "Сумма" в этом случае остаётся пустым (не показываем сырой OCR-total
-        # как будто он посчитан) — у человека есть сам чек на руках, доп. подсказка
-        # с числом не нужна.
-        missing_breakdown = it.qty is None or it.unit_price is None
-        if missing_breakdown:
-            check_hint = "впиши количество и цену — без этого позиция не считается заполненной"
-            needs_check = True
-        elif fuzzy_matched:
-            check_hint = f"проверь — похоже на «{display_name}»"
-        elif provisional_matched:
-            check_hint = f"проверь — уже покупали как «{display_name}»"
-        elif ai_suggested:
-            check_hint = f"проверь — ИИ предлагает «{display_name}», в каталоге нет (OCR: «{it.name}»)"
-        else:
-            check_hint = ""
-        items.append({
-            "id": it.id,
-            "raw_name": it.name,
-            "display_name": display_name,
-            "display_product_id": display_product_id,
-            "product_matched": product_matched,
-            "fuzzy_matched": fuzzy_matched,
-            "provisional_matched": provisional_matched,
-            "is_standard_match": is_standard_match,
-            "needs_check": needs_check,
-            "check_hint": check_hint,
-            "unit": display_unit,
-            "candidates": [],
-            "qty": it.qty,
-            "unit_price": it.unit_price,
-            # Сумма на экране — ВСЕГДА кол-во × цена, никогда сырой OCR-total.
-            # Иначе показанное число может разойтись с тем, что сервер реально
-            # сохранит при "Провести" (он всегда пересчитывает сам).
-            "total_price": None if missing_breakdown else round(float(it.qty) * float(it.unit_price), 2),
-        })
+        for it, norm in zip(raw_items, normalized):
+            exact = match_product(db, it.name)
+            ai_pid = norm.get("matched_product_id")
+            ai_name = norm.get("matched_name")
+            match_type = norm.get("match_type", "none")     # ai_standard | ai_provisional | none
+            ai_is_standard = norm.get("is_standard", False)
+            ai_suggested = False
+
+            if exact:
+                # Точный alias → зелёный
+                display_name = exact.name
+                display_product_id = exact.id
+                product_matched = True
+                fuzzy_matched = False
+                provisional_matched = False
+            elif ai_pid and ai_is_standard:
+                # AI нашёл эталонный → жёлтый
+                display_name = ai_name
+                display_product_id = ai_pid
+                product_matched = False
+                fuzzy_matched = True
+                provisional_matched = False
+            elif ai_pid and not ai_is_standard:
+                # AI нашёл временный → оранжевый
+                display_name = ai_name
+                display_product_id = ai_pid
+                product_matched = False
+                fuzzy_matched = False
+                provisional_matched = True
+            else:
+                # Нет в каталоге вообще → если товар читаемый, ИИ предлагает
+                # стандартизированное имя (без бренда/сорта/веса) — человек проверяет/правит.
+                suggested_name = norm.get("suggested_name")
+                ai_suggested = bool(suggested_name)
+                if not ai_suggested:
+                    # ИИ сам не считает эту строку товаром (см. normalize.py) — не
+                    # показываем как редактируемую позицию. Сумму НЕ переносим никуда:
+                    # сумма — всегда только кол-во × цена, введённые человеком; для
+                    # непризнанной строки таких чисел нет, значит и суммы нет. Если
+                    # это реальная покупка — человек допишет позицию сам, глядя на чек.
+                    unmatched_count += 1
+                    continue
+                display_name = suggested_name
+                display_product_id = None
+                product_matched = False
+                fuzzy_matched = False
+                provisional_matched = False
+
+            display_name = display_name[:1].upper() + display_name[1:] if display_name else display_name
+            # unit: берём из продукта если найден, иначе пустая строка (пользователь укажет)
+            is_standard_match = product_matched or fuzzy_matched
+            matched_product = db.get(Product, display_product_id) if display_product_id else None
+            display_unit = matched_product.unit if matched_product else ""
+            # Для персонала — только 2 состояния: точный алиас = не трогать,
+            # всё остальное (AI-догадка/временное/не найдено) = проверь глазами.
+            # На период обучения намеренно строго: даже уверенная AI-догадка требует взгляда.
+            needs_check = not product_matched
+            # Сумма всегда считается из кол-во × цена — если одного из них нет,
+            # позиция не готова, даже если OCR где-то распознал итоговое число.
+            # Поле "Сумма" в этом случае остаётся пустым (не показываем сырой OCR-total
+            # как будто он посчитан) — у человека есть сам чек на руках, доп. подсказка
+            # с числом не нужна.
+            missing_breakdown = it.qty is None or it.unit_price is None
+            if missing_breakdown:
+                check_hint = "впиши количество и цену — без этого позиция не считается заполненной"
+                needs_check = True
+            elif fuzzy_matched:
+                check_hint = f"проверь — похоже на «{display_name}»"
+            elif provisional_matched:
+                check_hint = f"проверь — уже покупали как «{display_name}»"
+            elif ai_suggested:
+                check_hint = f"проверь — ИИ предлагает «{display_name}», в каталоге нет (OCR: «{it.name}»)"
+            else:
+                check_hint = ""
+            items.append({
+                "id": it.id,
+                "raw_name": it.name,
+                "display_name": display_name,
+                "display_product_id": display_product_id,
+                "product_matched": product_matched,
+                "fuzzy_matched": fuzzy_matched,
+                "provisional_matched": provisional_matched,
+                "is_standard_match": is_standard_match,
+                "needs_check": needs_check,
+                "check_hint": check_hint,
+                "unit": display_unit,
+                "candidates": [],
+                "qty": it.qty,
+                "unit_price": it.unit_price,
+                # Сумма на экране — ВСЕГДА кол-во × цена, никогда сырой OCR-total.
+                # Иначе показанное число может разойтись с тем, что сервер реально
+                # сохранит при "Провести" (он всегда пересчитывает сам).
+                "total_price": None if missing_breakdown else round(float(it.qty) * float(it.unit_price), 2),
+            })
 
     needs_check_count = sum(1 for it in items if it["needs_check"])
 
@@ -732,10 +757,24 @@ def confirm_form(
                 name = cat.name if cat else "без категории"
                 if name not in cat_names:
                     cat_names.append(name)
+            total_amount = float(receipt.amount_confirmed) if receipt.amount_confirmed is not None else sum(float(t.amount) for t in txs)
+            # amount_paid=None у отдельной Transaction означает «эта доля оплачена полностью» —
+            # чтобы восстановить общую картину, недостающую долю считаем как amount той группы.
+            total_paid = sum(float(t.amount_paid) if t.amount_paid is not None else float(t.amount) for t in txs)
+            amount_paid_for_edit = total_paid if total_paid < total_amount - 0.009 else None
+            due_date_val = next((t.due_date for t in txs if t.due_date), None)
+            supplier = db.get(Supplier, txs[0].supplier_id) if txs[0].supplier_id else None
             confirmed_tx = {
                 "amount": receipt.amount_confirmed,
                 "date": txs[0].date.strftime("%d.%m.%Y") if txs[0].date else "—",
+                "date_iso": txs[0].date.isoformat() if txs[0].date else date.today().isoformat(),
                 "category_name": " + ".join(cat_names),
+                "supplier_id": txs[0].supplier_id,
+                "supplier_name": supplier.name if supplier else "—",
+                "description": txs[0].description or "",
+                "amount_paid": amount_paid_for_edit,
+                "debt": (total_amount - amount_paid_for_edit) if amount_paid_for_edit is not None else None,
+                "due_date": due_date_val.isoformat() if due_date_val else "",
             }
 
     creator = db.get(User, receipt.created_by) if receipt.created_by else None
@@ -901,6 +940,27 @@ def handle_confirm(
             "name": name, "raw": raw, "product": product,
             "qty": qty_val, "unit_price": price_val, "total": total,
         })
+
+    # Если квитанция уже была подтверждена раньше (правка через "Изменить") — старые
+    # Transaction/склад этого чека мягко удаляются перед пересозданием, иначе повторное
+    # "Провести" задвоило бы проводки и остатки на складе. Для первого подтверждения
+    # это no-op (старых записей ещё нет).
+    old_txs = (
+        db.query(Transaction)
+        .join(ReceiptTransaction, ReceiptTransaction.transaction_id == Transaction.id)
+        .filter(ReceiptTransaction.receipt_id == receipt.id, Transaction.deleted_at.is_(None))
+        .all()
+    )
+    old_tx_ids = [t.id for t in old_txs]
+    for old_tx in old_txs:
+        old_tx.deleted_at = datetime.utcnow()
+        audit(db, "transaction", old_tx.id, "delete", user.id, {"amount": float(old_tx.amount), "reason": "re-confirm"})
+    if old_tx_ids:
+        db.query(WarehouseReceipt).filter(
+            WarehouseReceipt.transaction_id.in_(old_tx_ids),
+            WarehouseReceipt.deleted_at.is_(None),
+        ).update({"deleted_at": datetime.utcnow()}, synchronize_session=False)
+    db.query(ReceiptTransaction).filter(ReceiptTransaction.receipt_id == receipt.id).delete()
 
     tx_by_cat = create_split_transactions(
         db, resolved_items, amount, amount_paid_val, due_date_val,

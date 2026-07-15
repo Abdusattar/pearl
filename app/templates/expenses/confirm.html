@@ -57,44 +57,87 @@
   <!-- Правая колонка: позиции + форма -->
   <div style="display:flex;flex-direction:column;gap:16px">
 
-    {% if receipt.ocr_status == 'confirmed' %}
-    <div class="card">
-      <div style="text-align:center;padding:24px 8px">
-        <div style="font-size:56px;line-height:1;margin-bottom:12px">✓</div>
-        <div style="font-size:20px;font-weight:700;color:#16a34a;margin-bottom:16px">Проведено!</div>
-        {% if confirmed_tx %}
-        <div style="font-size:15px;color:var(--text-muted);margin-bottom:4px">{{ confirmed_tx.category_name }}</div>
-        <div style="font-size:28px;font-weight:700;margin-bottom:4px">{{ "{:,.0f}".format(confirmed_tx.amount) }} с</div>
-        <div style="font-size:14px;color:var(--text-muted);margin-bottom:24px">{{ confirmed_tx.date }}</div>
-        {% endif %}
-        <div style="font-size:12px;color:var(--text-muted);margin-bottom:4px">Квитанция #{{ receipt.id }}</div>
-        <div style="font-size:13px;color:var(--text-muted);margin-bottom:24px">Провёл: {{ receipt.created_by_name }}</div>
-        <div style="display:flex;flex-direction:column;gap:10px">
-          <a href="/expenses/upload?org_id={{ current_org_id or '' }}"
-             class="btn btn-primary" style="min-height:56px;font-size:17px;font-weight:700;display:flex;align-items:center;justify-content:center">
-            + Следующая квитанция
-          </a>
-          <div style="display:flex;gap:16px;justify-content:center;margin-top:4px">
-            <a href="/expenses/?org_id={{ current_org_id or '' }}&status=unconfirmed"
-               style="font-size:12px;color:var(--text-muted)">Непроведённые</a>
-            <a href="/expenses/?org_id={{ current_org_id or '' }}"
-               style="font-size:12px;color:var(--text-muted)">← К списку</a>
-          </div>
-          <form method="post" action="/expenses/{{ receipt.id }}/delete" style="margin-top:12px"
-                onsubmit="return confirm('Удалить квитанцию и фото? Отменить нельзя.')">
-            <input type="hidden" name="org_id" value="{{ current_org_id or '' }}">
-            <button type="submit" style="background:none;border:none;color:#dc2626;cursor:pointer;font-size:12px;padding:0;text-decoration:underline">Удалить квитанцию</button>
-          </form>
-        </div>
-      </div>
-    </div>
-
-    {% elif receipt.ocr_status == 'rejected' %}
+    {% if receipt.ocr_status == 'rejected' %}
     <div class="card">
       <div class="alert alert-error">Квитанция отклонена</div>
     </div>
 
     {% else %}
+    {% set is_confirmed = receipt.ocr_status == 'confirmed' %}
+
+    {% if is_confirmed %}
+    <div id="tx-view" style="{% if error %}display:none{% endif %}">
+      <div class="card">
+        <div style="text-align:center;padding:24px 8px">
+          <div style="font-size:56px;line-height:1;margin-bottom:12px">✓</div>
+          <div style="font-size:20px;font-weight:700;color:#16a34a;margin-bottom:16px">Проведено!</div>
+          {% if confirmed_tx %}
+          <div style="font-size:15px;color:var(--text-muted);margin-bottom:4px">{{ confirmed_tx.category_name }}</div>
+          <div style="font-size:28px;font-weight:700;margin-bottom:4px">{{ "{:,.0f}".format(confirmed_tx.amount) }} с</div>
+          <div style="font-size:14px;color:var(--text-muted);margin-bottom:4px">{{ confirmed_tx.date }}</div>
+          {% if confirmed_tx.debt and confirmed_tx.debt > 0 %}
+          <div style="font-size:12px;color:#b45309;margin-bottom:20px">Долг поставщику: {{ "{:,.0f}".format(confirmed_tx.debt) }} сом{% if confirmed_tx.due_date %}, погасить до {{ confirmed_tx.due_date }}{% endif %}</div>
+          {% else %}
+          <div style="margin-bottom:20px"></div>
+          {% endif %}
+          <div style="font-size:13px;color:var(--text-muted);margin-bottom:4px">Поставщик: {{ confirmed_tx.supplier_name }}</div>
+          {% if confirmed_tx.description %}
+          <div style="font-size:13px;color:var(--text-muted);margin-bottom:4px">{{ confirmed_tx.description }}</div>
+          {% endif %}
+          {% endif %}
+          <div style="font-size:12px;color:var(--text-muted);margin-top:16px;margin-bottom:4px">Квитанция #{{ receipt.id }}</div>
+          <div style="font-size:13px;color:var(--text-muted);margin-bottom:24px">Провёл: {{ receipt.created_by_name }}</div>
+
+          {% if items %}
+          <table style="width:100%;border-collapse:collapse;font-size:13px;text-align:left;margin-bottom:20px">
+            <thead>
+              <tr style="border-bottom:2px solid var(--border);color:var(--text-muted)">
+                <th style="padding:4px;width:40%">Наименование</th>
+                <th style="padding:4px;width:12%">Ед.</th>
+                <th style="padding:4px;width:16%;text-align:right">Кол-во</th>
+                <th style="padding:4px;width:16%;text-align:right">Цена</th>
+                <th style="padding:4px;width:16%;text-align:right">Сумма</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for item in items %}
+              <tr style="border-bottom:1px solid var(--border)">
+                <td style="padding:6px 4px">{{ item.display_name }}</td>
+                <td style="padding:6px 4px">{{ item.unit or '—' }}</td>
+                <td style="padding:6px 4px;text-align:right">{{ item.qty or '—' }}</td>
+                <td style="padding:6px 4px;text-align:right">{{ "{:,.0f}".format(item.unit_price) if item.unit_price else '—' }}</td>
+                <td style="padding:6px 4px;text-align:right"><strong>{{ "{:,.0f}".format(item.total_price) if item.total_price else '—' }}</strong></td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+          {% endif %}
+
+          <div style="display:flex;flex-direction:column;gap:10px">
+            <button type="button" id="tx-edit-btn" class="btn btn-secondary" onclick="toggleBlock('tx', true)"
+                    style="min-height:44px;font-size:14px">Изменить</button>
+            <a href="/expenses/upload?org_id={{ current_org_id or '' }}"
+               class="btn btn-primary" style="min-height:56px;font-size:17px;font-weight:700;display:flex;align-items:center;justify-content:center">
+              + Следующая квитанция
+            </a>
+            <div style="display:flex;gap:16px;justify-content:center;margin-top:4px">
+              <a href="/expenses/?org_id={{ current_org_id or '' }}&status=unconfirmed"
+                 style="font-size:12px;color:var(--text-muted)">Непроведённые</a>
+              <a href="/expenses/?org_id={{ current_org_id or '' }}"
+                 style="font-size:12px;color:var(--text-muted)">← К списку</a>
+            </div>
+            <form method="post" action="/expenses/{{ receipt.id }}/delete" style="margin-top:12px"
+                  onsubmit="return confirm('Удалить квитанцию и фото? Отменить нельзя.')">
+              <input type="hidden" name="org_id" value="{{ current_org_id or '' }}">
+              <button type="submit" style="background:none;border:none;color:#dc2626;cursor:pointer;font-size:12px;padding:0;text-decoration:underline">Удалить квитанцию</button>
+            </form>
+          </div>
+        </div>
+      </div>
+    </div>
+    {% endif %}
+
+    <div id="tx-form" style="{% if is_confirmed and not error %}display:none{% endif %}">
     <form method="post" action="/expenses/{{ receipt.id }}/confirm">
       <input type="hidden" name="org_id" value="{{ current_org_id or '' }}">
 
@@ -190,15 +233,16 @@
           <div id="items-sum-hint" style="font-size:12px;color:var(--text-muted);text-align:center;margin-top:4px"></div>
         </div>
 
+        {% set has_debt = is_confirmed and confirmed_tx and confirmed_tx.amount_paid is not none %}
         <div class="form-group">
           <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
-            <input type="checkbox" id="paid-full-checkbox" checked onchange="togglePaidFull()" style="width:16px;height:16px">
+            <input type="checkbox" id="paid-full-checkbox" {% if not has_debt %}checked{% endif %} onchange="togglePaidFull()" style="width:16px;height:16px">
             <span>Оплачено полностью</span>
           </label>
-          <div id="paid-partial-block" style="display:none;margin-top:8px">
+          <div id="paid-partial-block" style="{% if not has_debt %}display:none;{% endif %}margin-top:8px">
             <label>Оплачено сейчас (сом)</label>
             <input type="number" name="amount_paid" id="amount-paid" class="form-control" step="0.01"
-                   inputmode="decimal" oninput="updateDebtHint()">
+                   inputmode="decimal" value="{{ confirmed_tx.amount_paid if has_debt else '' }}" oninput="updateDebtHint()">
             <div style="font-size:11px;color:var(--text-muted);margin-top:4px">
               Уменьши сумму до того, что реально отдали продавцу — остаток система посчитает как долг.
             </div>
@@ -206,7 +250,7 @@
               <div style="font-size:13px;font-weight:600;color:#b45309">Долг поставщику: <span id="debt-amount">0</span> сом</div>
               <div style="margin-top:6px">
                 <label style="font-size:11px;color:var(--text-muted)">Когда планируете погасить (необязательно)</label>
-                <input type="date" name="due_date" class="form-control" style="font-size:12px;padding:4px 6px">
+                <input type="date" name="due_date" class="form-control" style="font-size:12px;padding:4px 6px" value="{{ confirmed_tx.due_date if is_confirmed and confirmed_tx else '' }}">
               </div>
             </div>
           </div>
@@ -214,7 +258,7 @@
 
         <div class="form-group">
           <label>Дата</label>
-          <input type="date" name="date" class="form-control" value="{{ today }}" required>
+          <input type="date" name="date" class="form-control" value="{{ confirmed_tx.date_iso if is_confirmed and confirmed_tx else today }}" required>
         </div>
 
         <div id="warehouse-block" style="display:none;margin-bottom:18px">
@@ -237,7 +281,7 @@
           <select name="supplier_id" id="supplier-select" class="form-control" required>
             <option value="">Выбери поставщика...</option>
             {% for s in suppliers %}
-            <option value="{{ s.id }}">{{ s.name }}{% if s.phone %} ({{ s.phone }}){% endif %}</option>
+            <option value="{{ s.id }}" {% if is_confirmed and confirmed_tx and s.id == confirmed_tx.supplier_id %}selected{% endif %}>{{ s.name }}{% if s.phone %} ({{ s.phone }}){% endif %}</option>
             {% endfor %}
           </select>
           <div style="font-size:11px;color:var(--text-muted);margin-top:4px">
@@ -248,16 +292,22 @@
 
         <div class="form-group">
           <label>Описание (необязательно)</label>
-          <input type="text" name="description" class="form-control" placeholder="Комментарий...">
+          <input type="text" name="description" class="form-control" value="{{ confirmed_tx.description if is_confirmed and confirmed_tx else '' }}" placeholder="Комментарий...">
         </div>
 
         <div style="display:flex;gap:12px;margin-top:8px">
+          {% if is_confirmed %}
+          <button type="submit" name="action" value="confirm" id="btn-confirm" class="btn btn-success"
+                  style="flex:1;min-height:48px;font-size:16px">✓ Сохранить</button>
+          {% else %}
           <button type="submit" name="action" value="confirm" id="btn-confirm" class="btn btn-success"
                   style="flex:1;min-height:48px;font-size:16px">✓ Провести</button>
           <button type="submit" name="action" value="reject" class="btn btn-danger">Отклонить</button>
+          {% endif %}
         </div>
       </div>
     </form>
+    </div>
     {% endif %}
 
   </div><!-- /правая колонка -->
@@ -266,6 +316,15 @@
 
 {% block scripts %}
 <script>
+function toggleBlock(name, editing) {
+  const view = document.getElementById(name + '-view');
+  const form = document.getElementById(name + '-form');
+  const btn  = document.getElementById(name + '-edit-btn');
+  if (view) view.style.display = editing ? 'none' : '';
+  if (form) form.style.display = editing ? '' : 'none';
+  if (btn) btn.style.display = editing ? 'none' : '';
+}
+
 function _num(v) {
   const n = parseFloat(String(v).replace(',', '.'));
   return isNaN(n) ? null : n;
