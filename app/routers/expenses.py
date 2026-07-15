@@ -1351,25 +1351,34 @@ def edit_manual_form(receipt_id: int, request: Request, org_id: int | None = Non
             "unit": product.unit if product else "",
             "qty": it.qty,
             "unit_price": it.unit_price,
+            "total_price": it.total_price,
             "product_id": it.product_id,
         })
+
+    upload_orgs = get_upload_orgs(user, db)
+    org_name = next((o.name for o in upload_orgs if o.id == first_tx.organization_id), "—")
+    supplier = db.get(Supplier, first_tx.supplier_id) if first_tx.supplier_id else None
+    amount_paid_for_view = total_paid if total_paid < total_amount - 0.009 else None
 
     return templates.TemplateResponse("expenses/add.html", {
         "request": request,
         "current_user": user,
         "accessible_orgs": accessible,
         "current_org_id": first_tx.organization_id,
-        "upload_orgs": get_upload_orgs(user, db),
+        "upload_orgs": upload_orgs,
         "suppliers": db.query(Supplier).order_by(Supplier.name).all(),
         "today": date.today().isoformat(),
         "preselect_category_id": None,
         "is_service_mode": False,
         "error": None,
         "edit_receipt_id": receipt.id,
+        "edit_org_name": org_name,
         "edit_supplier_id": first_tx.supplier_id,
+        "edit_supplier_name": supplier.name if supplier else "—",
         "edit_description": first_tx.description or "",
         "edit_amount": total_amount,
-        "edit_amount_paid": total_paid if total_paid < total_amount - 0.009 else None,
+        "edit_amount_paid": amount_paid_for_view,
+        "edit_debt": (total_amount - amount_paid_for_view) if amount_paid_for_view is not None else None,
         "edit_due_date": due_date_val.isoformat() if due_date_val else "",
         "edit_date": first_tx.date.isoformat() if first_tx.date else date.today().isoformat(),
         "edit_items": items,
@@ -1411,23 +1420,31 @@ def handle_edit_manual(
             items.append({
                 "name": product.name if product else it.name,
                 "unit": product.unit if product else "",
-                "qty": it.qty, "unit_price": it.unit_price, "product_id": it.product_id,
+                "qty": it.qty, "unit_price": it.unit_price, "total_price": it.total_price,
+                "product_id": it.product_id,
             })
+        sid_for_view = int(supplier_id) if supplier_id.isdigit() else None
+        supplier = db.get(Supplier, sid_for_view) if sid_for_view else None
+        upload_orgs = get_upload_orgs(user, db)
+        org_name = next((o.name for o in upload_orgs if o.id == org_id), "—")
         return templates.TemplateResponse("expenses/add.html", {
             "request": request, "current_user": user,
             "accessible_orgs": get_accessible_orgs(user, db),
             "current_org_id": org_id,
-            "upload_orgs": get_upload_orgs(user, db),
+            "upload_orgs": upload_orgs,
             "suppliers": db.query(Supplier).order_by(Supplier.name).all(),
             "today": date.today().isoformat(),
             "preselect_category_id": None,
             "is_service_mode": False,
             "error": message,
             "edit_receipt_id": receipt.id,
-            "edit_supplier_id": int(supplier_id) if supplier_id.isdigit() else None,
+            "edit_org_name": org_name,
+            "edit_supplier_id": sid_for_view,
+            "edit_supplier_name": supplier.name if supplier else "—",
             "edit_description": description or "",
             "edit_amount": amount,
             "edit_amount_paid": None,
+            "edit_debt": None,
             "edit_due_date": due_date or "",
             "edit_date": date_ or date.today().isoformat(),
             "edit_items": items,

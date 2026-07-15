@@ -1,12 +1,12 @@
 {% extends "base.html" %}
 {% set active_page = "expenses" %}
 
-{% block title %}{% if edit_receipt_id %}Изменить расход{% elif is_service_mode %}Сервисный расход{% else %}Ручная запись{% endif %} — Жемчужина{% endblock %}
+{% block title %}{% if edit_receipt_id %}Расход{% elif is_service_mode %}Сервисный расход{% else %}Ручная запись{% endif %} — Жемчужина{% endblock %}
 
 {% block content %}
 <div class="page-header">
   {% if edit_receipt_id %}
-  <h1>Изменить расход</h1>
+  <h1>Расход</h1>
   {% elif is_service_mode %}
   <h1>Сервисный расход</h1>
   {% else %}
@@ -25,6 +25,70 @@
 {% endif %}
 
 <div class="card" style="max-width:520px">
+  {% if edit_receipt_id %}
+  <div id="tx-view" style="{% if error %}display:none{% endif %}">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
+      <h3 style="font-size:15px;margin:0">Детали</h3>
+      <button type="button" id="tx-edit-btn" class="btn btn-secondary"
+              style="padding:4px 10px;font-size:12px" onclick="toggleBlock('tx', true)">
+        Изменить
+      </button>
+    </div>
+    <div class="form-group">
+      <label>Объект</label>
+      <div>{{ edit_org_name }}</div>
+    </div>
+    <div class="form-group">
+      <label>Сумма</label>
+      <div style="font-size:20px;font-weight:700">{{ "{:,.0f}".format(edit_amount) }} сом</div>
+      {% if edit_debt and edit_debt > 0 %}
+      <div style="font-size:12px;color:#b45309;margin-top:2px">Долг поставщику: {{ "{:,.0f}".format(edit_debt) }} сом{% if edit_due_date %}, погасить до {{ edit_due_date }}{% endif %}</div>
+      {% endif %}
+    </div>
+    <div class="form-group">
+      <label>Дата</label>
+      <div>{{ edit_date[8:10] }}.{{ edit_date[5:7] }}.{{ edit_date[0:4] }}</div>
+    </div>
+    <div class="form-group">
+      <label>Поставщик</label>
+      <div>{{ edit_supplier_name }}</div>
+    </div>
+    <div class="form-group" style="margin-bottom:0">
+      <label>Описание</label>
+      <div>{{ edit_description or "—" }}</div>
+    </div>
+
+    {% if edit_items %}
+    <div class="form-group" style="margin-top:14px;margin-bottom:0">
+      <label>Позиции</label>
+      <table style="width:100%;border-collapse:collapse;font-size:13px">
+        <thead>
+          <tr style="border-bottom:2px solid var(--border);text-align:left;color:var(--text-muted)">
+            <th style="padding:4px;width:40%">Наименование</th>
+            <th style="padding:4px;width:12%">Ед.</th>
+            <th style="padding:4px;width:16%;text-align:right">Кол-во</th>
+            <th style="padding:4px;width:16%;text-align:right">Цена</th>
+            <th style="padding:4px;width:16%;text-align:right">Сумма</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for item in edit_items %}
+          <tr style="border-bottom:1px solid var(--border)">
+            <td style="padding:6px 4px">{{ item.name }}</td>
+            <td style="padding:6px 4px">{{ item.unit or '—' }}</td>
+            <td style="padding:6px 4px;text-align:right">{{ item.qty or '—' }}</td>
+            <td style="padding:6px 4px;text-align:right">{{ "{:,.0f}".format(item.unit_price) if item.unit_price else '—' }}</td>
+            <td style="padding:6px 4px;text-align:right"><strong>{{ "{:,.0f}".format(item.total_price) if item.total_price else '—' }}</strong></td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% endif %}
+  </div>
+  {% endif %}
+
+  <div id="tx-form" style="{% if edit_receipt_id and not error %}display:none{% endif %}">
   <form method="post" action="{% if edit_receipt_id %}/expenses/{{ edit_receipt_id }}/edit-manual{% else %}/expenses/add{% endif %}">
 
     <div class="form-group">
@@ -198,11 +262,21 @@
     </form>
   </div>
   {% endif %}
+  </div>
 </div>
 {% endblock %}
 
 {% block scripts %}
 <script>
+function toggleBlock(name, editing) {
+  const view = document.getElementById(name + '-view');
+  const form = document.getElementById(name + '-form');
+  const btn  = document.getElementById(name + '-edit-btn');
+  if (view) view.style.display = editing ? 'none' : '';
+  if (form) form.style.display = editing ? '' : 'none';
+  if (btn) btn.style.display = editing ? 'none' : '';
+}
+
 // Категория больше не выбирается на этой странице — блок позиций всегда виден
 // в закупе (не в сервис-режиме). Если позиций ещё нет (новая запись) — сразу
 // пустая строка; если есть (редактирование) — включаем автокомплит на них.
