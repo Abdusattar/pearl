@@ -1,6 +1,6 @@
 from sqlalchemy import (
     Column, Integer, String, Numeric, Date, DateTime, Text, Boolean,
-    ForeignKey, CheckConstraint, UniqueConstraint, func
+    ForeignKey, CheckConstraint, UniqueConstraint, Index, func, text
 )
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import relationship, backref
@@ -135,11 +135,22 @@ class Receipt(Base):
     created_at       = Column(DateTime, server_default=func.now())
 
 
+# Плейсхолдер для поставщиков без реального номера (напр. "Рынок") — единственное
+# значение phone, разрешённое повторяться (см. частичный уникальный индекс ниже).
+SUPPLIER_PHONE_PLACEHOLDER = "0000"
+
+
 class Supplier(Base):
     __tablename__ = "suppliers"
+    __table_args__ = (
+        Index(
+            "ix_suppliers_phone_unique", "phone", unique=True,
+            postgresql_where=text(f"phone != '{SUPPLIER_PHONE_PLACEHOLDER}'"),
+        ),
+    )
     id         = Column(Integer, primary_key=True)
     name       = Column(String(200), nullable=False)
-    phone      = Column(String(20), unique=True, nullable=True)
+    phone      = Column(String(20), nullable=False)
     inn        = Column(String(20), nullable=True)  # для реестров бухгалтеру (ст. 177 НК КР)
     created_at = Column(DateTime, server_default=func.now())
 

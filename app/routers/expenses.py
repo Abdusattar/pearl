@@ -78,7 +78,6 @@ def get_categories(db: Session) -> list[ExpenseCategory]:
     ).all()
 
 
-RECURRING_ONLY_NAMES = {"ежемесячные расходы"}
 SERVICE_CAT_NAMES = {"сервисные расходы"}
 
 
@@ -89,16 +88,6 @@ def get_service_category_id(db: Session) -> int | None:
         .first()
     )
     return cat.id if cat else None
-
-
-def get_manual_form_categories(db: Session) -> list[ExpenseCategory]:
-    """Категории для `/expenses/add` — без ФОТ/Охраны/Коммуналки, у них свой
-    экран `/expenses/recurring/` (без обязательного поставщика, с подсказкой
-    суммы). Показывать их здесь тоже — тупик для пользователя (баг найден
-    12.07: форма требовала "поставщика" для зарплаты)."""
-    all_cats = get_categories(db)
-    recurring_root_ids = {c.id for c in all_cats if c.parent_id is None and c.name.lower() in RECURRING_ONLY_NAMES}
-    return [c for c in all_cats if c.id not in recurring_root_ids and c.parent_id not in recurring_root_ids]
 
 
 def audit(db: Session, entity_type: str, entity_id: int, action: str,
@@ -129,6 +118,107 @@ def resolve_supplier(db: Session, supplier_id_raw: str, new_name: str, new_phone
     db.add(s)
     db.flush()
     return s.id
+
+
+def create_split_transactions(
+    db: Session, resolved_items: list[dict], amount: float, amount_paid_val: float | None,
+    due_date_val, organization_id: int, supplier_id: int | None, description: str | None,
+    tx_date, user_id: int, receipt_id: int | None = None,
+) -> dict[int | None, int]:
+    """Группирует позиции по expense_category_id их товара, создаёт по Transaction на
+    каждую получившуюся категорию с пропорциональным делением суммы/оплаты/долга (последней
+    группе — остаток, без ошибок округления). Нет позиций — вся сумма уходит в категорию
+    None («без категории»). Общая логика для confirm (фото чека) и add (закуп без фото) —
+    не дублировать, деньги в проводке должны считаться одинаково независимо от источника.
+    receipt_id=None — proводка без связанной квитанции (закуп без позиций)."""
+    group_totals: dict = {}
+    for it in resolved_items:
+        cat_id = it["product"].expense_category_id
+        group_totals[cat_id] = group_totals.get(cat_id, 0) + it["total"]
+
+    if not group_totals:
+        group_totals[None] = amount
+
+    items_sum = sum(group_totals.values())
+    scale = (amount / items_sum) if items_sum else 1.0
+
+    cat_ids = list(group_totals.keys())
+    running_amount = 0.0
+    running_paid = 0.0
+    tx_by_cat: dict[int | None, int] = {}
+    for idx, cat_id in enumerate(cat_ids):
+        is_last = idx == len(cat_ids) - 1
+        if is_last:
+            cat_amount = round(amount - running_amount, 2)
+        else:
+            cat_amount = round(group_totals[cat_id] * scale, 2)
+            running_amount += cat_amount
+        if cat_amount <= 0:
+            continue
+
+        cat_amount_paid = None
+        if amount_paid_val is not None:
+            if is_last:
+                cat_amount_paid = round(amount_paid_val - running_paid, 2)
+            else:
+                cat_amount_paid = round(cat_amount / amount * amount_paid_val, 2) if amount else 0.0
+                running_paid += cat_amount_paid
+            if cat_amount_paid >= cat_amount:
+                cat_amount_paid = None
+
+        tx = Transaction(
+            organization_id=organization_id, type="expense", amount=cat_amount,
+            amount_paid=cat_amount_paid, due_date=due_date_val if cat_amount_paid is not None else None,
+            category_id=cat_id, supplier_id=supplier_id, description=description, date=tx_date,
+            created_by=user_id,
+        )
+        db.add(tx)
+        db.flush()
+        if receipt_id is not None:
+            db.add(ReceiptTransaction(receipt_id=receipt_id, transaction_id=tx.id, amount=cat_amount))
+        audit(db, "transaction", tx.id, "insert", user_id, {"org_id": organization_id, "amount": cat_amount})
+        tx_by_cat[cat_id] = tx.id
+    return tx_by_cat
+
+
+def resolve_manual_items(
+    db: Session, item_name: list[str], item_qty: list[str], item_unit_price: list[str],
+    item_unit: list[str], item_product_id: list[str],
+) -> tuple[list[dict], str | None]:
+    """Резолвит позиции закупа (add / edit-manual) в формат для create_split_transactions.
+    Позиции в целом необязательны, но если названа позиция — количество, цена и единица
+    измерения обязательны все три вместе (иначе её доля денег была бы либо потеряна, либо
+    размазана по чужим категориям — см. wiki про 07.07). Возвращает (items, error_message)."""
+    def _safe(vals, i):
+        try:
+            v = vals[i].strip() if i < len(vals) else ""
+            return float(v.replace(",", ".")) if v else None
+        except (ValueError, AttributeError):
+            return None
+
+    resolved_items = []
+    for i, raw_name in enumerate(item_name):
+        name = raw_name.strip()
+        if not name:
+            continue
+        qty_val = _safe(item_qty, i)
+        price_val = _safe(item_unit_price, i)
+        unit_val = item_unit[i].strip() if i < len(item_unit) else ""
+        if qty_val is None or price_val is None or not unit_val:
+            return [], "Заполни количество, цену и единицу измерения для каждой введённой позиции"
+
+        pid_str = item_product_id[i].strip() if i < len(item_product_id) else ""
+        product = db.get(Product, int(pid_str)) if pid_str.isdigit() else None
+        if not product:
+            product = get_or_create_product(db, name)
+        if not product.is_standard and product.unit != unit_val:
+            product.unit = unit_val
+
+        resolved_items.append({
+            "name": name, "product": product, "qty": qty_val,
+            "unit_price": price_val, "total": round(qty_val * price_val, 2),
+        })
+    return resolved_items, None
 
 
 # ── PRODUCT SEARCH API ────────────────────────────────────────────────────────
@@ -248,7 +338,9 @@ def list_expenses(
         tx_supplier = supplier_map.get(tx.supplier_id) if tx else None
         tx_debt = (tx.amount - tx.amount_paid) if tx and tx.amount_paid is not None else None
         if r.ocr_status == "manual":
-            href = f"/expenses/tx/{tx_id}/edit?org_id={current_org_id}" if tx_id else None
+            # Позиции определяют разбивку по категориям — редактируется как целый чек
+            # (та же форма ввода), не как одна отдельная Transaction (edit_tx.html).
+            href = f"/expenses/{r.id}/edit-manual?org_id={current_org_id}"
         else:
             href = f"/expenses/{r.id}/confirm?org_id={current_org_id}"
         receipts.append({
@@ -789,60 +881,12 @@ def handle_confirm(
             "qty": qty_val, "unit_price": price_val, "total": total,
         })
 
-    # Группируем позиции по статье расходов, которая закреплена за товаром.
-    # Новая/неопознанная позиция → категория None (проявится как "без категории").
-    group_totals: dict = {}
-    for it in resolved_items:
-        cat_id = it["product"].expense_category_id
-        group_totals[cat_id] = group_totals.get(cat_id, 0) + it["total"]
-
-    if not group_totals:
-        # Нет позиций вообще (OCR не распознал / ручной чек без деталей) — вся сумма без категории
-        group_totals[None] = amount
-
-    items_sum = sum(group_totals.values())
-    scale = (amount / items_sum) if items_sum else 1.0
-
-    # Пропорционально делим сумму, оплату и долг по получившимся категориям.
-    # Последней группе отдаём остаток — без ошибок округления.
-    cat_ids = list(group_totals.keys())
-    running_amount = 0.0
-    running_paid = 0.0
-    tx_by_cat = {}
-    main_tx_id = None
-    for idx, cat_id in enumerate(cat_ids):
-        is_last = idx == len(cat_ids) - 1
-        if is_last:
-            cat_amount = round(amount - running_amount, 2)
-        else:
-            cat_amount = round(group_totals[cat_id] * scale, 2)
-            running_amount += cat_amount
-        if cat_amount <= 0:
-            continue
-
-        cat_amount_paid = None
-        if amount_paid_val is not None:
-            if is_last:
-                cat_amount_paid = round(amount_paid_val - running_paid, 2)
-            else:
-                cat_amount_paid = round(cat_amount / amount * amount_paid_val, 2) if amount else 0.0
-                running_paid += cat_amount_paid
-            if cat_amount_paid >= cat_amount:
-                cat_amount_paid = None
-
-        tx = Transaction(
-            organization_id=receipt.organization_id, type="expense", amount=cat_amount,
-            amount_paid=cat_amount_paid, due_date=due_date_val if cat_amount_paid is not None else None,
-            category_id=cat_id, supplier_id=sid, description=description, date=tx_date,
-            created_by=user.id,
-        )
-        db.add(tx)
-        db.flush()
-        if main_tx_id is None:
-            main_tx_id = tx.id
-        db.add(ReceiptTransaction(receipt_id=receipt.id, transaction_id=tx.id, amount=cat_amount))
-        audit(db, "transaction", tx.id, "insert", user.id, {"org_id": receipt.organization_id, "amount": cat_amount})
-        tx_by_cat[cat_id] = tx.id
+    tx_by_cat = create_split_transactions(
+        db, resolved_items, amount, amount_paid_val, due_date_val,
+        receipt.organization_id, sid, description, tx_date, user.id,
+        receipt_id=receipt.id,
+    )
+    main_tx_id = next(iter(tx_by_cat.values()), None)
 
     total_confirmed = amount
     receipt.ocr_status = "confirmed"
@@ -895,13 +939,9 @@ def add_form(request: Request, org_id: int | None = None, category_id: int | Non
         return RedirectResponse("/login", status_code=302)
     accessible = get_accessible_orgs(user, db)
     current_org = resolve_org(org_id, user, db)
-    visible_cats = get_manual_form_categories(db)
-    # Позиции показываем для всех "товарных" категорий — не показываем только для
-    # услуг. Транспорт/Прочее/Банк.комиссии объединены в одну "Сервисные расходы"
-    # (12.07) — различаются описанием проводки, не отдельными категориями.
+    # «Закуп» (не сервис) — категория больше не выбирается вручную, определяется
+    # по товару при сохранении (как в confirm.html после фото чека).
     service_category_id = get_service_category_id(db)
-    service_root_ids = {service_category_id} if service_category_id else set()
-    food_cat_ids = [c.id for c in visible_cats if c.id not in service_root_ids and c.parent_id not in service_root_ids]
     all_suppliers = db.query(Supplier).order_by(Supplier.name).all()
     is_service_mode = bool(category_id) and category_id == service_category_id
     return templates.TemplateResponse("expenses/add.html", {
@@ -910,8 +950,6 @@ def add_form(request: Request, org_id: int | None = None, category_id: int | Non
         "accessible_orgs": accessible,
         "current_org_id": current_org.id if current_org else None,
         "upload_orgs": get_upload_orgs(user, db),
-        "categories": visible_cats,
-        "food_cat_ids": food_cat_ids,
         "suppliers": all_suppliers,
         "today": date.today().isoformat(),
         "preselect_category_id": category_id,
@@ -933,6 +971,7 @@ def handle_add(
     item_name: List[str] = Form(default=[]),
     item_qty: List[str] = Form(default=[]),
     item_unit_price: List[str] = Form(default=[]),
+    item_unit: List[str] = Form(default=[]),
     item_product_id: List[str] = Form(default=[]),
     supplier_id: str = Form(default=""),
     new_supplier_name: str = Form(default=""),
@@ -948,20 +987,21 @@ def handle_add(
     service_category_id = get_service_category_id(db)
     is_service_mode = bool(category_id) and category_id == service_category_id
 
-    if not current_org:
+    def _error_response(message: str):
         return templates.TemplateResponse("expenses/add.html", {
             "request": request, "current_user": user,
             "accessible_orgs": accessible,
-            "current_org_id": org_id,
+            "current_org_id": current_org.id if current_org else org_id,
             "upload_orgs": get_upload_orgs(user, db),
-            "categories": get_manual_form_categories(db),
             "suppliers": db.query(Supplier).order_by(Supplier.name).all(),
-            "food_cat_ids": [],
             "preselect_category_id": category_id,
             "is_service_mode": is_service_mode,
             "today": date.today().isoformat(),
-            "error": "Объект не найден",
+            "error": message,
         })
+
+    if not current_org:
+        return _error_response("Объект не найден")
 
     tx_date = date.fromisoformat(date_) if date_ else date.today()
     # «Сервисные расходы» — без привязки к конкретному поставщику: таксисты,
@@ -970,34 +1010,10 @@ def handle_add(
     sid = None if is_service_mode else resolve_supplier(db, supplier_id, new_supplier_name, new_supplier_phone)
 
     if not sid and not is_service_mode:
-        return templates.TemplateResponse("expenses/add.html", {
-            "request": request, "current_user": user,
-            "accessible_orgs": accessible,
-            "current_org_id": current_org.id,
-            "upload_orgs": get_upload_orgs(user, db),
-            "categories": get_manual_form_categories(db),
-            "suppliers": db.query(Supplier).order_by(Supplier.name).all(),
-            "food_cat_ids": [],
-            "preselect_category_id": category_id,
-            "is_service_mode": is_service_mode,
-            "today": date.today().isoformat(),
-            "error": "Выбери поставщика — без него нельзя провести расход",
-        })
+        return _error_response("Выбери поставщика — без него нельзя провести расход")
 
     if is_service_mode and not (description or "").strip():
-        return templates.TemplateResponse("expenses/add.html", {
-            "request": request, "current_user": user,
-            "accessible_orgs": accessible,
-            "current_org_id": current_org.id,
-            "upload_orgs": get_upload_orgs(user, db),
-            "categories": get_manual_form_categories(db),
-            "suppliers": db.query(Supplier).order_by(Supplier.name).all(),
-            "food_cat_ids": [],
-            "preselect_category_id": category_id,
-            "is_service_mode": is_service_mode,
-            "today": date.today().isoformat(),
-            "error": "Укажи в комментарии, за что заплатили — без поставщика это единственная зацепка",
-        })
+        return _error_response("Укажи в комментарии, за что заплатили — без поставщика это единственная зацепка")
 
     def _parse_amount(s):
         try:
@@ -1010,42 +1026,31 @@ def handle_add(
         amount_paid_val = None
     due_date_val = date.fromisoformat(due_date) if due_date else None
 
-    tx = Transaction(
-        organization_id=org_id, type="expense", amount=amount,
-        amount_paid=amount_paid_val, due_date=due_date_val,
-        category_id=category_id, supplier_id=sid, description=description, date=tx_date,
-        created_by=user.id,
+    if is_service_mode:
+        # Категория зафиксирована (Сервисные расходы), позиций нет — не через
+        # авто-разбивку по товару, единственная Transaction с ручной категорией.
+        tx = Transaction(
+            organization_id=org_id, type="expense", amount=amount,
+            amount_paid=amount_paid_val, due_date=due_date_val,
+            category_id=category_id, supplier_id=None, description=description, date=tx_date,
+            created_by=user.id,
+        )
+        db.add(tx)
+        db.flush()
+        audit(db, "transaction", tx.id, "insert", user.id, {"org_id": org_id, "amount": amount, "manual": True})
+        db.commit()
+        return RedirectResponse(f"/expenses/?org_id={org_id}", status_code=303)
+
+    # Закуп — категория больше не выбирается вручную, определяется по товару
+    # каждой позиции (та же логика, что в confirm.html после фото чека).
+    resolved_items, item_error = resolve_manual_items(
+        db, item_name, item_qty, item_unit_price, item_unit, item_product_id,
     )
-    db.add(tx)
-    db.flush()
-    audit(db, "transaction", tx.id, "insert", user.id, {"org_id": org_id, "amount": amount, "manual": True})
+    if item_error:
+        return _error_response(item_error)
 
-    # Сохраняем позиции если были введены (для справочника продуктов)
-    def _safe(vals, i):
-        try:
-            v = vals[i].strip() if i < len(vals) else ""
-            return float(v.replace(",", ".")) if v else None
-        except (ValueError, AttributeError):
-            return None
-
-    # Сумма позиции всегда считается из кол-во × цена, а не берётся из отправленного
-    # поля — позиция без обоих чисел не сохраняется (позиции в целом необязательны).
-    valid_items = []
-    for i in range(len(item_name)):
-        name = item_name[i].strip()
-        if not name:
-            continue
-        qty = _safe(item_qty, i)
-        unit_price = _safe(item_unit_price, i)
-        if qty is None or unit_price is None:
-            continue
-        pid_str = item_product_id[i].strip() if i < len(item_product_id) else ""
-        product = db.get(Product, int(pid_str)) if pid_str.isdigit() else None
-        if not product:
-            product = get_or_create_product(db, name)
-        valid_items.append((name, qty, unit_price, round(qty * unit_price, 2), product))
-
-    if valid_items:
+    receipt_id = None
+    if resolved_items:
         receipt = Receipt(
             organization_id=org_id,
             file_path="manual",
@@ -1057,15 +1062,22 @@ def handle_add(
         )
         db.add(receipt)
         db.flush()
-        db.add(ReceiptTransaction(receipt_id=receipt.id, transaction_id=tx.id, amount=amount))
-        for name, qty, unit_price, total, product in valid_items:
+        receipt_id = receipt.id
+
+    create_split_transactions(
+        db, resolved_items, amount, amount_paid_val, due_date_val,
+        org_id, sid, description, tx_date, user.id, receipt_id=receipt_id,
+    )
+
+    if resolved_items:
+        for it in resolved_items:
             db.add(ReceiptItem(
-                receipt_id=receipt.id,
-                name=name,
-                product_id=product.id,
-                qty=qty,
-                unit_price=unit_price,
-                total_price=total,
+                receipt_id=receipt_id,
+                name=it["name"],
+                product_id=it["product"].id,
+                qty=it["qty"],
+                unit_price=it["unit_price"],
+                total_price=it["total"],
             ))
 
     db.commit()
@@ -1268,6 +1280,189 @@ def handle_edit_tx(
     audit(db, "transaction", tx.id, "update", user.id, {"amount": amount})
     db.commit()
     return RedirectResponse(f"/expenses/?org_id={org_id or tx.organization_id}", status_code=303)
+
+
+# ── EDIT MANUAL RECEIPT WITH ITEMS (закуп без фото, разбит по категориям) ─────
+# Позиции определяют категорию/разбивку — значит редактирование не может просто
+# поправить одну Transaction, как для записей без позиций (см. edit_tx.html выше).
+# Правка = та же форма add.html, предзаполненная; при сохранении старые Transaction
+# этого чека мягко удаляются (deleted_at + audit "delete"), новые создаются заново
+# той же функцией, что и при вводе — числа всегда считаются с нуля, не патчатся
+# по кускам (решено 15.07, см. обсуждение в сессии).
+
+@router.get("/{receipt_id}/edit-manual", response_class=HTMLResponse)
+def edit_manual_form(receipt_id: int, request: Request, org_id: int | None = None, db: Session = Depends(get_db)):
+    user = get_current_user(request, db)
+    if not user:
+        return RedirectResponse("/login", status_code=302)
+    receipt = db.query(Receipt).get(receipt_id)
+    if not receipt or receipt.file_path != "manual":
+        return HTMLResponse("Запись не найдена", status_code=404)
+
+    txs = (
+        db.query(Transaction)
+        .join(ReceiptTransaction, ReceiptTransaction.transaction_id == Transaction.id)
+        .filter(ReceiptTransaction.receipt_id == receipt_id, Transaction.deleted_at.is_(None))
+        .order_by(Transaction.id)
+        .all()
+    )
+    if not txs:
+        return HTMLResponse("Запись не найдена", status_code=404)
+
+    first_tx = txs[0]
+    total_amount = float(receipt.amount_confirmed) if receipt.amount_confirmed is not None else sum(float(t.amount) for t in txs)
+    # amount_paid=None у отдельной Transaction означает «эта доля оплачена полностью» —
+    # чтобы восстановить общую картину, недостающую долю считаем как amount той группы.
+    total_paid = sum(float(t.amount_paid) if t.amount_paid is not None else float(t.amount) for t in txs)
+    due_date_val = next((t.due_date for t in txs if t.due_date), None)
+
+    accessible = get_accessible_orgs(user, db)
+
+    raw_items = db.query(ReceiptItem).filter(ReceiptItem.receipt_id == receipt_id).all()
+    items = []
+    for it in raw_items:
+        product = db.get(Product, it.product_id) if it.product_id else None
+        items.append({
+            "name": product.name if product else it.name,
+            "unit": product.unit if product else "",
+            "qty": it.qty,
+            "unit_price": it.unit_price,
+            "product_id": it.product_id,
+        })
+
+    return templates.TemplateResponse("expenses/add.html", {
+        "request": request,
+        "current_user": user,
+        "accessible_orgs": accessible,
+        "current_org_id": first_tx.organization_id,
+        "upload_orgs": get_upload_orgs(user, db),
+        "suppliers": db.query(Supplier).order_by(Supplier.name).all(),
+        "today": date.today().isoformat(),
+        "preselect_category_id": None,
+        "is_service_mode": False,
+        "error": None,
+        "edit_receipt_id": receipt.id,
+        "edit_supplier_id": first_tx.supplier_id,
+        "edit_description": first_tx.description or "",
+        "edit_amount": total_amount,
+        "edit_amount_paid": total_paid if total_paid < total_amount - 0.009 else None,
+        "edit_due_date": due_date_val.isoformat() if due_date_val else "",
+        "edit_date": first_tx.date.isoformat() if first_tx.date else date.today().isoformat(),
+        "edit_items": items,
+    })
+
+
+@router.post("/{receipt_id}/edit-manual")
+def handle_edit_manual(
+    receipt_id: int,
+    request: Request,
+    org_id: int = Form(...),
+    amount: float = Form(...),
+    amount_paid: str = Form(None),
+    due_date: str = Form(None),
+    description: str = Form(None),
+    date_: str = Form(None, alias="date"),
+    item_name: List[str] = Form(default=[]),
+    item_qty: List[str] = Form(default=[]),
+    item_unit_price: List[str] = Form(default=[]),
+    item_unit: List[str] = Form(default=[]),
+    item_product_id: List[str] = Form(default=[]),
+    supplier_id: str = Form(default=""),
+    new_supplier_name: str = Form(default=""),
+    new_supplier_phone: str = Form(default=""),
+    db: Session = Depends(get_db),
+):
+    user = get_current_user(request, db)
+    if not user:
+        return RedirectResponse("/login", status_code=302)
+    receipt = db.query(Receipt).get(receipt_id)
+    if not receipt or receipt.file_path != "manual":
+        return HTMLResponse("Запись не найдена", status_code=404)
+
+    def _error_response(message: str):
+        raw_items = db.query(ReceiptItem).filter(ReceiptItem.receipt_id == receipt_id).all()
+        items = []
+        for it in raw_items:
+            product = db.get(Product, it.product_id) if it.product_id else None
+            items.append({
+                "name": product.name if product else it.name,
+                "unit": product.unit if product else "",
+                "qty": it.qty, "unit_price": it.unit_price, "product_id": it.product_id,
+            })
+        return templates.TemplateResponse("expenses/add.html", {
+            "request": request, "current_user": user,
+            "accessible_orgs": get_accessible_orgs(user, db),
+            "current_org_id": org_id,
+            "upload_orgs": get_upload_orgs(user, db),
+            "suppliers": db.query(Supplier).order_by(Supplier.name).all(),
+            "today": date.today().isoformat(),
+            "preselect_category_id": None,
+            "is_service_mode": False,
+            "error": message,
+            "edit_receipt_id": receipt.id,
+            "edit_supplier_id": int(supplier_id) if supplier_id.isdigit() else None,
+            "edit_description": description or "",
+            "edit_amount": amount,
+            "edit_amount_paid": None,
+            "edit_due_date": due_date or "",
+            "edit_date": date_ or date.today().isoformat(),
+            "edit_items": items,
+        })
+
+    tx_date = date.fromisoformat(date_) if date_ else date.today()
+    sid = resolve_supplier(db, supplier_id, new_supplier_name, new_supplier_phone)
+    if not sid:
+        return _error_response("Выбери поставщика — без него нельзя провести расход")
+
+    def _parse_amount(s):
+        try:
+            return float(str(s).replace(",", ".")) if s else None
+        except ValueError:
+            return None
+
+    amount_paid_val = _parse_amount(amount_paid)
+    if amount_paid_val is not None and amount_paid_val >= amount:
+        amount_paid_val = None
+    due_date_val = date.fromisoformat(due_date) if due_date else None
+
+    resolved_items, item_error = resolve_manual_items(
+        db, item_name, item_qty, item_unit_price, item_unit, item_product_id,
+    )
+    if item_error:
+        return _error_response(item_error)
+
+    # Старые Transaction этого чека — мягко удалить (не потерять историю), затем
+    # снять старые связки/позиции и создать всё заново той же логикой, что и ввод.
+    old_txs = (
+        db.query(Transaction)
+        .join(ReceiptTransaction, ReceiptTransaction.transaction_id == Transaction.id)
+        .filter(ReceiptTransaction.receipt_id == receipt_id, Transaction.deleted_at.is_(None))
+        .all()
+    )
+    for old_tx in old_txs:
+        old_tx.deleted_at = datetime.utcnow()
+        audit(db, "transaction", old_tx.id, "delete", user.id, {"amount": float(old_tx.amount), "reason": "edit-manual"})
+    db.query(ReceiptTransaction).filter(ReceiptTransaction.receipt_id == receipt_id).delete()
+    db.query(ReceiptItem).filter(ReceiptItem.receipt_id == receipt_id).delete()
+
+    create_split_transactions(
+        db, resolved_items, amount, amount_paid_val, due_date_val,
+        org_id, sid, description, tx_date, user.id, receipt_id=receipt_id,
+    )
+    for it in resolved_items:
+        db.add(ReceiptItem(
+            receipt_id=receipt_id,
+            name=it["name"],
+            product_id=it["product"].id,
+            qty=it["qty"],
+            unit_price=it["unit_price"],
+            total_price=it["total"],
+        ))
+
+    receipt.amount_confirmed = amount
+    audit(db, "receipt", receipt.id, "update", user.id, {"amount": amount})
+    db.commit()
+    return RedirectResponse(f"/expenses/?org_id={org_id}", status_code=303)
 
 
 # ── DELETE RECEIPT ─────────────────────────────────────────────────────────────

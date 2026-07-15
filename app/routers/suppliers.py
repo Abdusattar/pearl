@@ -48,7 +48,7 @@ def supplier_list(request: Request, db: Session = Depends(get_db)):
 def create_supplier(
     request: Request,
     name: str = Form(...),
-    phone: str = Form(default=""),
+    phone: str = Form(...),
     inn: str = Form(default=""),
     org_id: str = Form(default=""),
     db: Session = Depends(get_db),
@@ -57,10 +57,10 @@ def create_supplier(
     if not user:
         return RedirectResponse("/login", status_code=302)
     name = name.strip()
-    phone_val = phone.strip() or None
+    phone_val = phone.strip()
     inn_val = inn.strip() or None
 
-    if name:
+    if name and phone_val:
         existing = db.query(Supplier).filter(Supplier.name == name).first()
         if not existing:
             s = Supplier(name=name, phone=phone_val, inn=inn_val)

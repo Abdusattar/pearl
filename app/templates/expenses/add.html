@@ -1,11 +1,13 @@
 {% extends "base.html" %}
 {% set active_page = "expenses" %}
 
-{% block title %}{% if is_service_mode %}Сервисный расход{% else %}Ручная запись{% endif %} — Жемчужина{% endblock %}
+{% block title %}{% if edit_receipt_id %}Изменить расход{% elif is_service_mode %}Сервисный расход{% else %}Ручная запись{% endif %} — Жемчужина{% endblock %}
 
 {% block content %}
 <div class="page-header">
-  {% if is_service_mode %}
+  {% if edit_receipt_id %}
+  <h1>Изменить расход</h1>
+  {% elif is_service_mode %}
   <h1>Сервисный расход</h1>
   {% else %}
   <h1>Запись без квитанции</h1>
@@ -23,7 +25,7 @@
 {% endif %}
 
 <div class="card" style="max-width:520px">
-  <form method="post" action="/expenses/add">
+  <form method="post" action="{% if edit_receipt_id %}/expenses/{{ edit_receipt_id }}/edit-manual{% else %}/expenses/add{% endif %}">
 
     <div class="form-group">
       <label>Объект</label>
@@ -34,67 +36,94 @@
       </select>
     </div>
 
+    {% if is_service_mode %}
     <div class="form-group">
       <label>Категория</label>
-      {% if is_service_mode %}
       <input type="text" class="form-control" value="Сервисные расходы" disabled>
       <input type="hidden" name="category_id" value="{{ preselect_category_id }}">
-      {% else %}
-      <select name="category_id" class="form-control" required id="cat-select">
-        <option value="">Выберите категорию</option>
-        {% set ns = namespace(parent_ids=[]) %}
-        {% for cat in categories %}{% if cat.parent_id is not none and cat.parent_id not in ns.parent_ids %}{% set ns.parent_ids = ns.parent_ids + [cat.parent_id] %}{% endif %}{% endfor %}
-        {% for cat in categories %}
-          {% if cat.parent_id is none %}
-          <option value="{{ cat.id }}" {% if cat.id in ns.parent_ids %}disabled style="color:#9ca3af;font-weight:600"{% endif %}>{{ cat.name }}</option>
-          {% else %}
-          <option value="{{ cat.id }}">&nbsp;&nbsp;↳ {{ cat.name }}</option>
-          {% endif %}
-        {% endfor %}
-      </select>
-      {% endif %}
     </div>
-
-    <!-- Позиции — для всех товарных категорий, не для «Сервисных расходов» -->
-    <div id="items-block" style="display:none" class="form-group">
+    {% else %}
+    <!-- Категория не выбирается вручную — определяется по товару каждой позиции,
+         так же как на confirm.html после фото чека (решено 15.07). -->
+    <div class="form-group">
       <label style="display:flex;align-items:center;justify-content:space-between">
         <span>Позиции</span>
-        <span style="font-size:11px;color:var(--text-muted)">необязательно</span>
+        <span style="font-size:11px;color:var(--text-muted)">необязательно, но категория считается по ним</span>
       </label>
       <table style="width:100%;border-collapse:collapse;font-size:13px;margin-bottom:6px">
         <thead>
           <tr style="border-bottom:2px solid var(--border);text-align:left">
-            <th style="padding:4px;width:45%">Наименование</th>
+            <th style="padding:4px;width:38%">Наименование</th>
+            <th style="padding:4px;width:12%">Ед.</th>
             <th style="padding:4px;width:12%;text-align:right">Кол-во</th>
-            <th style="padding:4px;width:18%;text-align:right">Цена</th>
-            <th style="padding:4px;width:18%;text-align:right">Сумма</th>
-            <th style="padding:4px;width:7%"></th>
+            <th style="padding:4px;width:16%;text-align:right">Цена</th>
+            <th style="padding:4px;width:16%;text-align:right">Сумма</th>
+            <th style="padding:4px;width:6%"></th>
           </tr>
         </thead>
-        <tbody id="items-body"></tbody>
+        <tbody id="items-body">
+          {% for item in edit_items | default([]) %}
+          <tr style="border-bottom:1px solid var(--border)">
+            <td style="padding:4px;position:relative">
+              <input type="hidden" name="item_product_id" value="{{ item.product_id or '' }}">
+              <input type="text" name="item_name" value="{{ item.name }}" class="form-control item-name-input"
+                     autocomplete="off" style="font-size:12px;padding:4px 6px" placeholder="Что купили">
+              <div class="autocomplete-dropdown" style="display:none;position:absolute;z-index:100;left:4px;right:4px;top:100%;background:#fff;border:1px solid var(--border);border-radius:6px;box-shadow:0 4px 12px rgba(0,0,0,.1);max-height:180px;overflow-y:auto"></div>
+              <div class="product-hint" style="font-size:10px;color:var(--text-muted);margin-top:2px"></div>
+            </td>
+            <td style="padding:4px">
+              <select name="item_unit" class="form-control" style="font-size:12px;padding:3px 4px" required>
+                <option value="">—</option>
+                {% for u in ['кг','л','шт','уп','г','бут'] %}
+                <option value="{{ u }}" {% if item.unit == u %}selected{% endif %}>{{ u }}</option>
+                {% endfor %}
+              </select>
+            </td>
+            <td style="padding:4px">
+              <input type="text" name="item_qty" value="{{ item.qty }}" class="form-control item-qty"
+                     style="font-size:12px;padding:4px 6px;text-align:right" oninput="recalcRow(this)" placeholder="кол-во">
+            </td>
+            <td style="padding:4px">
+              <input type="text" name="item_unit_price" value="{{ item.unit_price }}" class="form-control item-price"
+                     style="font-size:12px;padding:4px 6px;text-align:right" oninput="recalcRow(this)" placeholder="цена">
+            </td>
+            <td style="padding:4px">
+              <input type="text" name="item_total_price" value="{{ (item.qty * item.unit_price) | round(2) if item.qty and item.unit_price else '' }}" class="form-control item-total" readonly
+                     style="font-size:12px;padding:4px 6px;text-align:right;background:var(--bg-secondary,#f3f4f6);color:var(--text-muted)"
+                     placeholder="сумма" title="Считается автоматически из количества и цены">
+            </td>
+            <td style="padding:4px;text-align:center">
+              <button type="button" onclick="this.closest('tr').remove();updateGrandTotal()"
+                      style="background:none;border:none;color:var(--text-muted);cursor:pointer;font-size:16px">×</button>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
       </table>
       <button type="button" onclick="addItemRow()"
               style="font-size:12px;color:var(--primary);background:none;border:none;cursor:pointer;padding:4px 0">
         + добавить строку
       </button>
     </div>
+    {% endif %}
 
     <div class="form-group">
       <label>Сумма (сом)</label>
       <input type="number" name="amount" id="amount-input" class="form-control" step="0.01"
-             inputmode="decimal" required placeholder="0.00" oninput="updateDebtHint()">
+             inputmode="decimal" required placeholder="0.00" value="{{ edit_amount | default('') }}" oninput="updateDebtHint()">
       <div id="items-sum-hint" style="font-size:12px;color:var(--text-muted);margin-top:4px"></div>
     </div>
 
     <div class="form-group">
+      {% set has_debt = edit_amount_paid is defined and edit_amount_paid is not none %}
       <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
-        <input type="checkbox" id="paid-full-checkbox" checked onchange="togglePaidFull()" style="width:16px;height:16px">
+        <input type="checkbox" id="paid-full-checkbox" {% if not has_debt %}checked{% endif %} onchange="togglePaidFull()" style="width:16px;height:16px">
         <span>Оплачено полностью</span>
       </label>
-      <div id="paid-partial-block" style="display:none;margin-top:8px">
+      <div id="paid-partial-block" style="{% if not has_debt %}display:none;{% endif %}margin-top:8px">
         <label>Оплачено сейчас (сом)</label>
         <input type="number" name="amount_paid" id="amount-paid" class="form-control" step="0.01"
-               inputmode="decimal" oninput="updateDebtHint()">
+               inputmode="decimal" value="{{ edit_amount_paid | default('') }}" oninput="updateDebtHint()">
         <div style="font-size:11px;color:var(--text-muted);margin-top:4px">
           Уменьши сумму до того, что реально отдали продавцу — остаток система посчитает как долг.
         </div>
@@ -102,7 +131,7 @@
           <div style="font-size:13px;font-weight:600;color:#b45309">Долг поставщику: <span id="debt-amount">0</span> сом</div>
           <div style="margin-top:6px">
             <label style="font-size:11px;color:var(--text-muted)">Когда планируете погасить (необязательно)</label>
-            <input type="date" name="due_date" class="form-control" style="font-size:12px;padding:4px 6px">
+            <input type="date" name="due_date" class="form-control" style="font-size:12px;padding:4px 6px" value="{{ edit_due_date | default('') }}">
           </div>
         </div>
       </div>
@@ -110,7 +139,7 @@
 
     <div class="form-group">
       <label>Дата</label>
-      <input type="date" name="date" class="form-control" value="{{ today }}" required>
+      <input type="date" name="date" class="form-control" value="{{ edit_date | default(today) }}" required>
     </div>
 
     {% if not is_service_mode %}
@@ -119,7 +148,7 @@
       <select name="supplier_id" id="supplier-select" class="form-control" required>
         <option value="">Выбери поставщика...</option>
         {% for s in suppliers %}
-        <option value="{{ s.id }}">{{ s.name }}{% if s.phone %} ({{ s.phone }}){% endif %}</option>
+        <option value="{{ s.id }}" {% if s.id == edit_supplier_id %}selected{% endif %}>{{ s.name }}{% if s.phone %} ({{ s.phone }}){% endif %}</option>
         {% endfor %}
       </select>
       <div style="font-size:11px;color:var(--text-muted);margin-top:4px">
@@ -132,62 +161,43 @@
     <div class="form-group">
       {% if is_service_mode %}
       <label>Комментарий — за что заплатили</label>
-      <input type="text" name="description" class="form-control" placeholder="Например: такси до банка" required>
+      <input type="text" name="description" class="form-control" value="{{ edit_description | default('') }}" placeholder="Например: такси до банка" required>
       {% else %}
       <label>Описание (необязательно)</label>
-      <input type="text" name="description" class="form-control" placeholder="Комментарий...">
+      <input type="text" name="description" class="form-control" value="{{ edit_description | default('') }}" placeholder="Комментарий...">
       {% endif %}
     </div>
 
     <button type="submit" class="btn btn-success"
             style="width:100%;margin-top:8px;min-height:48px;font-size:16px">
-      ✓ Записать расход
+      {% if edit_receipt_id %}✓ Сохранить{% else %}✓ Записать расход{% endif %}
     </button>
   </form>
+
+  {% if edit_receipt_id %}
+  <div style="margin-top:16px;padding-top:16px;border-top:1px solid var(--border)">
+    <form method="post" action="/expenses/{{ edit_receipt_id }}/delete"
+          onsubmit="return confirm('Удалить расход полностью?')">
+      <input type="hidden" name="org_id" value="{{ current_org_id or '' }}">
+      <button type="submit" class="btn btn-danger" style="width:100%">Удалить расход</button>
+    </form>
+  </div>
+  {% endif %}
 </div>
 {% endblock %}
 
 {% block scripts %}
 <script>
-const FOOD_CATEGORY_IDS = new Set({{ food_cat_ids | tojson }});
-const PRESELECT_CATEGORY_ID = {{ preselect_category_id | default(none) | tojson }};
-const orgSel = document.getElementById('org-select');
-const catSel = document.getElementById('cat-select');
-
-function onCategoryChange(categoryId) {
-  const isFood = FOOD_CATEGORY_IDS.has(Number(categoryId));
-  const block = document.getElementById('items-block');
-  block.style.display = isFood ? '' : 'none';
-  if (isFood && document.getElementById('items-body').children.length === 0) {
+// Категория больше не выбирается на этой странице — блок позиций всегда виден
+// в закупе (не в сервис-режиме). Если позиций ещё нет (новая запись) — сразу
+// пустая строка; если есть (редактирование) — включаем автокомплит на них.
+{
+  const itemsBody = document.getElementById('items-body');
+  if (itemsBody && itemsBody.children.length === 0) {
     addItemRow();
+  } else if (itemsBody) {
+    itemsBody.querySelectorAll('.item-name-input').forEach(initAutocomplete);
   }
-}
-
-// Запомнить последнюю категорию по объекту (не применимо — в сервис-режиме
-// категория зафиксирована, селекта categорий на странице нет)
-if (catSel) {
-  const catKey = () => 'pearl_last_cat_' + orgSel.value;
-  if (PRESELECT_CATEGORY_ID !== null) {
-    catSel.value = String(PRESELECT_CATEGORY_ID);
-  } else {
-    const savedCat = localStorage.getItem(catKey());
-    if (savedCat && [...catSel.options].some(o => o.value === savedCat && !o.disabled)) {
-      catSel.value = savedCat;
-    }
-  }
-  catSel.addEventListener('change', () => {
-    localStorage.setItem(catKey(), catSel.value);
-    onCategoryChange(catSel.value);
-  });
-  orgSel.addEventListener('change', () => {
-    const saved = localStorage.getItem(catKey());
-    if (saved && [...catSel.options].some(o => o.value === saved && !o.disabled)) catSel.value = saved;
-    else catSel.value = '';
-    onCategoryChange(catSel.value);
-  });
-  onCategoryChange(catSel.value);
-} else {
-  onCategoryChange(PRESELECT_CATEGORY_ID);
 }
 
 function _num(v) {
@@ -331,6 +341,13 @@ function addItemRow() {
              style="font-size:12px;padding:4px 6px" placeholder="Что купили">
       <div class="autocomplete-dropdown" style="display:none;position:absolute;z-index:100;left:4px;right:4px;top:100%;background:#fff;border:1px solid var(--border);border-radius:6px;box-shadow:0 4px 12px rgba(0,0,0,.1);max-height:180px;overflow-y:auto"></div>
       <div class="product-hint" style="font-size:10px;color:var(--text-muted);margin-top:2px"></div>
+    </td>
+    <td style="padding:4px">
+      <select name="item_unit" class="form-control" style="font-size:12px;padding:3px 4px" required>
+        <option value="">—</option>
+        <option value="кг">кг</option><option value="л">л</option><option value="шт">шт</option>
+        <option value="уп">уп</option><option value="г">г</option><option value="бут">бут</option>
+      </select>
     </td>
     <td style="padding:4px">
       <input type="text" name="item_qty" class="form-control item-qty"
