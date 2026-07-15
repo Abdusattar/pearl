@@ -221,6 +221,27 @@ def resolve_manual_items(
     return resolved_items, None
 
 
+def create_warehouse_receipts(
+    db: Session, resolved_items: list[dict], tx_by_cat: dict, organization_id: int,
+    tx_date, user_id: int,
+) -> None:
+    """Кладёт позиции с количеством и ценой на склад, привязывая каждую к своей
+    Transaction по категории товара — та же группировка, что и в проводках."""
+    main_tx_id = next(iter(tx_by_cat.values()), None)
+    for it in resolved_items:
+        if it["qty"] and it["qty"] > 0 and it["unit_price"] and it["unit_price"] > 0:
+            db.add(WarehouseReceipt(
+                date=tx_date,
+                product_id=it["product"].id,
+                quantity=it["qty"],
+                price_per_unit=it["unit_price"],
+                total_cost=it["total"],
+                organization_id=organization_id,
+                transaction_id=tx_by_cat.get(it["product"].expense_category_id, main_tx_id),
+                created_by=user_id,
+            ))
+
+
 # ── PRODUCT SEARCH API ────────────────────────────────────────────────────────
 
 from fastapi.responses import JSONResponse
@@ -1064,10 +1085,13 @@ def handle_add(
         db.flush()
         receipt_id = receipt.id
 
-    create_split_transactions(
+    tx_by_cat = create_split_transactions(
         db, resolved_items, amount, amount_paid_val, due_date_val,
         org_id, sid, description, tx_date, user.id, receipt_id=receipt_id,
     )
+    # Пока принудительно включено, чекбокс на форме нельзя снять (решено 15.07) —
+    # как только появится реальный выбор, читать add_to_warehouse из Form.
+    create_warehouse_receipts(db, resolved_items, tx_by_cat, org_id, tx_date, user.id)
 
     if resolved_items:
         for it in resolved_items:
@@ -1439,16 +1463,25 @@ def handle_edit_manual(
         .filter(ReceiptTransaction.receipt_id == receipt_id, Transaction.deleted_at.is_(None))
         .all()
     )
+    old_tx_ids = [t.id for t in old_txs]
     for old_tx in old_txs:
         old_tx.deleted_at = datetime.utcnow()
         audit(db, "transaction", old_tx.id, "delete", user.id, {"amount": float(old_tx.amount), "reason": "edit-manual"})
+    # Старые складские поступления этих проводок — тоже мягко удалить, иначе
+    # при правке количества остатки на складе задвоятся (старое + новое).
+    if old_tx_ids:
+        db.query(WarehouseReceipt).filter(
+            WarehouseReceipt.transaction_id.in_(old_tx_ids),
+            WarehouseReceipt.deleted_at.is_(None),
+        ).update({"deleted_at": datetime.utcnow()}, synchronize_session=False)
     db.query(ReceiptTransaction).filter(ReceiptTransaction.receipt_id == receipt_id).delete()
     db.query(ReceiptItem).filter(ReceiptItem.receipt_id == receipt_id).delete()
 
-    create_split_transactions(
+    tx_by_cat = create_split_transactions(
         db, resolved_items, amount, amount_paid_val, due_date_val,
         org_id, sid, description, tx_date, user.id, receipt_id=receipt_id,
     )
+    create_warehouse_receipts(db, resolved_items, tx_by_cat, org_id, tx_date, user.id)
     for it in resolved_items:
         db.add(ReceiptItem(
             receipt_id=receipt_id,
