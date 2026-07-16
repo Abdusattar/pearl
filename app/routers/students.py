@@ -57,10 +57,10 @@ def list_students(
     org_ids = descendants(current_org.id) if current_org else {o.id for o in accessible}
 
     query = db.query(Student)
-    if status in ("active", "inactive"):
+    if status in ("active", "inactive", "frozen"):
         query = query.filter(Student.status == status)
     else:
-        query = query.filter(Student.status.in_(("active", "inactive")))
+        query = query.filter(Student.status.in_(("active", "inactive", "frozen")))
     if current_org:
         query = query.filter(Student.organization_id.in_(org_ids))
     if q:
@@ -343,6 +343,7 @@ def _edit_context(db: Session, student: Student, error: str | None = None):
     active_services = [s for s in services if s.id in active_service_ids]
     tuition_service = get_tuition_service(db, student.organization_id)
     base_tuition_price = float(tuition_service.price) if tuition_service else 0.0
+    org = db.query(Organization).get(student.organization_id)
     return {
         "student": student,
         "groups": groups,
@@ -356,6 +357,11 @@ def _edit_context(db: Session, student: Student, error: str | None = None):
         "error": error,
         "default_monthly_fee": base_tuition_price,
         "tuition_fee": max(0.0, base_tuition_price - float(student.discount_amount or 0)),
+        "frozen_discount_percent": float(org.frozen_discount_percent) if org else 50.0,
+        # Новая карточка (ещё нет группы) — сразу в редактируемом виде, без лишнего
+        # клика «Изменить»: смотреть там пока нечего (16.07, тот же принцип, что и
+        # у /menu/ — пустой день/новая карточка не прячется за просмотр).
+        "personal_needs_edit": current_enrollment is None and student.status == "active",
     }
 
 

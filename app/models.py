@@ -13,6 +13,10 @@ class Organization(Base):
     name      = Column(String(100), nullable=False)
     parent_id = Column(Integer, ForeignKey("organizations.id"))
     type      = Column(String(20), nullable=False)  # root|school|kindergarten
+    # % от тарифа обучения при статусе ребёнка "Заморожен" — настройка объекта, не
+    # константа в коде (16.07, софт планируется другим садикам/школам с другими
+    # цифрами). Редактируется на /services/ теми же, кто меняет тариф.
+    frozen_discount_percent = Column(Numeric(5, 2), nullable=False, default=50, server_default='50')
     created_at = Column(DateTime, server_default=func.now())
 
     children  = relationship("Organization", foreign_keys=[parent_id],

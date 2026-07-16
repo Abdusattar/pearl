@@ -19,7 +19,8 @@
   <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
     <h3 style="font-size:15px;margin:0">Личные данные</h3>
     <button type="button" id="personal-edit-btn" class="btn btn-secondary"
-            style="padding:4px 10px;font-size:12px" onclick="toggleBlock('personal', true)">
+            style="padding:4px 10px;font-size:12px{% if personal_needs_edit %};display:none{% endif %}"
+            onclick="toggleBlock('personal', true)">
       Изменить
     </button>
   </div>
@@ -40,7 +41,7 @@
     </div>
   </div>
 
-  <div id="personal-view">
+  <div id="personal-view" {% if personal_needs_edit %}style="display:none"{% endif %}>
     <div class="form-group">
       <label>ФИО ребёнка</label>
       <div>{{ student.name }}</div>
@@ -54,6 +55,8 @@
       <div>
         {% if student.status == 'active' %}
         <span class="badge badge-confirmed">Активен</span>
+        {% elif student.status == 'frozen' %}
+        <span class="badge" style="background:#e0e7ff;color:#3730a3">Заморожен</span>
         {% else %}
         <span class="badge badge-pending">Выбыл</span>
         {% endif %}
@@ -69,7 +72,8 @@
     </div>
   </div>
 
-  <form method="post" action="/students/{{ student.id }}/edit" id="personal-form" style="display:none"
+  <form method="post" action="/students/{{ student.id }}/edit" id="personal-form"
+        style="{% if not personal_needs_edit %}display:none{% endif %}"
         onsubmit="return confirm('Сохранить изменения?')">
     <div class="form-group">
       <label for="last_name">Фамилия ребёнка *</label>
@@ -105,6 +109,7 @@
       <label for="status">Статус</label>
       <select id="status" name="status" class="form-control">
         <option value="active" {% if student.status == 'active' %}selected{% endif %}>Активен</option>
+        <option value="frozen" {% if student.status == 'frozen' %}selected{% endif %}>Заморожен ({{ "{:g}".format(frozen_discount_percent) }}% от тарифа, место держится)</option>
         <option value="inactive" {% if student.status == 'inactive' %}selected{% endif %}>Выбыл</option>
       </select>
     </div>

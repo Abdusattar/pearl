@@ -52,9 +52,10 @@ def update_student(
 ) -> Student:
     """Правка ФИО, группы, статуса и данных родителя. Смена группы закрывает
     текущий Enrollment и открывает новый — история переводов между группами
-    сохраняется. Статус меняется в обе стороны (Активен ↔ Выбыл); PIN при этом
-    не меняется — навсегда закреплён за ребёнком. При переводе в «Выбыл» текущая
-    группа закрывается, новая не открывается."""
+    сохраняется. Статус — Активен/Заморожен/Выбыл; PIN при этом не меняется —
+    навсегда закреплён за ребёнком. При переводе в «Выбыл» текущая группа
+    закрывается, новая не открывается. «Заморожен» — место держится, Enrollment
+    НЕ трогаем вообще (см. billing.generate_monthly_charges, wiki про статус)."""
     student = db.query(Student).filter(Student.id == student_id).first()
     if not student:
         raise ValueError(f"Студент {student_id} не найден")
@@ -64,14 +65,16 @@ def update_student(
     student.name = compose_name(last_name, first_name, patronymic)
     student.parent_name = (parent_name or "").strip() or None
     student.parent_contact = (parent_contact or "").strip() or None
-    if status in ("active", "inactive"):
+    if status in ("active", "inactive", "frozen"):
         student.status = status
 
     current = db.query(Enrollment).filter(
         Enrollment.student_id == student_id, Enrollment.end_date.is_(None)
     ).first()
 
-    if student.status != "active":
+    if student.status == "frozen":
+        pass
+    elif student.status == "inactive":
         if current:
             current.end_date = date.today()
     elif group_id and (not current or current.group_id != group_id):

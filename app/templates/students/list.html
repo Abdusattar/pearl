@@ -31,6 +31,7 @@
       {% endif %}
       <select name="status" class="form-control" style="width:auto" onchange="this.form.submit()">
         <option value="active" {% if status == 'active' %}selected{% endif %}>Активные</option>
+        <option value="frozen" {% if status == 'frozen' %}selected{% endif %}>Заморожены</option>
         <option value="inactive" {% if status == 'inactive' %}selected{% endif %}>Выбывшие</option>
         <option value="all" {% if status == 'all' %}selected{% endif %}>Все</option>
       </select>
@@ -73,6 +74,8 @@
         <td data-label="Статус">
           {% if s.status == 'active' %}
           <span class="badge badge-confirmed">Активен</span>
+          {% elif s.status == 'frozen' %}
+          <span class="badge" style="background:#e0e7ff;color:#3730a3">Заморожен</span>
           {% else %}
           <span class="badge badge-pending">Выбыл</span>
           {% endif %}

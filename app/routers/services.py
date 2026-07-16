@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.dependencies import get_current_user, get_accessible_orgs, resolve_org
-from app.models import Service
+from app.models import Service, Organization
 
 router = APIRouter(prefix="/services", tags=["services"])
 templates = Jinja2Templates(directory=str(Path(__file__).parent.parent / "templates"))
@@ -40,11 +40,38 @@ def service_list(request: Request, org_id: str | None = None, error: str | None 
         "current_user": user,
         "accessible_orgs": accessible,
         "current_org_id": current_org.id if current_org else None,
+        "current_org": current_org,
         "services": services,
         "active_page": "services",
         "can_edit_price": user.id in PRICE_EDITORS,
         "error": error,
     })
+
+
+@router.post("/frozen-percent")
+def update_frozen_percent(
+    request: Request,
+    percent: str = Form(...),
+    org_id: str = Form(default=""),
+    db: Session = Depends(get_db),
+):
+    user = get_current_user(request, db)
+    if not user:
+        return RedirectResponse("/login", status_code=302)
+    base_url = f"/services/?org_id={org_id}" if org_id else "/services/"
+    if user.id not in PRICE_EDITORS:
+        sep = "&" if "?" in base_url else "?"
+        msg = quote("Менять этот процент может только Айдай или Талас")
+        return RedirectResponse(f"{base_url}{sep}error={msg}", status_code=303)
+    org = db.query(Organization).get(int(org_id)) if org_id.isdigit() else None
+    try:
+        percent_val = float(percent)
+    except ValueError:
+        percent_val = None
+    if org and percent_val is not None and 0 <= percent_val <= 100:
+        org.frozen_discount_percent = percent_val
+        db.commit()
+    return RedirectResponse(base_url, status_code=303)
 
 
 @router.post("/", response_class=HTMLResponse)

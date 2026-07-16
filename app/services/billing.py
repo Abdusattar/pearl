@@ -4,7 +4,7 @@ from datetime import date
 from sqlalchemy.orm import Session
 from sqlalchemy import func
 
-from app.models import Student, StudentService, Service, Charge, Transaction, Enrollment
+from app.models import Student, StudentService, Service, Charge, Transaction, Enrollment, Organization
 
 
 def get_tuition_service(db: Session, organization_id: int) -> Service | None:
@@ -52,7 +52,10 @@ def _active_services(db: Session, student_id: int) -> list[StudentService]:
 
 def generate_monthly_charges(db: Session) -> int:
     """Начисляет учёбу + подключённые услуги за текущий месяц каждому активному
-    ребёнку — один раз в месяц. Без cron: вызывается при заходе на страницу."""
+    ребёнку — один раз в месяц. Без cron: вызывается при заходе на страницу.
+    Статус "frozen" (место держится, ребёнок не ходит) — только процент от тарифа
+    (Organization.frozen_discount_percent, настройка объекта, не константа), без
+    доп.услуг и без пропорции по дате: ребёнок ими не пользуется, пока заморожен."""
     period = date.today().replace(day=1)
 
     already_charged = {
@@ -61,17 +64,24 @@ def generate_monthly_charges(db: Session) -> int:
         .distinct()
     }
 
-    students = db.query(Student).filter(Student.status == "active").all()
+    org_frozen_percent = dict(db.query(Organization.id, Organization.frozen_discount_percent).all())
+
+    students = db.query(Student).filter(Student.status.in_(("active", "frozen"))).all()
     created = 0
     for student in students:
         if student.id in already_charged:
             continue
 
         tuition = _tuition_fee(db, student)  # уже с учётом скидки на тариф (Student.discount_amount)
-        services = _active_services(db, student.id)
-        services_total = sum(float(ss.service.price) for ss in services)
-        factor = _proration_factor(db, student.id, period)
-        total = round((tuition + services_total) * factor, 2)
+
+        if student.status == "frozen":
+            percent = float(org_frozen_percent.get(student.organization_id) or 0)
+            total = round(tuition * percent / 100, 2)
+        else:
+            services = _active_services(db, student.id)
+            services_total = sum(float(ss.service.price) for ss in services)
+            factor = _proration_factor(db, student.id, period)
+            total = round((tuition + services_total) * factor, 2)
         if total <= 0:
             continue
 

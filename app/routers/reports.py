@@ -45,7 +45,7 @@ def debtors_report(
 
     org_ids = descendants(current_org.id) if current_org else {o.id for o in accessible}
 
-    query = db.query(Student).filter(Student.status == "active", Student.organization_id.in_(org_ids))
+    query = db.query(Student).filter(Student.status.in_(("active", "frozen")), Student.organization_id.in_(org_ids))
 
     group_id_int = int(group_id) if group_id and group_id.isdigit() else None
     if group_id_int:

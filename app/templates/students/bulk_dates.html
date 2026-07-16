@@ -46,6 +46,7 @@
           <td data-label="Статус">
             <select name="status" class="form-control" style="font-size:13px">
               <option value="active" {% if r.status == 'active' %}selected{% endif %}>Активен</option>
+              <option value="frozen" {% if r.status == 'frozen' %}selected{% endif %}>Заморожен</option>
               <option value="inactive" {% if r.status == 'inactive' %}selected{% endif %}>Выбыл</option>
             </select>
           </td>

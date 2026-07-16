@@ -30,6 +30,35 @@
   </form>
 </div>
 
+{% if current_org %}
+<div class="card" style="max-width:560px;margin-bottom:20px">
+  <h3 style="font-size:15px;margin-bottom:6px">Скидка при статусе «Заморожен»</h3>
+  <div style="font-size:12px;color:var(--text-muted);margin-bottom:12px">
+    Ребёнок временно не ходит, место в группе держится — начисляется этот % от тарифа обучения, без доп.услуг.
+  </div>
+  <div id="price-view-frozen-pct" style="display:flex;align-items:center;gap:8px">
+    <span>{{ "{:g}".format(current_org.frozen_discount_percent) }}%</span>
+    {% if can_edit_price %}
+    <button type="button" class="btn btn-secondary" style="padding:3px 8px;font-size:11px"
+            onclick="toggleBlock('frozen-pct', true)">Изменить</button>
+    {% endif %}
+  </div>
+  {% if can_edit_price %}
+  <form method="post" action="/services/frozen-percent" id="price-form-frozen-pct"
+        style="display:none;align-items:center;gap:6px"
+        onsubmit="return confirm('Сохранить новый процент для «{{ current_org.name }}»?')">
+    <input type="hidden" name="org_id" value="{{ current_org_id or '' }}">
+    <input type="number" step="0.01" min="0" max="100" name="percent"
+           value="{{ current_org.frozen_discount_percent|float }}" class="form-control"
+           style="width:100px;padding:4px 8px;font-size:13px">
+    <button type="submit" class="btn btn-primary" style="padding:4px 10px;font-size:12px">Сохранить</button>
+    <button type="button" class="btn btn-secondary" style="padding:4px 10px;font-size:12px"
+            onclick="toggleBlock('frozen-pct', false)">Отмена</button>
+  </form>
+  {% endif %}
+</div>
+{% endif %}
+
 <div class="card">
   {% if services %}
   <table class="table">

@@ -93,7 +93,9 @@ def optima_payment(
     if not student:
         return respond(ERR_NOT_FOUND, "PIN не найден")
 
-    if student.status != "active":
+    # "frozen" — место держится, ребёнок временно не ходит, но продолжает начисляться
+    # (частично) и должен иметь возможность оплатить — см. billing.generate_monthly_charges
+    if student.status not in ("active", "frozen"):
         return respond(ERR_INACTIVE, "Ребёнок выбыл")
 
     # ── CHECK ────────────────────────────────────────────────────────────────
