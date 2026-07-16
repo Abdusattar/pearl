@@ -152,7 +152,27 @@ class Supplier(Base):
     name       = Column(String(200), nullable=False)
     phone      = Column(String(20), nullable=False)
     inn        = Column(String(20), nullable=True)  # для реестров бухгалтеру (ст. 177 НК КР)
+    # Долг поставщику на момент начала учёта в системе (до первого закупа) —
+    # отдельная сумма, не привязанная к конкретной Transaction, см. supplier_ledger.py
+    opening_balance      = Column(Numeric(12, 2), nullable=False, default=0, server_default='0')
+    opening_balance_date = Column(Date)
     created_at = Column(DateTime, server_default=func.now())
+
+
+class SupplierPayment(Base):
+    """Погашение долга поставщику — запись ленты платежей, независимая от Transaction.amount_paid.
+    Не привязана к конкретному закупу: баланс считается на лету (supplier_ledger.py), FIFO
+    по дате поверх недоплат по закупам + opening_balance. Так платёж можно удалить/поправить
+    без отдельной логики отката (16.07)."""
+    __tablename__ = "supplier_payments"
+    id          = Column(Integer, primary_key=True)
+    supplier_id = Column(Integer, ForeignKey("suppliers.id"), nullable=False)
+    amount      = Column(Numeric(12, 2), nullable=False)
+    date        = Column(Date, nullable=False)
+    comment     = Column(Text)
+    created_by  = Column(Integer, ForeignKey("users.id"))
+    created_at  = Column(DateTime, server_default=func.now())
+    deleted_at  = Column(DateTime)
 
 
 class Transaction(Base):

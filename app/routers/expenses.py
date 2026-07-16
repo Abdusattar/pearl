@@ -18,6 +18,7 @@ from app.services.ocr import compute_hash, analyze_receipt
 from app.services.products import match_product, rank_candidates, get_or_create_product, ensure_alias
 from app.services.normalize import normalize_items
 from app.services import recurring_expenses
+from app.services import supplier_ledger
 from app.dependencies import get_current_user
 
 router = APIRouter(prefix="/expenses", tags=["expenses"])
@@ -276,6 +277,19 @@ def list_expenses(
     current_org = resolve_org(org_id, user, db, all_orgs)
     current_org_id = current_org.id if current_org else None
 
+    # Остаток долга с учётом платежей из ленты (не просто amount - amount_paid — тот факт
+    # не знает про погашения, сделанные позже через /suppliers). Кэш на запрос, т.к. один
+    # поставщик встречается в нескольких строках списка.
+    _debt_cache: dict[int, dict[int, float]] = {}
+
+    def tx_remaining_debt(tx) -> float | None:
+        if not tx or not tx.supplier_id:
+            return None
+        if tx.supplier_id not in _debt_cache:
+            _debt_cache[tx.supplier_id] = supplier_ledger.get_transaction_remaining_debt(db, tx.supplier_id)
+        remaining = _debt_cache[tx.supplier_id].get(tx.id)
+        return float(remaining) if remaining else None
+
     # Доступные org_id для фильтрации
     if user.role == "manager":
         visible_org_ids = [o.id for o in accessible]
@@ -357,7 +371,7 @@ def list_expenses(
         tx_cat = _cat_name(tx.category_id) if tx else None
         tx_id = tx.id if tx else None
         tx_supplier = supplier_map.get(tx.supplier_id) if tx else None
-        tx_debt = (tx.amount - tx.amount_paid) if tx and tx.amount_paid is not None else None
+        tx_debt = tx_remaining_debt(tx)
         if r.ocr_status == "manual":
             # Позиции определяют разбивку по категориям — редактируется как целый чек
             # (та же форма ввода), не как одна отдельная Transaction (edit_tx.html).
@@ -423,7 +437,7 @@ def list_expenses(
                 "amount_detected": None,
                 "amount_confirmed": tx.amount,
                 "ocr_status": "manual",
-                "debt": (tx.amount - tx.amount_paid) if tx.amount_paid is not None else None,
+                "debt": tx_remaining_debt(tx),
             })
         receipts.sort(key=lambda r: r["sort_date"] or date.min, reverse=True)
 
@@ -438,22 +452,27 @@ def list_expenses(
         .group_by(Transaction.organization_id)
         .all()
     )
-    debt_by_org = dict(
-        db.query(Transaction.organization_id, func.sum(Transaction.amount - Transaction.amount_paid))
-        .filter(
+    # Итог "Долг поставщикам" — полный баланс (закупы + начальное сальдо) по каждому
+    # поставщику, с которым работает видимая орг. Не суммируем просто недоплаты по
+    # Transaction — иначе сальдо (оно не привязано ни к одной Transaction, у Supplier
+    # нет organization_id) выпадало бы из этого итога, а на /suppliers было бы видно —
+    # та самая несостыковка, которую платежи должны были устранить, а не породить.
+    visible_supplier_ids = {
+        sid for (sid,) in db.query(Transaction.supplier_id).filter(
             Transaction.organization_id.in_(visible_org_ids),
             Transaction.type == "expense",
             Transaction.deleted_at.is_(None),
-            Transaction.amount_paid.isnot(None),
-        )
-        .group_by(Transaction.organization_id)
-        .all()
+            Transaction.supplier_id.isnot(None),
+        ).distinct().all()
+    }
+    total_debt = sum(
+        (supplier_ledger.get_supplier_balance(db, sid) for sid in visible_supplier_ids),
+        supplier_ledger.ZERO,
     )
     totals = [
         {"org_name": org_map.get(org_id_t, "?"), "total": totals_by_org[org_id_t]}
         for org_id_t in visible_org_ids if totals_by_org.get(org_id_t)
     ]
-    total_debt = sum(debt_by_org.values()) if debt_by_org else 0
 
     uncategorized_count = db.query(Transaction).filter(
         Transaction.organization_id.in_(visible_org_ids),
@@ -764,6 +783,10 @@ def confirm_form(
             amount_paid_for_edit = total_paid if total_paid < total_amount - 0.009 else None
             due_date_val = next((t.due_date for t in txs if t.due_date), None)
             supplier = db.get(Supplier, txs[0].supplier_id) if txs[0].supplier_id else None
+            # Долг в отображении — остаток с учётом ленты платежей (может быть уже погашен
+            # позже, отдельно от amount_paid этого закупа), не просто разница amount-amount_paid.
+            remaining_map = supplier_ledger.get_transaction_remaining_debt(db, txs[0].supplier_id) if txs[0].supplier_id else {}
+            ledger_debt = sum(float(remaining_map.get(t.id, 0)) for t in txs)
             confirmed_tx = {
                 "amount": receipt.amount_confirmed,
                 "date": txs[0].date.strftime("%d.%m.%Y") if txs[0].date else "—",
@@ -773,7 +796,7 @@ def confirm_form(
                 "supplier_name": supplier.name if supplier else "—",
                 "description": txs[0].description or "",
                 "amount_paid": amount_paid_for_edit,
-                "debt": (total_amount - amount_paid_for_edit) if amount_paid_for_edit is not None else None,
+                "debt": ledger_debt if ledger_debt > 0 else None,
                 "due_date": due_date_val.isoformat() if due_date_val else "",
             }
 
@@ -1307,7 +1330,10 @@ def edit_tx_form(tx_id: int, request: Request, org_id: int | None = None, db: Se
             "amount": tx.amount,
             "amount_paid": tx.amount_paid,
             "due_date": tx.due_date.isoformat() if tx.due_date else "",
-            "debt": (tx.amount - tx.amount_paid) if tx.amount_paid is not None else None,
+            "debt": (
+                float(supplier_ledger.get_transaction_remaining_debt(db, tx.supplier_id).get(tx.id) or 0) or None
+                if tx.supplier_id else None
+            ),
             "date": tx.date.isoformat() if tx.date else date.today().isoformat(),
             "category_id": tx.category_id,
             "category_name": db.query(ExpenseCategory).get(tx.category_id).name if tx.category_id else None,
@@ -1419,6 +1445,8 @@ def edit_manual_form(receipt_id: int, request: Request, org_id: int | None = Non
     org_name = next((o.name for o in upload_orgs if o.id == first_tx.organization_id), "—")
     supplier = db.get(Supplier, first_tx.supplier_id) if first_tx.supplier_id else None
     amount_paid_for_view = total_paid if total_paid < total_amount - 0.009 else None
+    remaining_map = supplier_ledger.get_transaction_remaining_debt(db, first_tx.supplier_id) if first_tx.supplier_id else {}
+    ledger_debt = sum(float(remaining_map.get(t.id, 0)) for t in txs)
 
     return templates.TemplateResponse("expenses/add.html", {
         "request": request,
@@ -1438,7 +1466,7 @@ def edit_manual_form(receipt_id: int, request: Request, org_id: int | None = Non
         "edit_description": first_tx.description or "",
         "edit_amount": total_amount,
         "edit_amount_paid": amount_paid_for_view,
-        "edit_debt": (total_amount - amount_paid_for_view) if amount_paid_for_view is not None else None,
+        "edit_debt": ledger_debt if ledger_debt > 0 else None,
         "edit_due_date": due_date_val.isoformat() if due_date_val else "",
         "edit_date": first_tx.date.isoformat() if first_tx.date else date.today().isoformat(),
         "edit_items": items,

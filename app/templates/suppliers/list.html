@@ -54,7 +54,8 @@
     </thead>
     <tbody>
       {% for s in suppliers %}
-      <tr>
+      <tr data-href="/suppliers/{{ s.id }}?org_id={{ current_org_id or '' }}"
+          style="cursor:pointer{% if s.debt and s.debt > 0 %};background:#fef3e2{% endif %}">
         <td data-label="Название" style="font-weight:500">{{ s.name }}</td>
         <td data-label="Телефон">{{ s.phone or '—' }}</td>
         <td data-label="ИНН" style="color:var(--text-muted)">{{ s.inn or '—' }}</td>
@@ -67,9 +68,9 @@
         </td>
         <td class="actions">
           <form method="post" action="/suppliers/{{ s.id }}/delete" style="display:inline"
-                onsubmit="return confirm('Удалить поставщика «{{ s.name }}»?')">
+                onsubmit="event.stopPropagation();return confirm('Удалить поставщика «{{ s.name }}»?')">
             <input type="hidden" name="org_id" value="{{ current_org_id or '' }}">
-            <button type="submit"
+            <button type="submit" onclick="event.stopPropagation()"
                     style="background:none;border:none;color:#dc2626;cursor:pointer;font-size:16px;padding:4px 6px"
                     title="Удалить">🗑</button>
           </form>
@@ -85,4 +86,16 @@
   </div>
   {% endif %}
 </div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+document.querySelectorAll('tr[data-href]').forEach(function(row) {
+  row.addEventListener('click', function(e) {
+    if (!e.target.closest('a, button')) {
+      window.location = row.dataset.href;
+    }
+  });
+});
+</script>
 {% endblock %}

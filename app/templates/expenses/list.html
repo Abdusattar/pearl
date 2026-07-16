@@ -70,7 +70,7 @@
     </thead>
     <tbody>
       {% for r in receipts %}
-      <tr {% if r.href %}data-href="{{ r.href }}" style="cursor:pointer"{% endif %}>
+      <tr {% if r.href %}data-href="{{ r.href }}"{% endif %} style="cursor:pointer{% if r.debt and r.debt > 0 %};background:#fef3e2{% endif %}">
         <td data-label="Дата">{{ r.date_display }}</td>
         <td data-label="Категория">
           {{ r.category_name or '—' }}
