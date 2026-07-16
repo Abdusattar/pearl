@@ -5,13 +5,21 @@ from app.models import Student, Enrollment
 
 PIN_DIGITS = 4
 ARCHIVE_AFTER_DAYS = 365
+# PIN 9001/9002 — постоянные фиктивные аккаунты для тестов банка Optima (не реальные
+# дети, см. wiki/payments/optima.md), не должны сдвигать счётчик реальных детей —
+# иначе первый же новый ребёнок получил бы 9003 вместо 0097.
+TEST_PIN_THRESHOLD = 9000
 
 
 def get_next_free_pin(db: Session) -> str:
     """Следующий PIN — монотонно возрастает, никогда не переиспользуется
     (даже после того, как ребёнок выбыл), чтобы исключить перепутывание
-    платежей на стороне Optima."""
-    pins = [int(p) for (p,) in db.query(Student.pin).all() if p.isdigit()]
+    платежей на стороне Optima. Тестовые PIN банка (>= TEST_PIN_THRESHOLD)
+    из подсчёта исключены — это отдельный зарезервированный диапазон."""
+    pins = [
+        int(p) for (p,) in db.query(Student.pin).all()
+        if p.isdigit() and int(p) < TEST_PIN_THRESHOLD
+    ]
     n = (max(pins) if pins else 0) + 1
     limit = 10 ** PIN_DIGITS - 1
     if n > limit:
