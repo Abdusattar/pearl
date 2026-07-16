@@ -1,0 +1,69 @@
+{% extends "base.html" %}
+{% set active_page = "students" %}
+{% block title %}Массовая правка дат — Жемчужина{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <h1>Даты поступления, группы, статус</h1>
+  <a href="/students/?org_id={{ current_org_id }}" class="btn btn-secondary">← Назад</a>
+</div>
+
+<div style="font-size:13px;color:var(--text-muted);margin:-8px 0 16px;max-width:680px">
+  Одноразовое заполнение реальных данных вместо технической даты миграции. Правка
+  даты не пересчитывает уже готовые начисления за текущий месяц — повлияет только
+  на будущие месяцы.
+</div>
+
+<form method="post" action="/students/bulk-dates">
+  <input type="hidden" name="org_id" value="{{ current_org_id }}">
+
+  <div class="card">
+    {% if student_rows %}
+    <table class="table">
+      <thead>
+        <tr>
+          <th>ФИО ребёнка</th>
+          <th style="width:200px">Группа</th>
+          <th style="width:140px">Статус</th>
+          <th style="width:160px">Дата поступления</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for r in student_rows %}
+        <tr>
+          <td data-label="ФИО">
+            {{ r.name }}
+            <input type="hidden" name="student_id" value="{{ r.id }}">
+          </td>
+          <td data-label="Группа">
+            <select name="group_id" class="form-control" style="font-size:13px">
+              <option value="" {% if not r.group_id %}selected{% endif %}>— без группы —</option>
+              {% for g in groups %}
+              <option value="{{ g.id }}" {% if g.id == r.group_id %}selected{% endif %}>{{ g.name }}</option>
+              {% endfor %}
+            </select>
+          </td>
+          <td data-label="Статус">
+            <select name="status" class="form-control" style="font-size:13px">
+              <option value="active" {% if r.status == 'active' %}selected{% endif %}>Активен</option>
+              <option value="inactive" {% if r.status == 'inactive' %}selected{% endif %}>Выбыл</option>
+            </select>
+          </td>
+          <td data-label="Дата поступления">
+            <input type="date" name="start_date" class="form-control" style="font-size:13px" value="{{ r.start_date }}">
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+    <div style="text-align:center;padding:32px;color:var(--text-muted)">Детей нет.</div>
+    {% endif %}
+  </div>
+
+  {% if student_rows %}
+  <button type="submit" class="btn btn-primary" style="margin-top:16px"
+          onclick="return confirm('Сохранить изменения по всем детям?')">Сохранить всё</button>
+  {% endif %}
+</form>
+{% endblock %}

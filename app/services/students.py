@@ -77,6 +77,24 @@ def update_student(
     return student
 
 
+def set_first_enrollment_start(db: Session, student_id: int, new_date: date) -> bool:
+    """Правит дату САМОГО РАННЕГО зачисления ребёнка (историческая дата поступления,
+    для бэкфилла реальных дат вместо технической даты миграции) — не создаёт новую
+    запись, правит существующую. Важно: billing._proration_factor() читает именно
+    MIN(Enrollment.start_date) — эта функция обязана целиться в ту же строку, иначе
+    расхождение между тем, что поправили, и тем, что реально влияет на начисление."""
+    earliest = (
+        db.query(Enrollment)
+        .filter(Enrollment.student_id == student_id)
+        .order_by(Enrollment.start_date.asc(), Enrollment.id.asc())
+        .first()
+    )
+    if not earliest:
+        return False
+    earliest.start_date = new_date
+    return True
+
+
 def archive_stale_students(db: Session) -> int:
     """Через год после перевода в 'выбыл' — переводим в архив.
     Данные и транзакции не удаляются (на transactions есть FK), только

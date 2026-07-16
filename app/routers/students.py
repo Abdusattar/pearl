@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import date, datetime
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, Form, Request
@@ -10,6 +10,7 @@ from app.database import get_db
 from app.models import Organization, Student, User, Group, Enrollment, Service, StudentService, AuditLog
 from app.services.students import (
     get_next_free_pin, update_student, compose_name, archive_stale_students,
+    set_first_enrollment_start,
 )
 from app.services.billing import (
     generate_monthly_charges, get_balance, get_ledger, set_student_services, get_tuition_service,
@@ -122,6 +123,102 @@ def list_students(
         "current_user": user,
         "active_page": "students",
     })
+
+
+# ── BULK-EDIT (дата поступления/группа/статус разом, для бэкфилла) ────────────
+
+@router.get("/bulk-dates", response_class=HTMLResponse)
+def bulk_dates_form(request: Request, org_id: str | None = None, db: Session = Depends(get_db)):
+    org_id = int(org_id) if org_id and org_id.isdigit() else None
+    user = get_current_user(request, db)
+    if not user:
+        return RedirectResponse("/login", status_code=302)
+
+    accessible = get_accessible_orgs(user, db)
+    current_org = resolve_org(org_id, user, db)
+
+    students = (
+        db.query(Student)
+        .filter(Student.organization_id == current_org.id)
+        .order_by(Student.name)
+        .all()
+    ) if current_org else []
+
+    groups = (
+        db.query(Group)
+        .filter(Group.organization_id == current_org.id)
+        .order_by(Group.name)
+        .all()
+    ) if current_org else []
+
+    enrollments_by_student: dict[int, list[Enrollment]] = {}
+    if students:
+        rows = (
+            db.query(Enrollment)
+            .filter(Enrollment.student_id.in_([s.id for s in students]))
+            .order_by(Enrollment.start_date.asc(), Enrollment.id.asc())
+            .all()
+        )
+        for e in rows:
+            enrollments_by_student.setdefault(e.student_id, []).append(e)
+
+    student_rows = []
+    for s in students:
+        rows = enrollments_by_student.get(s.id, [])
+        active = next((e for e in rows if e.end_date is None), None)
+        student_rows.append({
+            "id": s.id,
+            "name": s.name,
+            "status": s.status,
+            "group_id": active.group_id if active else None,
+            "start_date": rows[0].start_date.isoformat() if rows else "",
+        })
+
+    return templates.TemplateResponse("students/bulk_dates.html", {
+        "request": request,
+        "current_user": user,
+        "accessible_orgs": accessible,
+        "current_org_id": current_org.id if current_org else None,
+        "groups": groups,
+        "student_rows": student_rows,
+    })
+
+
+@router.post("/bulk-dates")
+def bulk_dates_save(
+    request: Request,
+    org_id: str = Form(...),
+    student_id: list[int] = Form(default=[]),
+    group_id: list[str] = Form(default=[]),
+    status: list[str] = Form(default=[]),
+    start_date: list[str] = Form(default=[]),
+    db: Session = Depends(get_db),
+):
+    user = get_current_user(request, db)
+    if not user:
+        return RedirectResponse("/login", status_code=302)
+
+    for i, sid in enumerate(student_id):
+        student = db.query(Student).filter(Student.id == sid).first()
+        if not student:
+            continue
+        st = status[i] if i < len(status) else "active"
+        gid_raw = group_id[i] if i < len(group_id) else ""
+        gid = int(gid_raw) if gid_raw.isdigit() else None
+        date_raw = (start_date[i] if i < len(start_date) else "").strip()
+
+        update_student(
+            db, sid, student.last_name or "", student.first_name or "",
+            student.patronymic or "", gid, st, student.parent_name, student.parent_contact,
+        )
+        if date_raw:
+            try:
+                set_first_enrollment_start(db, sid, date.fromisoformat(date_raw))
+            except ValueError:
+                pass
+
+    db.commit()
+    return RedirectResponse(f"/students/bulk-dates?org_id={org_id}", status_code=303)
 
 
 # ── ADD ───────────────────────────────────────────────────────────────────────

@@ -1,9 +1,10 @@
+from calendar import monthrange
 from datetime import date
 
 from sqlalchemy.orm import Session
 from sqlalchemy import func
 
-from app.models import Student, StudentService, Service, Charge, Transaction
+from app.models import Student, StudentService, Service, Charge, Transaction, Enrollment
 
 
 def get_tuition_service(db: Session, organization_id: int) -> Service | None:
@@ -22,6 +23,23 @@ def _tuition_fee(db: Session, student: Student) -> float:
     base = float(tuition_service.price) if tuition_service else 0.0
     discount = float(student.discount_amount or 0)
     return max(0.0, base - discount)
+
+
+def _proration_factor(db: Session, student_id: int, period: date) -> float:
+    """1.0 обычно. Меньше — если ребёнок впервые зачислен в этом же месяце (Enrollment
+    ещё не было до начала периода): начисляем только за дни с даты старта до конца
+    месяца, а не за весь месяц. Первое зачисление ищем по всем группам ребёнка —
+    перевод между группами без разрыва не считается новым стартом."""
+    first_start = db.query(func.min(Enrollment.start_date)).filter(
+        Enrollment.student_id == student_id
+    ).scalar()
+    if not first_start or first_start <= period:
+        return 1.0
+    if first_start.year != period.year or first_start.month != period.month:
+        return 1.0
+    days_in_month = monthrange(period.year, period.month)[1]
+    days_active = days_in_month - first_start.day + 1
+    return max(0.0, min(1.0, days_active / days_in_month))
 
 
 def _active_services(db: Session, student_id: int) -> list[StudentService]:
@@ -52,7 +70,8 @@ def generate_monthly_charges(db: Session) -> int:
         tuition = _tuition_fee(db, student)  # уже с учётом скидки на тариф (Student.discount_amount)
         services = _active_services(db, student.id)
         services_total = sum(float(ss.service.price) for ss in services)
-        total = tuition + services_total
+        factor = _proration_factor(db, student.id, period)
+        total = round((tuition + services_total) * factor, 2)
         if total <= 0:
             continue
 
