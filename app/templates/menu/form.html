@@ -41,7 +41,8 @@
       {% if chips_by_meal[mt] %}
       <div style="margin-bottom:6px">
         {% for d in chips_by_meal[mt] %}
-        <button type="button" class="chip-pick" onclick="addChip('{{ cell }}','{{ day.date.isoformat() }}','{{ mt }}',{{ d.name|tojson }})">{{ d.name }}</button>
+        <button type="button" class="chip-pick"
+                data-cell="{{ cell }}" data-date="{{ day.date.isoformat() }}" data-meal="{{ mt }}" data-name="{{ d.name }}">{{ d.name }}</button>
         {% endfor %}
       </div>
       {% endif %}
@@ -75,6 +76,12 @@
 
 {% block scripts %}
 <script>
+document.querySelectorAll('.chip-pick').forEach(btn => {
+  btn.addEventListener('click', () => {
+    addChip(btn.dataset.cell, btn.dataset.date, btn.dataset.meal, btn.dataset.name);
+  });
+});
+
 function addChip(cellId, dateIso, meal, name) {
   name = (name || '').trim();
   if (!name) return;
