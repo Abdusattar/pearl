@@ -88,6 +88,7 @@ def menu_form(request: Request, org_id: str | None = None, start: str | None = N
             "date": d,
             "label": f"{WEEKDAY_NAMES[d.weekday()]}, {d.strftime('%d.%m')}",
             "meals": {mt: entries_by_day.get(d, {}).get(mt, []) for mt in MEAL_TYPES},
+            "has_entries": d in entries_by_day,
         }
         for d in days
     ]

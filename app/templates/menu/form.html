@@ -31,42 +31,65 @@
   </div>
 
   {% for day in day_cards %}
+  {% set day_id = day.date.isoformat() %}
   <div class="card" style="margin-bottom:16px">
-    <h3 style="margin:0 0 12px">{{ day.label }}</h3>
-    {% for mt in meal_types %}
-    {% set cell = loop.index0 ~ '_' ~ day.date.isoformat() %}
-    <div style="margin-bottom:14px">
-      <label style="font-size:13px;font-weight:600;color:var(--text-muted);display:block;margin-bottom:6px">{{ mt }}</label>
-
-      {% if chips_by_meal[mt] %}
-      <div style="margin-bottom:6px">
-        {% for d in chips_by_meal[mt] %}
-        <button type="button" class="chip-pick"
-                data-cell="{{ cell }}" data-date="{{ day.date.isoformat() }}" data-meal="{{ mt }}" data-name="{{ d.name }}">{{ d.name }}</button>
-        {% endfor %}
-      </div>
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
+      <h3 style="margin:0">{{ day.label }}</h3>
+      {% if day.has_entries %}
+      <button type="button" id="day-edit-btn_{{ day_id }}" class="btn btn-secondary"
+              style="padding:4px 10px;font-size:12px" onclick="toggleDay('{{ day_id }}', true)">✎ Редактировать</button>
       {% endif %}
-
-      <div id="chips_{{ cell }}" class="chip-list">
-        {% for d in day.meals[mt] %}
-        <span class="chip">
-          <input type="hidden" name="entry_date" value="{{ day.date.isoformat() }}">
-          <input type="hidden" name="entry_meal" value="{{ mt }}">
-          <input type="hidden" name="entry_dish" value="{{ d.name }}">
-          {{ d.name }}
-          <button type="button" onclick="this.closest('.chip').remove()">×</button>
-        </span>
-        {% endfor %}
-      </div>
-
-      <div style="position:relative;max-width:320px;margin-top:4px">
-        <input type="text" class="form-control dish-input" autocomplete="off"
-               placeholder="Напечатать блюдо и Enter..." style="font-size:13px;padding:6px 10px"
-               data-cell="{{ cell }}" data-date="{{ day.date.isoformat() }}" data-meal="{{ mt }}">
-        <div class="ac-dropdown" style="display:none;position:absolute;z-index:100;left:0;right:0;top:100%;background:#fff;border:1px solid var(--border);border-radius:6px;box-shadow:0 4px 12px rgba(0,0,0,.1);max-height:160px;overflow-y:auto"></div>
-      </div>
     </div>
-    {% endfor %}
+
+    {% if day.has_entries %}
+    <div id="day-view_{{ day_id }}">
+      {% for mt in meal_types %}
+      <div style="margin-bottom:10px">
+        <label style="font-size:13px;font-weight:600;color:var(--text-muted);display:block;margin-bottom:4px">{{ mt }}</label>
+        <div style="font-size:14px">
+          {% if day.meals[mt] %}{{ day.meals[mt] | map(attribute='name') | join(', ') }}{% else %}<span style="color:var(--text-muted)">—</span>{% endif %}
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+    {% endif %}
+
+    <div id="day-edit_{{ day_id }}" {% if day.has_entries %}style="display:none"{% endif %}>
+      {% for mt in meal_types %}
+      {% set cell = loop.index0 ~ '_' ~ day.date.isoformat() %}
+      <div style="margin-bottom:14px">
+        <label style="font-size:13px;font-weight:600;color:var(--text-muted);display:block;margin-bottom:6px">{{ mt }}</label>
+
+        {% if chips_by_meal[mt] %}
+        <div style="margin-bottom:6px">
+          {% for d in chips_by_meal[mt] %}
+          <button type="button" class="chip-pick"
+                  data-cell="{{ cell }}" data-date="{{ day.date.isoformat() }}" data-meal="{{ mt }}" data-name="{{ d.name }}">{{ d.name }}</button>
+          {% endfor %}
+        </div>
+        {% endif %}
+
+        <div id="chips_{{ cell }}" class="chip-list">
+          {% for d in day.meals[mt] %}
+          <span class="chip">
+            <input type="hidden" name="entry_date" value="{{ day.date.isoformat() }}">
+            <input type="hidden" name="entry_meal" value="{{ mt }}">
+            <input type="hidden" name="entry_dish" value="{{ d.name }}">
+            {{ d.name }}
+            <button type="button" onclick="this.closest('.chip').remove()">×</button>
+          </span>
+          {% endfor %}
+        </div>
+
+        <div style="position:relative;max-width:320px;margin-top:4px">
+          <input type="text" class="form-control dish-input" autocomplete="off"
+                 placeholder="Напечатать блюдо и Enter..." style="font-size:13px;padding:6px 10px"
+                 data-cell="{{ cell }}" data-date="{{ day.date.isoformat() }}" data-meal="{{ mt }}">
+          <div class="ac-dropdown" style="display:none;position:absolute;z-index:100;left:0;right:0;top:100%;background:#fff;border:1px solid var(--border);border-radius:6px;box-shadow:0 4px 12px rgba(0,0,0,.1);max-height:160px;overflow-y:auto"></div>
+        </div>
+      </div>
+      {% endfor %}
+    </div>
   </div>
   {% endfor %}
 
@@ -76,6 +99,12 @@
 
 {% block scripts %}
 <script>
+function toggleDay(dayId, editing) {
+  document.getElementById('day-view_' + dayId).style.display = editing ? 'none' : '';
+  document.getElementById('day-edit_' + dayId).style.display = editing ? '' : 'none';
+  document.getElementById('day-edit-btn_' + dayId).style.display = editing ? 'none' : '';
+}
+
 document.querySelectorAll('.chip-pick').forEach(btn => {
   btn.addEventListener('click', () => {
     addChip(btn.dataset.cell, btn.dataset.date, btn.dataset.meal, btn.dataset.name);
