@@ -3,7 +3,7 @@ from pathlib import Path
 from typing import List
 
 from fastapi import APIRouter, Depends, Form, Request
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from sqlalchemy.orm import Session
 
@@ -35,38 +35,42 @@ def _base_ctx(request: Request, db: Session, org_id_str: str | None) -> dict:
     }
 
 
-def _next_monday(today: date_type) -> date_type:
-    days_ahead = (7 - today.weekday()) % 7
-    days_ahead = days_ahead or 7
-    return today + timedelta(days=days_ahead)
+def _week_monday(d: date_type) -> date_type:
+    return d - timedelta(days=d.weekday())
 
 
-def _week_days(start: date_type, weeks: int) -> list[date_type]:
-    days = []
-    for w in range(weeks):
-        for i in range(5):  # Пн–Пт, сад без выходных не работает
-            days.append(start + timedelta(days=w * 7 + i))
-    return days
+WEEK_STRIP_BACK = 2   # недель назад от текущей
+WEEK_STRIP_FWD = 4    # недель вперёд
+
+
+def _build_day_card(d: date_type, entries_by_day: dict) -> dict:
+    return {
+        "date": d,
+        "label": f"{WEEKDAY_NAMES[d.weekday()]}, {d.strftime('%d.%m')}",
+        "meals": {mt: entries_by_day.get(d, {}).get(mt, []) for mt in MEAL_TYPES},
+        "has_entries": d in entries_by_day,
+    }
 
 
 @router.get("/", response_class=HTMLResponse)
 def menu_form(request: Request, org_id: str | None = None, start: str | None = None,
-              weeks: int = 1, db: Session = Depends(get_db)):
+              db: Session = Depends(get_db)):
     ctx = _base_ctx(request, db, org_id)
     if ctx is None:
         return RedirectResponse("/login", status_code=302)
 
     today = date_type.today()
-    start_date = date_type.fromisoformat(start) if start else _next_monday(today)
-    weeks = max(1, min(weeks, 4))
-    days = _week_days(start_date, weeks)
+    this_monday = _week_monday(today)
+    start_date = _week_monday(date_type.fromisoformat(start)) if start else this_monday
+    days = [start_date + timedelta(days=i) for i in range(5)]
+
+    org_id_val = ctx["current_org"].id if ctx["current_org"] else None
 
     existing = (
         db.query(MenuEntry)
-        .filter(MenuEntry.organization_id == ctx["current_org"].id,
-                MenuEntry.date.in_(days))
+        .filter(MenuEntry.organization_id == org_id_val, MenuEntry.date.in_(days))
         .all()
-    ) if ctx["current_org"] else []
+    ) if org_id_val else []
 
     entries_by_day = {}
     for e in existing:
@@ -83,20 +87,45 @@ def menu_form(request: Request, org_id: str | None = None, start: str | None = N
             warning_date = d
             break
 
-    day_cards = [
+    day_cards = [_build_day_card(d, entries_by_day) for d in days]
+
+    # лента недель: -2..+4 от текущей календарной недели, с индикатором заполненности
+    strip_mondays = [
+        this_monday + timedelta(weeks=w)
+        for w in range(-WEEK_STRIP_BACK, WEEK_STRIP_FWD + 1)
+    ]
+    strip_range_start = strip_mondays[0]
+    strip_range_end = strip_mondays[-1] + timedelta(days=4)
+    filled_dates = set()
+    if org_id_val:
+        rows = (
+            db.query(MenuEntry.date)
+            .filter(
+                MenuEntry.organization_id == org_id_val,
+                MenuEntry.date >= strip_range_start,
+                MenuEntry.date <= strip_range_end,
+            )
+            .distinct()
+            .all()
+        )
+        filled_dates = {r[0] for r in rows}
+
+    week_strip = [
         {
-            "date": d,
-            "label": f"{WEEKDAY_NAMES[d.weekday()]}, {d.strftime('%d.%m')}",
-            "meals": {mt: entries_by_day.get(d, {}).get(mt, []) for mt in MEAL_TYPES},
-            "has_entries": d in entries_by_day,
+            "start": mon.isoformat(),
+            "label": mon.strftime("%d.%m"),
+            "is_current": mon == start_date,
+            "has_entries": any((mon + timedelta(days=i)) in filled_dates for i in range(5)),
         }
-        for d in days
+        for mon in strip_mondays
     ]
 
     ctx.update({
         "day_cards": day_cards, "meal_types": MEAL_TYPES, "chips_by_meal": chips_by_meal,
-        "start_date": start_date.isoformat(), "weeks": weeks,
-        "next_start": (start_date + timedelta(days=weeks * 7)).isoformat(),
+        "start_date": start_date.isoformat(),
+        "prev_start": (start_date - timedelta(days=7)).isoformat(),
+        "next_start": (start_date + timedelta(days=7)).isoformat(),
+        "week_strip": week_strip,
         "warning_date": (
             f"{WEEKDAY_NAMES[warning_date.weekday()]}, {warning_date.strftime('%d.%m')}"
         ) if warning_date else None,
@@ -104,46 +133,57 @@ def menu_form(request: Request, org_id: str | None = None, start: str | None = N
     return templates.TemplateResponse("menu/form.html", ctx)
 
 
-@router.post("/", response_class=HTMLResponse)
-def menu_save(
+@router.post("/day", response_class=HTMLResponse)
+def menu_day_save(
     request: Request,
     org_id: str | None = Form(None),
-    start: str = Form(...),
-    weeks: int = Form(1),
-    entry_date: List[str] = Form(default=[]),
-    entry_meal: List[str] = Form(default=[]),
-    entry_dish: List[str] = Form(default=[]),
+    date: str = Form(...),
+    meal: List[str] = Form(default=[]),
+    dish: List[str] = Form(default=[]),
     db: Session = Depends(get_db),
 ):
+    """Автосохранение одного дня — вызывается фронтом сразу при добавлении/
+    удалении блюда, без общей кнопки «Сохранить» (решено 17.07, см.
+    wiki/blueprints/menu_module.md). Затрагивает только эту дату — соседние
+    дни в диапазоне не трогаем. Возвращает канонический список блюд по дню —
+    get_or_create_dish может смэтчить опечатку на уже существующее блюдо, и
+    фронту нужно перерисовать чипы под настоящим названием, а не тем, что
+    ввёл пользователь."""
     ctx = _base_ctx(request, db, org_id)
-    if ctx is None:
-        return RedirectResponse("/login", status_code=302)
+    if ctx is None or ctx["current_org"] is None:
+        return JSONResponse({"error": "unauthorized"}, status_code=401)
 
-    start_date = date_type.fromisoformat(start)
-    days = _week_days(start_date, max(1, min(weeks, 4)))
+    d = date_type.fromisoformat(date)
 
-    # пересохраняем целиком диапазон недель — проще и предсказуемее частичного upsert
     db.query(MenuEntry).filter(
         MenuEntry.organization_id == ctx["current_org"].id,
-        MenuEntry.date.in_(days),
+        MenuEntry.date == d,
     ).delete(synchronize_session=False)
 
-    for i, d_str in enumerate(entry_date):
-        dish_name = entry_dish[i].strip() if i < len(entry_dish) else ""
+    for i, meal_type in enumerate(meal):
+        dish_name = dish[i].strip() if i < len(dish) else ""
         if not dish_name:
             continue
-        dish = get_or_create_dish(db, dish_name)
+        dish_obj = get_or_create_dish(db, dish_name)
         db.add(MenuEntry(
             organization_id=ctx["current_org"].id,
-            date=date_type.fromisoformat(d_str),
-            meal_type=entry_meal[i],
-            dish_id=dish.id,
+            date=d,
+            meal_type=meal_type,
+            dish_id=dish_obj.id,
             created_by=ctx["current_user"].id,
         ))
     db.commit()
-    return RedirectResponse(
-        f"/menu/?org_id={ctx['current_org_id']}&start={start}&weeks={weeks}", status_code=302
+
+    entries = (
+        db.query(MenuEntry)
+        .filter(MenuEntry.organization_id == ctx["current_org"].id, MenuEntry.date == d)
+        .all()
     )
+    meals: dict[str, list[dict]] = {mt: [] for mt in MEAL_TYPES}
+    for e in entries:
+        meals.setdefault(e.meal_type, []).append({"id": e.dish_id, "name": e.dish.name})
+
+    return JSONResponse({"meals": meals})
 
 
 @router.get("/dishes/search")

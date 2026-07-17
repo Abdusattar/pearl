@@ -14,122 +14,168 @@
 </div>
 {% endif %}
 
-<form method="post" action="/menu/">
-  <input type="hidden" name="org_id" value="{{ current_org_id }}">
-  <input type="hidden" name="start" value="{{ start_date }}">
-  <input type="hidden" name="weeks" value="{{ weeks }}">
+<style>
+  .week-nav { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
+  .week-nav .btn { min-height: 40px; padding: 8px 14px; }
+  .week-nav .period { font-size: 14px; color: var(--text-muted); flex: 1; text-align: center; }
+  .week-strip { display: flex; gap: 8px; overflow-x: auto; padding: 4px 2px 12px; margin-bottom: 16px; -webkit-overflow-scrolling: touch; }
+  .week-chip {
+    flex: 0 0 auto; display: flex; flex-direction: column; align-items: center; gap: 2px;
+    min-width: 60px; min-height: 44px; justify-content: center;
+    padding: 6px 10px; border-radius: 10px; border: 1px solid var(--border);
+    background: var(--surface); text-decoration: none; color: var(--text); font-size: 12px;
+  }
+  .week-chip .dot { font-size: 14px; line-height: 1; }
+  .week-chip.filled .dot { color: var(--success); }
+  .week-chip.empty .dot { color: var(--text-muted); }
+  .week-chip.current { border-color: var(--primary); background: #eef2ff; font-weight: var(--fw-semi); }
+  .save-status { font-size: 12px; transition: opacity .4s; }
+  .save-status.saving { color: var(--text-muted); opacity: 1; }
+  .save-status.saved { color: var(--success); opacity: 1; }
+  .save-status.error { color: var(--danger); opacity: 1; }
+  .save-status.idle { opacity: 0; }
+</style>
 
-  <div class="card" style="margin-bottom:16px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
-    <div style="color:var(--text-muted);font-size:14px">
-      Период: {{ day_cards[0].label }} — {{ day_cards[-1].label }}
-    </div>
-    <div style="display:flex;gap:8px">
-      <a href="/menu/?org_id={{ current_org_id }}&start={{ next_start }}&weeks={{ weeks }}"
-         class="btn btn-secondary" style="font-size:13px">+ Добавить ещё неделю</a>
-      <button type="submit" class="btn btn-primary">Сохранить меню</button>
-    </div>
+<div class="week-nav">
+  <a href="/menu/?org_id={{ current_org_id }}&start={{ prev_start }}" class="btn btn-secondary">← Пред</a>
+  <div class="period">{{ day_cards[0].label }} — {{ day_cards[-1].label }}</div>
+  <a href="/menu/?org_id={{ current_org_id }}&start={{ next_start }}" class="btn btn-secondary">След →</a>
+</div>
+
+<div class="week-strip">
+  {% for w in week_strip %}
+  <a class="week-chip {{ 'current' if w.is_current else '' }} {{ 'filled' if w.has_entries else 'empty' }}"
+     href="/menu/?org_id={{ current_org_id }}&start={{ w.start }}">
+    <span class="dot">{{ '●' if w.has_entries else '○' }}</span>
+    <span>{{ w.label }}</span>
+  </a>
+  {% endfor %}
+</div>
+
+{% for day in day_cards %}
+{% set day_id = day.date.isoformat() %}
+<div class="card menu-day" id="day-card_{{ day_id }}" data-date="{{ day_id }}" style="margin-bottom:16px">
+  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
+    <h3 style="margin:0">{{ day.label }}</h3>
+    <span class="save-status idle" id="save-status_{{ day_id }}">Сохранено ✓</span>
   </div>
 
-  {% for day in day_cards %}
-  {% set day_id = day.date.isoformat() %}
-  <div class="card" style="margin-bottom:16px">
-    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
-      <h3 style="margin:0">{{ day.label }}</h3>
-      {% if day.has_entries %}
-      <button type="button" id="day-edit-btn_{{ day_id }}" class="btn btn-secondary"
-              style="padding:4px 10px;font-size:12px" onclick="toggleDay('{{ day_id }}', true)">✎ Редактировать</button>
-      {% endif %}
-    </div>
+  {% for mt in meal_types %}
+  {% set cell = loop.index0 ~ '_' ~ day_id %}
+  <div style="margin-bottom:14px">
+    <label style="font-size:13px;font-weight:600;color:var(--text-muted);display:block;margin-bottom:6px">{{ mt }}</label>
 
-    {% if day.has_entries %}
-    <div id="day-view_{{ day_id }}">
-      {% for mt in meal_types %}
-      <div style="margin-bottom:10px">
-        <label style="font-size:13px;font-weight:600;color:var(--text-muted);display:block;margin-bottom:4px">{{ mt }}</label>
-        <div style="font-size:14px">
-          {% if day.meals[mt] %}{{ day.meals[mt] | map(attribute='name') | join(', ') }}{% else %}<span style="color:var(--text-muted)">—</span>{% endif %}
-        </div>
-      </div>
+    {% if chips_by_meal[mt] %}
+    <div style="margin-bottom:6px">
+      {% for d in chips_by_meal[mt] %}
+      <button type="button" class="chip-pick" data-date="{{ day_id }}" data-meal="{{ mt }}" data-name="{{ d.name }}">{{ d.name }}</button>
       {% endfor %}
     </div>
     {% endif %}
 
-    <div id="day-edit_{{ day_id }}" {% if day.has_entries %}style="display:none"{% endif %}>
-      {% for mt in meal_types %}
-      {% set cell = loop.index0 ~ '_' ~ day.date.isoformat() %}
-      <div style="margin-bottom:14px">
-        <label style="font-size:13px;font-weight:600;color:var(--text-muted);display:block;margin-bottom:6px">{{ mt }}</label>
-
-        {% if chips_by_meal[mt] %}
-        <div style="margin-bottom:6px">
-          {% for d in chips_by_meal[mt] %}
-          <button type="button" class="chip-pick"
-                  data-cell="{{ cell }}" data-date="{{ day.date.isoformat() }}" data-meal="{{ mt }}" data-name="{{ d.name }}">{{ d.name }}</button>
-          {% endfor %}
-        </div>
-        {% endif %}
-
-        <div id="chips_{{ cell }}" class="chip-list">
-          {% for d in day.meals[mt] %}
-          <span class="chip">
-            <input type="hidden" name="entry_date" value="{{ day.date.isoformat() }}">
-            <input type="hidden" name="entry_meal" value="{{ mt }}">
-            <input type="hidden" name="entry_dish" value="{{ d.name }}">
-            {{ d.name }}
-            <button type="button" onclick="this.closest('.chip').remove()">×</button>
-          </span>
-          {% endfor %}
-        </div>
-
-        <div style="position:relative;max-width:320px;margin-top:4px">
-          <input type="text" class="form-control dish-input" autocomplete="off"
-                 placeholder="Напечатать блюдо и Enter..." style="font-size:13px;padding:6px 10px"
-                 data-cell="{{ cell }}" data-date="{{ day.date.isoformat() }}" data-meal="{{ mt }}">
-          <div class="ac-dropdown" style="display:none;position:absolute;z-index:100;left:0;right:0;top:100%;background:#fff;border:1px solid var(--border);border-radius:6px;box-shadow:0 4px 12px rgba(0,0,0,.1);max-height:160px;overflow-y:auto"></div>
-        </div>
-      </div>
+    <div class="chip-list" data-meal="{{ mt }}">
+      {% for d in day.meals[mt] %}
+      <span class="chip" data-name="{{ d.name }}">
+        {{ d.name }}
+        <button type="button" class="chip-remove">×</button>
+      </span>
       {% endfor %}
+    </div>
+
+    <div style="position:relative;max-width:320px;margin-top:4px">
+      <input type="text" class="form-control dish-input" autocomplete="off"
+             placeholder="Напечатать блюдо и Enter..." style="font-size:13px;padding:6px 10px"
+             data-date="{{ day_id }}" data-meal="{{ mt }}">
+      <div class="ac-dropdown" style="display:none;position:absolute;z-index:100;left:0;right:0;top:100%;background:#fff;border:1px solid var(--border);border-radius:6px;box-shadow:0 4px 12px rgba(0,0,0,.1);max-height:160px;overflow-y:auto"></div>
     </div>
   </div>
   {% endfor %}
-
-  <button type="submit" class="btn btn-primary">Сохранить меню</button>
-</form>
+</div>
+{% endfor %}
 {% endblock %}
 
 {% block scripts %}
 <script>
-function toggleDay(dayId, editing) {
-  document.getElementById('day-view_' + dayId).style.display = editing ? 'none' : '';
-  document.getElementById('day-edit_' + dayId).style.display = editing ? '' : 'none';
-  document.getElementById('day-edit-btn_' + dayId).style.display = editing ? 'none' : '';
-}
+const CURRENT_ORG_ID = "{{ current_org_id }}";
 
-document.querySelectorAll('.chip-pick').forEach(btn => {
-  btn.addEventListener('click', () => {
-    addChip(btn.dataset.cell, btn.dataset.date, btn.dataset.meal, btn.dataset.name);
-  });
-});
-
-function addChip(cellId, dateIso, meal, name) {
-  name = (name || '').trim();
-  if (!name) return;
-  const list = document.getElementById('chips_' + cellId);
+function chipEl(name) {
   const chip = document.createElement('span');
   chip.className = 'chip';
-  chip.innerHTML = `
-    <input type="hidden" name="entry_date" value="${dateIso}">
-    <input type="hidden" name="entry_meal" value="${meal}">
-    <input type="hidden" name="entry_dish" value="${name.replace(/"/g,'&quot;')}">
-    ${name}
-    <button type="button" onclick="this.closest('.chip').remove()">×</button>
-  `;
-  list.appendChild(chip);
+  chip.dataset.name = name;
+  chip.innerHTML = `${name} <button type="button" class="chip-remove">×</button>`;
+  return chip;
 }
+
+function addChip(dayId, meal, name) {
+  name = (name || '').trim();
+  if (!name) return;
+  const card = document.getElementById('day-card_' + dayId);
+  const list = card.querySelector(`.chip-list[data-meal="${CSS.escape(meal)}"]`);
+  const exists = [...list.querySelectorAll('.chip')].some(
+    c => c.dataset.name.toLowerCase() === name.toLowerCase()
+  );
+  if (exists) return;
+  list.appendChild(chipEl(name));
+  scheduleSave(dayId);
+}
+
+function setStatus(dayId, state) {
+  const el = document.getElementById('save-status_' + dayId);
+  el.className = 'save-status ' + state;
+  el.textContent = state === 'saving' ? 'Сохраняю…'
+    : state === 'error' ? 'Ошибка сохранения — обновите страницу'
+    : 'Сохранено ✓';
+  if (state === 'saved') {
+    clearTimeout(el._fadeTimer);
+    el._fadeTimer = setTimeout(() => { el.className = 'save-status idle'; }, 2500);
+  }
+}
+
+function scheduleSave(dayId) {
+  const card = document.getElementById('day-card_' + dayId);
+  setStatus(dayId, 'saving');
+  const fd = new FormData();
+  fd.append('org_id', CURRENT_ORG_ID);
+  fd.append('date', dayId);
+  card.querySelectorAll('.chip-list').forEach(list => {
+    const meal = list.dataset.meal;
+    list.querySelectorAll('.chip').forEach(chip => {
+      fd.append('meal', meal);
+      fd.append('dish', chip.dataset.name);
+    });
+  });
+  fetch('/menu/day', { method: 'POST', body: fd })
+    .then(r => { if (!r.ok) throw new Error('save failed'); return r.json(); })
+    .then(data => {
+      card.querySelectorAll('.chip-list').forEach(list => {
+        const meal = list.dataset.meal;
+        const items = data.meals[meal] || [];
+        list.innerHTML = '';
+        items.forEach(it => list.appendChild(chipEl(it.name)));
+      });
+      setStatus(dayId, 'saved');
+    })
+    .catch(() => setStatus(dayId, 'error'));
+}
+
+document.addEventListener('click', e => {
+  const removeBtn = e.target.closest('.chip-remove');
+  if (removeBtn) {
+    const chip = removeBtn.closest('.chip');
+    const dayId = chip.closest('.menu-day').dataset.date;
+    chip.remove();
+    scheduleSave(dayId);
+    return;
+  }
+  const pickBtn = e.target.closest('.chip-pick');
+  if (pickBtn) {
+    addChip(pickBtn.dataset.date, pickBtn.dataset.meal, pickBtn.dataset.name);
+  }
+});
 
 document.querySelectorAll('.dish-input').forEach(input => {
   const dropdown = input.parentElement.querySelector('.ac-dropdown');
-  const cell = input.dataset.cell, date = input.dataset.date, meal = input.dataset.meal;
+  const dayId = input.dataset.date, meal = input.dataset.meal;
   let timer = null;
 
   function render(items) {
@@ -141,7 +187,7 @@ document.querySelectorAll('.dish-input').forEach(input => {
     dropdown.querySelectorAll('.ac-item').forEach(el => {
       el.addEventListener('mousedown', e => {
         e.preventDefault();
-        addChip(cell, date, meal, el.dataset.name);
+        addChip(dayId, meal, el.dataset.name);
         input.value = '';
         dropdown.style.display = 'none';
       });
@@ -162,7 +208,7 @@ document.querySelectorAll('.dish-input').forEach(input => {
     if (e.key === 'Enter') {
       e.preventDefault();
       if (input.value.trim()) {
-        addChip(cell, date, meal, input.value);
+        addChip(dayId, meal, input.value);
         input.value = '';
         dropdown.style.display = 'none';
       }
