@@ -55,7 +55,13 @@
       <tr>
         <td data-label="ФИО" style="font-weight:500">{{ e.full_name }}</td>
         <td data-label="Роль" style="color:var(--text-muted)">{{ e.role or '—' }}</td>
-        <td data-label="Оклад" style="text-align:right;font-weight:600">{{ "{:,.0f}".format(e.salary) }} с</td>
+        <td data-label="Оклад" style="text-align:right;font-weight:600">
+          {% if e.salary == 0 %}
+          <span class="badge badge-pending">оклад не указан</span>
+          {% else %}
+          {{ "{:,.0f}".format(e.salary) }} с
+          {% endif %}
+        </td>
         <td data-label="Статус">
           {% if e.status == 'active' %}
           <span class="badge badge-confirmed">Активен</span>

@@ -296,6 +296,8 @@
   {% endif %}
   {% if current_user.role in ("owner", "founder") %}
   <a href="/employees/" class="{% if active_page == 'employees' %}active{% endif %}">Сотрудники</a>
+  {% elif current_user.role == "staff" %}
+  <a href="/employees/add" class="{% if active_page == 'employees' %}active{% endif %}">+ Сотрудник</a>
   {% endif %}
   <div class="section">Аналитика</div>
   <a href="/reports/" class="{% if active_page == 'reports' %}active{% endif %}">Отчёты</a>
