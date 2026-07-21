@@ -16,6 +16,7 @@
 <div class="page-header">
   <h1>Посещаемость</h1>
   <a href="/students/?org_id={{ current_org_id or '' }}" class="btn btn-secondary">← Дети</a>
+  <a href="/attendance/journal?org_id={{ current_org_id or '' }}" class="btn btn-secondary">Журнал</a>
 </div>
 
 {% if request.query_params.get('saved') %}
@@ -40,13 +41,17 @@
 {% if has_saved %}
 <div id="att-view">
   <div class="card" style="max-width:640px">
+    <div style="font-size:15px;font-weight:600;margin-bottom:14px">
+      Присутствовало {{ total_present }} из {{ total_students }}
+      {% if total_students - total_present %}<span style="color:#b45309;font-weight:400">(отс. {{ total_students - total_present }})</span>{% endif %}
+    </div>
     {% for g in groups %}
     <div class="att-group">
       <h3>{{ g.group.name }} <span class="att-count">({{ g.students|length }} детей)</span></h3>
       {% set absent_list = g.students | selectattr("absent") | list %}
       {% if absent_list %}
       <div style="font-size:14px;color:#b45309">
-        Отсутствуют: {{ absent_list | map(attribute="name") | join(", ") }}
+        Отсутствуют: {% for st in absent_list %}{{ st.name }}{% if st.reason %} <span style="color:var(--text-muted)">({{ st.reason }})</span>{% endif %}{% if not loop.last %}, {% endif %}{% endfor %}
       </div>
       {% else %}
       <div style="font-size:14px;color:var(--text-muted)">Все пришли</div>
