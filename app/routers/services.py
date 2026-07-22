@@ -5,12 +5,12 @@ from urllib.parse import quote
 from fastapi import APIRouter, Depends, Form, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
-from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.dependencies import get_current_user, get_accessible_orgs, resolve_org
-from app.models import Service, Organization, ServicePriceHistory, User, Student, Enrollment
+from app.models import Service, Organization, ServicePriceHistory, User, Student
+from app.services.billing import continuous_enrollment_since
 
 router = APIRouter(prefix="/services", tags=["services"])
 templates = Jinja2Templates(directory=str(Path(__file__).parent.parent / "templates"))
@@ -54,11 +54,15 @@ def service_list(request: Request, org_id: str | None = None, error: str | None 
             })
 
     legacy_count = 0
-    if current_org:
-        legacy_count = (
-            db.query(Student)
-            .filter(Student.organization_id == current_org.id, Student.legacy_tariff_amount.isnot(None))
-            .count()
+    if current_org and current_org.legacy_tariff_cutoff:
+        active = (
+            db.query(Student.id)
+            .filter(Student.organization_id == current_org.id, Student.status.in_(("active", "frozen")))
+            .all()
+        )
+        legacy_count = sum(
+            1 for (sid,) in active
+            if (since := continuous_enrollment_since(db, sid)) and since < current_org.legacy_tariff_cutoff
         )
 
     return templates.TemplateResponse("services/list.html", {
@@ -110,9 +114,10 @@ def legacy_tariff_preview(
     enrolled_before: str = "",
     db: Session = Depends(get_db),
 ):
-    """Только чтение — сколько детей затронет /legacy-tariff с этой границей,
-    до того как реально нажать «Зафиксировать» (22.07, предпросмотр перед
-    необратимым через UI массовым действием)."""
+    """Только чтение — сколько детей затронет эта граница даты, живой
+    предпросмотр при вводе в форме цены (22.07, переделано на непрерывность
+    зачисления — та же проверка, что реально применяется при начислении,
+    см. billing.continuous_enrollment_since)."""
     user = get_current_user(request, db)
     if not user or user.id not in PRICE_EDITORS:
         return {"count": None}
@@ -123,20 +128,14 @@ def legacy_tariff_preview(
     except ValueError:
         return {"count": None}
 
-    first_enrollment = dict(
-        db.query(Enrollment.student_id, func.min(Enrollment.start_date))
-        .join(Student, Student.id == Enrollment.student_id)
-        .filter(Student.organization_id == int(org_id))
-        .group_by(Enrollment.student_id)
+    active = (
+        db.query(Student.id)
+        .filter(Student.organization_id == int(org_id), Student.status.in_(("active", "frozen")))
         .all()
     )
     count = sum(
-        1 for (sid,) in db.query(Student.id).filter(
-            Student.organization_id == int(org_id),
-            Student.status == "active",
-            Student.legacy_tariff_amount.is_(None),
-        ).all()
-        if first_enrollment.get(sid) and first_enrollment[sid] < cutoff
+        1 for (sid,) in active
+        if (since := continuous_enrollment_since(db, sid)) and since < cutoff
     )
     return {"count": count}
 
@@ -185,21 +184,18 @@ def update_service_price(
     db: Session = Depends(get_db),
 ):
     """Правка цены услуги. Для тарифа "Обучение" (is_tuition) можно в этом же
-    запросе зафиксировать переходный период для "старых" детей — сначала
-    (внутри этой же транзакции) снимается снимок цены как
-    Student.legacy_tariff_amount для активных детей, зачисленных раньше
-    legacy_enrolled_before, и только ПОСЛЕ этого цена услуги меняется на
-    новую. Порядок гарантирован кодом в одном запросе — раньше это были два
-    отдельных действия (карточка "Тариф переходного периода" + правка цены),
-    и 22.07 реальный случай показал: если сначала подняли цену, а потом
-    запустили фиксацию "старых" — она снимала уже НОВУЮ цену, а не старую,
-    и переходный период переставал что-либо защищать.
-
-    legacy_old_price — редактируемое поле (по умолчанию равно текущей цене
-    в форме), не жёстко «текущая цена услуги» — тот же день 22.07 показал,
-    что реальность может УЖЕ разойтись с базой (цену подняли раньше, чем
-    успели зафиксировать старых), и тогда «текущая» цена в БД — это уже
-    новая, а не та, что реально надо сохранить старым."""
+    запросе настроить переходный период для "старых" детей — граница даты
+    поступления, цена для старых и дата окончания сохраняются как настройка
+    объекта (Organization.legacy_tariff_*), НЕ как снимок на каждом ребёнке
+    (переделано 22.07 — раньше был разовый снимок Student.legacy_tariff_amount,
+    из-за чего правки дат поступления Махабат уже после фиксации не
+    подхватывались без повторного нажатия кнопки). Теперь billing._tuition_fee()
+    каждый раз при начислении сам решает, кому какая цена — по фактической
+    непрерывности зачисления на тот момент, см. billing.continuous_enrollment_since.
+    Порядок этой формы (граница/цена/до) и правки Service.price в одном запросе
+    сохранён так же, как раньше — цена для старых по умолчанию равна текущей
+    цене в форме, но редактируема, на случай если реальность уже разошлась с
+    базой (цену подняли раньше, чем успели донастроить переходный период)."""
     user = get_current_user(request, db)
     if not user:
         return RedirectResponse("/login", status_code=302)
@@ -221,7 +217,6 @@ def update_service_price(
     if not s or price_val <= 0:
         return RedirectResponse(base_url, status_code=303)
 
-    legacy_marked = None
     if s.is_tuition and legacy_enrolled_before and legacy_until and org_id.isdigit():
         try:
             cutoff = date.fromisoformat(legacy_enrolled_before)
@@ -233,26 +228,10 @@ def update_service_price(
                 old_price = float(legacy_old_price) if legacy_old_price else s.price
             except ValueError:
                 old_price = s.price
-            first_enrollment = dict(
-                db.query(Enrollment.student_id, func.min(Enrollment.start_date))
-                .join(Student, Student.id == Enrollment.student_id)
-                .filter(Student.organization_id == int(org_id))
-                .group_by(Enrollment.student_id)
-                .all()
-            )
-            candidates = db.query(Student).filter(
-                Student.organization_id == int(org_id),
-                Student.status == "active",
-                Student.legacy_tariff_amount.is_(None),
-            ).all()
-            legacy_marked = 0
-            for st in candidates:
-                first = first_enrollment.get(st.id)
-                if first and first < cutoff:
-                    st.legacy_tariff_amount = old_price
-                    legacy_marked += 1
             org = db.query(Organization).get(int(org_id))
             if org:
+                org.legacy_tariff_cutoff = cutoff
+                org.legacy_tariff_price = old_price
                 org.legacy_tariff_until = until
 
     s.price = price_val
@@ -262,9 +241,7 @@ def update_service_price(
     ))
     db.commit()
 
-    sep = "&" if "?" in base_url else "?"
-    suffix = f"{sep}legacy_marked={legacy_marked}" if legacy_marked is not None else ""
-    return RedirectResponse(f"{base_url}{suffix}", status_code=303)
+    return RedirectResponse(base_url, status_code=303)
 
 
 @router.post("/{service_id}/delete")

@@ -18,13 +18,43 @@ def get_tuition_service(db: Session, organization_id: int) -> Service | None:
     )
 
 
+def continuous_enrollment_since(db: Session, student_id: int) -> date | None:
+    """Дата начала ТЕКУЩЕЙ непрерывной цепочки зачисления ребёнка — идём от
+    самой свежей записи Enrollment назад, пока следующая (более ранняя) впритык
+    смыкается со следующей после неё (её end_date >= start_date следующей —
+    перевод между группами день-в-день разрывом не считается). Останавливаемся
+    на первом настоящем разрыве (ребёнка перевели в "выбыл", потом он вернулся
+    позже) — этим отличается от MIN(start_date) в _proration_factor, которому
+    неважно, был ли разрыв. Нужна только переходному тарифу (22.07): вернувшийся
+    после границы цены ребёнок не должен получить старую цену просто по факту
+    давней первой даты поступления."""
+    enrollments = (
+        db.query(Enrollment)
+        .filter(Enrollment.student_id == student_id)
+        .order_by(Enrollment.start_date.asc(), Enrollment.id.asc())
+        .all()
+    )
+    if not enrollments:
+        return None
+    since = enrollments[-1].start_date
+    for i in range(len(enrollments) - 1, 0, -1):
+        prev = enrollments[i - 1]
+        curr = enrollments[i]
+        if prev.end_date is not None and curr.start_date > prev.end_date:
+            break
+        since = prev.start_date
+    return since
+
+
 def _tuition_fee(db: Session, student: Student) -> float:
     tuition_service = get_tuition_service(db, student.organization_id)
     base = float(tuition_service.price) if tuition_service else 0.0
-    if student.legacy_tariff_amount is not None:
-        org = db.query(Organization).get(student.organization_id)
-        if org and org.legacy_tariff_until and date.today() <= org.legacy_tariff_until:
-            base = float(student.legacy_tariff_amount)
+    org = db.query(Organization).get(student.organization_id)
+    if org and org.legacy_tariff_until and org.legacy_tariff_cutoff and org.legacy_tariff_price is not None:
+        if date.today() <= org.legacy_tariff_until:
+            since = continuous_enrollment_since(db, student.id)
+            if since and since < org.legacy_tariff_cutoff:
+                base = float(org.legacy_tariff_price)
     discount = float(student.discount_amount or 0)
     return max(0.0, base - discount)
 

@@ -12,65 +12,137 @@
 <div class="alert alert-error" style="max-width:560px">{{ error }}</div>
 {% endif %}
 
-<div class="card" style="max-width:560px;margin-bottom:20px">
-  <h3 style="font-size:15px;margin-bottom:14px">Добавить услугу</h3>
-  <form method="post" action="/services/" style="display:flex;flex-direction:column;gap:10px">
-    <input type="hidden" name="org_id" value="{{ current_org_id or '' }}">
-    <div class="split-row">
-      <div class="form-group" style="margin-bottom:0">
-        <label>Название *</label>
-        <input type="text" name="name" class="form-control" required placeholder="Проезд, Секция футбол...">
-      </div>
-      <div class="form-group" style="margin-bottom:0">
-        <label>Цена в месяц (сом) *</label>
-        <input type="number" name="price" class="form-control" required placeholder="1500">
-      </div>
-    </div>
-    <button type="submit" class="btn btn-primary" style="align-self:flex-start">+ Добавить</button>
-  </form>
-</div>
+{% set tuition = services | selectattr('is_tuition') | first %}
+{% set addons = services | rejectattr('is_tuition') | list %}
 
-{% if current_org %}
+{% if tuition %}
 <div class="card" style="max-width:560px;margin-bottom:20px">
-  <h3 style="font-size:15px;margin-bottom:6px">Скидка при статусе «Заморожен»</h3>
-  <div style="font-size:12px;color:var(--text-muted);margin-bottom:12px">
-    Ребёнок временно не ходит, место в группе держится — начисляется этот % от тарифа обучения, без доп.услуг.
-  </div>
-  <div id="price-view-frozen-pct" style="display:flex;align-items:center;gap:8px">
-    <span>{{ "{:g}".format(current_org.frozen_discount_percent) }}%</span>
+  <h3 style="font-size:15px;margin-bottom:14px">Тариф «{{ tuition.name }}»</h3>
+
+  <div id="price-view-{{ tuition.id }}" style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+    <span style="color:var(--text-muted)">Текущая цена:</span>
+    <span style="font-weight:600">{{ "{:,.0f}".format(tuition.price) }} с</span>
     {% if can_edit_price %}
     <button type="button" class="btn btn-secondary" style="padding:3px 8px;font-size:11px"
-            onclick="toggleBlock('frozen-pct', true)">Изменить</button>
+            onclick="toggleBlock({{ tuition.id }}, true)">Изменить</button>
+    {% endif %}
+    {% if price_history.get(tuition.id) %}
+    <button type="button" class="price-history-btn" data-service-id="{{ tuition.id }}" data-service-name="{{ tuition.name }}"
+            style="background:none;border:none;color:var(--primary);cursor:pointer;
+                   font-size:12px;padding:4px 2px">История →</button>
     {% endif %}
   </div>
+
   {% if can_edit_price %}
-  <form method="post" action="/services/frozen-percent" id="price-form-frozen-pct"
-        style="display:none;align-items:center;gap:6px"
-        onsubmit="return confirm('Сохранить новый процент для «{{ current_org.name }}»?')">
+  <form method="post" action="/services/{{ tuition.id }}/price" id="price-form-{{ tuition.id }}"
+        data-is-tuition="true"
+        style="display:none;flex-direction:column;gap:8px;margin-top:8px;max-width:280px">
     <input type="hidden" name="org_id" value="{{ current_org_id or '' }}">
-    <input type="number" step="0.01" min="0" max="100" name="percent"
-           value="{{ current_org.frozen_discount_percent|float }}" class="form-control"
-           style="width:100px;padding:4px 8px;font-size:13px">
-    <button type="submit" class="btn btn-primary" style="padding:4px 10px;font-size:12px">Сохранить</button>
-    <button type="button" class="btn btn-secondary" style="padding:4px 10px;font-size:12px"
-            onclick="toggleBlock('frozen-pct', false)">Отмена</button>
+    <div>
+      <input type="number" name="price" value="{{ tuition.price|int }}" class="form-control"
+             style="padding:4px 8px;font-size:13px">
+      <div style="font-size:11px;color:var(--text-muted);margin-top:2px">сом/мес</div>
+    </div>
+    <div>
+      <input type="date" name="effective_date" value="{{ today }}" class="form-control"
+             style="padding:4px 8px;font-size:13px">
+      <div style="font-size:11px;color:var(--text-muted);margin-top:2px">Действует с (для истории, необязательно)</div>
+    </div>
+
+    <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--text-muted);cursor:pointer;margin-top:2px">
+      <input type="checkbox" id="legacy-toggle-{{ tuition.id }}" style="width:auto"
+             {% if current_org.legacy_tariff_cutoff %}checked{% endif %}>
+      Есть дети на старой цене (переходный период)
+    </label>
+    <div id="legacy-fields-{{ tuition.id }}" style="display:{{ 'flex' if current_org.legacy_tariff_cutoff else 'none' }};
+                flex-direction:column;gap:8px;padding:8px;background:var(--bg);border-radius:8px">
+      <div>
+        <input type="number" name="legacy_old_price" class="form-control"
+               value="{{ current_org.legacy_tariff_price|int if current_org.legacy_tariff_price else tuition.price|int }}"
+               style="padding:4px 8px;font-size:13px">
+        <div style="font-size:11px;color:var(--text-muted);margin-top:2px">
+          Цена для старых (по умолчанию — текущая; поправь, если в базе уже не та цена,
+          что реально была раньше)
+        </div>
+      </div>
+      <div>
+        <input type="date" name="legacy_enrolled_before" class="legacy-cutoff form-control"
+               max="{{ today }}"
+               value="{{ current_org.legacy_tariff_cutoff.isoformat() if current_org.legacy_tariff_cutoff else '' }}"
+               style="padding:4px 8px;font-size:13px">
+        <div style="font-size:11px;color:var(--text-muted);margin-top:2px">Зачислены раньше (кто «старый»)</div>
+      </div>
+      <div>
+        <input type="date" name="legacy_until" class="form-control" min="{{ today }}"
+               value="{{ current_org.legacy_tariff_until.isoformat() if current_org.legacy_tariff_until else '' }}"
+               style="padding:4px 8px;font-size:13px">
+        <div style="font-size:11px;color:var(--text-muted);margin-top:2px">До какой даты действует старая цена</div>
+      </div>
+      <div class="legacy-preview" style="font-size:12px;color:var(--text-muted);min-height:16px"></div>
+    </div>
+
+    <div style="display:flex;gap:6px">
+      <button type="submit" class="btn btn-primary" style="padding:4px 10px;font-size:12px">Сохранить</button>
+      <button type="button" class="btn btn-secondary" style="padding:4px 10px;font-size:12px"
+              onclick="toggleBlock({{ tuition.id }}, false)">Отмена</button>
+    </div>
   </form>
   {% endif %}
-</div>
-{% set tuition = services | selectattr('is_tuition') | first %}
-{% if tuition and current_org.legacy_tariff_until %}
-<div class="card" style="max-width:560px;margin-bottom:20px">
-  <h3 style="font-size:15px;margin-bottom:6px">Тариф переходного периода</h3>
-  {% if request.query_params.get('legacy_marked') %}
-  <div class="alert alert-success">Зафиксировано детей на прежней цене: {{ request.query_params.get('legacy_marked') }}</div>
+
+  {% if current_org %}
+  <div style="border-top:1px solid var(--border);margin-top:16px;padding-top:14px">
+    <div style="font-size:13px;color:var(--text-muted);margin-bottom:8px">
+      Скидка при статусе «Заморожен» — % от этого тарифа, без доп.услуг, пока ребёнок временно не ходит
+    </div>
+    <div id="price-view-frozen-pct" style="display:flex;align-items:center;gap:8px">
+      <span>{{ "{:g}".format(current_org.frozen_discount_percent) }}%</span>
+      {% if can_edit_price %}
+      <button type="button" class="btn btn-secondary" style="padding:3px 8px;font-size:11px"
+              onclick="toggleBlock('frozen-pct', true)">Изменить</button>
+      {% endif %}
+    </div>
+    {% if can_edit_price %}
+    <form method="post" action="/services/frozen-percent" id="price-form-frozen-pct"
+          style="display:none;align-items:center;gap:6px;margin-top:8px"
+          onsubmit="return confirm('Сохранить новый процент для «{{ current_org.name }}»?')">
+      <input type="hidden" name="org_id" value="{{ current_org_id or '' }}">
+      <input type="number" step="0.01" min="0" max="100" name="percent"
+             value="{{ current_org.frozen_discount_percent|float }}" class="form-control"
+             style="width:100px;padding:4px 8px;font-size:13px">
+      <button type="submit" class="btn btn-primary" style="padding:4px 10px;font-size:12px">Сохранить</button>
+      <button type="button" class="btn btn-secondary" style="padding:4px 10px;font-size:12px"
+              onclick="toggleBlock('frozen-pct', false)">Отмена</button>
+    </form>
+    {% endif %}
+  </div>
   {% endif %}
-  <div>До {{ current_org.legacy_tariff_until.strftime("%d.%m.%Y") }} — {{ legacy_count }} {{ "ребёнок" if legacy_count == 1 else "детей" }} на прежней цене</div>
+
+  {% if current_org.legacy_tariff_until %}
+  <div style="border-top:1px solid var(--border);margin-top:16px;padding-top:14px">
+    <div style="font-size:13px;color:var(--text-muted);margin-bottom:8px">Переходный период</div>
+    <div>До {{ current_org.legacy_tariff_until.strftime("%d.%m.%Y") }} — {{ legacy_count }} {{ "ребёнок" if legacy_count == 1 else "детей" }} на прежней цене</div>
+  </div>
+  {% endif %}
 </div>
-{% endif %}
 {% endif %}
 
-<div class="card">
-  {% if services %}
+<div class="card" style="max-width:680px">
+  <h3 style="font-size:15px;margin-bottom:14px">Дополнительные услуги</h3>
+
+  <form method="post" action="/services/" style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;margin-bottom:20px">
+    <input type="hidden" name="org_id" value="{{ current_org_id or '' }}">
+    <div class="form-group" style="margin-bottom:0">
+      <label>Название *</label>
+      <input type="text" name="name" class="form-control" required placeholder="Проезд, Секция футбол...">
+    </div>
+    <div class="form-group" style="margin-bottom:0">
+      <label>Цена в месяц (сом) *</label>
+      <input type="number" name="price" class="form-control" required placeholder="1500">
+    </div>
+    <button type="submit" class="btn btn-primary">+ Добавить</button>
+  </form>
+
+  {% if addons %}
   <table class="table">
     <thead>
       <tr>
@@ -80,14 +152,9 @@
       </tr>
     </thead>
     <tbody>
-      {% for s in services %}
+      {% for s in addons %}
       <tr>
-        <td data-label="Название" style="font-weight:500">
-          {{ s.name }}
-          {% if s.is_tuition %}
-          <span class="badge" style="background:#e0e7ff;color:#3730a3;margin-left:6px">база, для всех</span>
-          {% endif %}
-        </td>
+        <td data-label="Название" style="font-weight:500">{{ s.name }}</td>
         <td data-label="Цена">
           <div id="price-view-{{ s.id }}" style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
             <span>{{ "{:,.0f}".format(s.price) }} с</span>
@@ -103,9 +170,8 @@
           </div>
           {% if can_edit_price %}
           <form method="post" action="/services/{{ s.id }}/price" id="price-form-{{ s.id }}"
-                {% if s.is_tuition %}data-is-tuition="true"{% endif %}
-                style="display:none;flex-direction:column;gap:8px;margin-top:8px;max-width:240px"
-                {% if not s.is_tuition %}onsubmit="return confirm('Сохранить новую цену для «{{ s.name }}»?')"{% endif %}>
+                style="display:none;flex-direction:column;gap:8px;margin-top:8px;max-width:200px"
+                onsubmit="return confirm('Сохранить новую цену для «{{ s.name }}»?')">
             <input type="hidden" name="org_id" value="{{ current_org_id or '' }}">
             <div>
               <input type="number" name="price" value="{{ s.price|int }}" class="form-control"
@@ -117,37 +183,6 @@
                      style="padding:4px 8px;font-size:13px">
               <div style="font-size:11px;color:var(--text-muted);margin-top:2px">Действует с (для истории, необязательно)</div>
             </div>
-
-            {% if s.is_tuition %}
-            <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--text-muted);cursor:pointer;margin-top:2px">
-              <input type="checkbox" id="legacy-toggle-{{ s.id }}" style="width:auto">
-              Есть дети на старой цене (переходный период)
-            </label>
-            <div id="legacy-fields-{{ s.id }}" style="display:none;flex-direction:column;gap:8px;
-                        padding:8px;background:var(--bg);border-radius:8px">
-              <div>
-                <input type="number" name="legacy_old_price" class="form-control" value="{{ s.price|int }}"
-                       style="padding:4px 8px;font-size:13px">
-                <div style="font-size:11px;color:var(--text-muted);margin-top:2px">
-                  Цена для старых (по умолчанию — текущая; поправь, если в базе уже не та цена,
-                  что реально была раньше)
-                </div>
-              </div>
-              <div>
-                <input type="date" name="legacy_enrolled_before" class="legacy-cutoff form-control"
-                       max="{{ today }}" style="padding:4px 8px;font-size:13px">
-                <div style="font-size:11px;color:var(--text-muted);margin-top:2px">Зачислены раньше (кто «старый»)</div>
-              </div>
-              <div>
-                <input type="date" name="legacy_until" class="form-control" min="{{ today }}"
-                       value="{{ current_org.legacy_tariff_until.isoformat() if current_org.legacy_tariff_until else '' }}"
-                       style="padding:4px 8px;font-size:13px">
-                <div style="font-size:11px;color:var(--text-muted);margin-top:2px">До какой даты действует старая цена</div>
-              </div>
-              <div class="legacy-preview" style="font-size:12px;color:var(--text-muted);min-height:16px"></div>
-            </div>
-            {% endif %}
-
             <div style="display:flex;gap:6px">
               <button type="submit" class="btn btn-primary" style="padding:4px 10px;font-size:12px">Сохранить</button>
               <button type="button" class="btn btn-secondary" style="padding:4px 10px;font-size:12px"
@@ -157,7 +192,6 @@
           {% endif %}
         </td>
         <td class="actions">
-          {% if not s.is_tuition %}
           <form method="post" action="/services/{{ s.id }}/delete" style="display:inline"
                 onsubmit="return confirm('Удалить услугу «{{ s.name }}»?')">
             <input type="hidden" name="org_id" value="{{ current_org_id or '' }}">
@@ -165,7 +199,6 @@
                     style="background:none;border:none;color:#dc2626;cursor:pointer;font-size:16px;padding:4px 6px"
                     title="Удалить">🗑</button>
           </form>
-          {% endif %}
         </td>
       </tr>
       {% endfor %}
@@ -173,7 +206,7 @@
   </table>
   {% else %}
   <div style="text-align:center;padding:32px;color:var(--text-muted)">
-    <div>Услуг пока нет. Добавь первую (проезд, секция...).</div>
+    <div>Доп.услуг пока нет. Добавь первую (проезд, секция...).</div>
   </div>
   {% endif %}
 </div>
@@ -274,8 +307,8 @@ document.querySelectorAll('form[data-is-tuition="true"]').forEach(form => {
     const oldPrice = oldPriceInput.value;
     const countText = lastCount === null ? '' : `${lastCount} детей`;
     const msg = `Новая цена «Обучение»: ${newPrice} сом.\n`
-      + `Дети, зачисленные до ${cutoffInput.value} (${countText}), продолжат платить ${oldPrice} сом до ${untilInput.value}.\n`
-      + `Снять это потом можно только через базу, не через интерфейс. Продолжить?`;
+      + `Дети, непрерывно зачисленные до ${cutoffInput.value} (сейчас ${countText}), платят ${oldPrice} сом до ${untilInput.value}.\n`
+      + `Это живая настройка — посчитается заново для каждого начисления, дату всегда можно поправить здесь же. Продолжить?`;
     if (!confirm(msg)) e.preventDefault();
   });
 });
