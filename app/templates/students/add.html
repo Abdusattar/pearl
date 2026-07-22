@@ -59,6 +59,16 @@
     </div>
 
     <div class="form-group">
+      <label for="group_id">Группа</label>
+      <select id="group_id" name="group_id" class="form-control">
+        <option value="">— без группы —</option>
+        {% for g in groups %}
+        <option value="{{ g.id }}">{{ g.name }}</option>
+        {% endfor %}
+      </select>
+    </div>
+
+    <div class="form-group">
       <label for="parent_name">Имя родителя</label>
       <input type="text" id="parent_name" name="parent_name" class="form-control"
              placeholder="Айгуль">

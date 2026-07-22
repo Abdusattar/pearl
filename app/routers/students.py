@@ -243,10 +243,18 @@ def add_student_form(
     has_children = {o.parent_id for o in all_orgs if o.parent_id is not None}
     leaf_orgs = [o for o in accessible if o.id not in has_children]
 
+    groups = (
+        db.query(Group)
+        .filter(Group.organization_id == current_org.id, Group.deleted_at.is_(None))
+        .order_by(Group.name)
+        .all()
+    ) if current_org else []
+
     return templates.TemplateResponse("students/add.html", {
         "request": request,
         "next_pin": next_pin,
         "leaf_orgs": leaf_orgs,
+        "groups": groups,
         "current_org_id": current_org.id if current_org else None,
         "accessible_orgs": accessible,
         "current_user": user,
@@ -262,6 +270,7 @@ def add_student(
     first_name: str = Form(...),
     patronymic: str = Form(""),
     org_id_selected: int = Form(...),
+    group_id: str = Form(""),
     parent_name: str = Form(""),
     parent_contact: str = Form(""),
     db: Session = Depends(get_db),
@@ -274,6 +283,12 @@ def add_student(
     all_orgs = db.query(Organization).all()
     has_children = {o.parent_id for o in all_orgs if o.parent_id is not None}
     leaf_orgs = [o for o in accessible if o.id not in has_children]
+    groups = (
+        db.query(Group)
+        .filter(Group.organization_id == org_id_selected, Group.deleted_at.is_(None))
+        .order_by(Group.name)
+        .all()
+    )
 
     last_name = last_name.strip()
     first_name = first_name.strip()
@@ -283,6 +298,7 @@ def add_student(
             "request": request,
             "next_pin": next_pin,
             "leaf_orgs": leaf_orgs,
+            "groups": groups,
             "current_org_id": org_id_selected,
             "accessible_orgs": accessible,
             "current_user": user,
@@ -304,6 +320,12 @@ def add_student(
         parent_contact=parent_contact.strip() or None,
     )
     db.add(student)
+    db.flush()
+
+    gid = int(group_id) if group_id.isdigit() else None
+    if gid:
+        db.add(Enrollment(student_id=student.id, group_id=gid, start_date=date.today()))
+
     db.commit()
 
     return RedirectResponse(f"/students/{student.id}/edit", status_code=303)
