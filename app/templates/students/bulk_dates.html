@@ -14,7 +14,14 @@
   на будущие месяцы.
 </div>
 
-<form method="post" action="/students/bulk-dates">
+{% if student_rows %}
+<div class="form-group" style="max-width:320px">
+  <input type="text" id="student-filter" class="form-control" autocomplete="off"
+         placeholder="Найти ребёнка по имени...">
+</div>
+{% endif %}
+
+<form method="post" action="/students/bulk-dates" id="bulk-dates-form">
   <input type="hidden" name="org_id" value="{{ current_org_id }}">
 
   <div class="card">
@@ -30,13 +37,13 @@
       </thead>
       <tbody>
         {% for r in student_rows %}
-        <tr>
+        <tr data-name="{{ r.name|lower }}">
           <td data-label="ФИО">
             {{ r.name }}
             <input type="hidden" name="student_id" value="{{ r.id }}">
           </td>
           <td data-label="Группа">
-            <select name="group_id" class="form-control" style="font-size:13px">
+            <select name="group_id" class="form-control" style="font-size:13px" data-original="{{ r.group_id or '' }}">
               <option value="" {% if not r.group_id %}selected{% endif %}>— без группы —</option>
               {% for g in groups %}
               <option value="{{ g.id }}" {% if g.id == r.group_id %}selected{% endif %}>{{ g.name }}</option>
@@ -44,14 +51,15 @@
             </select>
           </td>
           <td data-label="Статус">
-            <select name="status" class="form-control" style="font-size:13px">
+            <select name="status" class="form-control" style="font-size:13px" data-original="{{ r.status }}">
               <option value="active" {% if r.status == 'active' %}selected{% endif %}>Активен</option>
               <option value="frozen" {% if r.status == 'frozen' %}selected{% endif %}>Заморожен</option>
               <option value="inactive" {% if r.status == 'inactive' %}selected{% endif %}>Выбыл</option>
             </select>
           </td>
           <td data-label="Дата поступления">
-            <input type="date" name="start_date" class="form-control" style="font-size:13px" value="{{ r.start_date }}">
+            <input type="date" name="start_date" class="form-control" style="font-size:13px"
+                   value="{{ r.start_date }}" data-original="{{ r.start_date }}">
           </td>
         </tr>
         {% endfor %}
@@ -63,8 +71,54 @@
   </div>
 
   {% if student_rows %}
-  <button type="submit" class="btn btn-primary" style="margin-top:16px"
-          onclick="return confirm('Сохранить изменения по всем детям?')">Сохранить всё</button>
+  <button type="submit" class="btn btn-primary" style="margin-top:16px">Сохранить изменённое</button>
   {% endif %}
 </form>
+{% endblock %}
+
+{% block scripts %}
+<script>
+const filterInput = document.getElementById('student-filter');
+if (filterInput) {
+  const rows = document.querySelectorAll('#bulk-dates-form tbody tr');
+  filterInput.addEventListener('input', () => {
+    const q = filterInput.value.trim().toLowerCase();
+    rows.forEach(tr => {
+      tr.style.display = !q || tr.dataset.name.includes(q) ? '' : 'none';
+    });
+  });
+}
+
+const bulkForm = document.getElementById('bulk-dates-form');
+if (bulkForm) {
+  const rows = bulkForm.querySelectorAll('tbody tr');
+
+  function rowChanged(tr) {
+    return Array.from(tr.querySelectorAll('[data-original]'))
+      .some(el => el.value !== el.dataset.original);
+  }
+  function refreshHighlight(tr) {
+    tr.style.background = rowChanged(tr) ? '#eef2ff' : '';
+  }
+
+  rows.forEach(tr => {
+    tr.querySelectorAll('[data-original]').forEach(el => {
+      el.addEventListener('input', () => refreshHighlight(tr));
+      el.addEventListener('change', () => refreshHighlight(tr));
+    });
+  });
+
+  bulkForm.addEventListener('submit', e => {
+    const changedCount = Array.from(rows).filter(rowChanged).length;
+    if (changedCount === 0) {
+      e.preventDefault();
+      alert('Изменений нет — нечего сохранять.');
+      return;
+    }
+    if (!confirm(`Изменится записей: ${changedCount}. Сохранить?`)) {
+      e.preventDefault();
+    }
+  });
+}
+</script>
 {% endblock %}
