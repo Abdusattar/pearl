@@ -24,14 +24,12 @@
   <h3 style="margin-bottom:14px">Отметить отсутствие на период</h3>
   <form method="post" action="/attendance/absence-range">
     <input type="hidden" name="org_id" value="{{ current_org_id }}">
-    <div class="form-group">
+    <div class="form-group" style="position:relative">
       <label>Ребёнок</label>
-      <select name="student_id" class="form-control" required>
-        <option value="">— выбрать —</option>
-        {% for s in students %}
-        <option value="{{ s.id }}">{{ s.name }} ({{ s.group }})</option>
-        {% endfor %}
-      </select>
+      <input type="hidden" name="student_id" id="student-id-input">
+      <input type="text" id="student-search" class="form-control" autocomplete="off"
+             placeholder="Начните вводить имя..." required>
+      <div id="student-dropdown" style="display:none;position:absolute;z-index:100;left:0;right:0;top:100%;background:#fff;border:1px solid var(--border);border-radius:6px;box-shadow:0 4px 12px rgba(0,0,0,.1);max-height:220px;overflow-y:auto"></div>
     </div>
     <div style="display:flex;gap:12px;flex-wrap:wrap">
       <div class="form-group" style="flex:1;min-width:140px">
@@ -135,4 +133,55 @@
 </div>
 
 {% endif %}
+{% endblock %}
+
+{% block scripts %}
+<script>
+const STUDENTS = {{ students | tojson }};
+
+const searchInput = document.getElementById('student-search');
+const idInput = document.getElementById('student-id-input');
+const dropdown = document.getElementById('student-dropdown');
+
+function renderDropdown(items) {
+  if (!items.length) { dropdown.style.display = 'none'; return; }
+  dropdown.innerHTML = items.map(s => `
+    <div class="ac-item" data-id="${s.id}" data-name="${s.name.replace(/"/g,'&quot;')} (${s.group.replace(/"/g,'&quot;')})"
+         style="padding:7px 10px;cursor:pointer;font-size:13px">
+      ${s.name} <span style="color:var(--text-muted);font-size:12px">(${s.group})</span>
+    </div>`).join('');
+  dropdown.style.display = '';
+  dropdown.querySelectorAll('.ac-item').forEach(el => {
+    el.addEventListener('mousedown', e => {
+      e.preventDefault();
+      searchInput.value = el.dataset.name;
+      idInput.value = el.dataset.id;
+      dropdown.style.display = 'none';
+    });
+  });
+}
+
+searchInput.addEventListener('input', () => {
+  idInput.value = '';
+  const q = searchInput.value.trim().toLowerCase();
+  if (!q) { dropdown.style.display = 'none'; return; }
+  renderDropdown(STUDENTS.filter(s => s.name.toLowerCase().includes(q)).slice(0, 8));
+});
+searchInput.addEventListener('focus', () => {
+  const q = searchInput.value.trim().toLowerCase();
+  renderDropdown((q ? STUDENTS.filter(s => s.name.toLowerCase().includes(q)) : STUDENTS).slice(0, 8));
+});
+searchInput.addEventListener('blur', () => setTimeout(() => { dropdown.style.display = 'none'; }, 180));
+
+searchInput.closest('form').addEventListener('submit', e => {
+  if (!idInput.value) {
+    e.preventDefault();
+    searchInput.setCustomValidity('Выберите ребёнка из списка');
+    searchInput.reportValidity();
+  } else {
+    searchInput.setCustomValidity('');
+  }
+});
+searchInput.addEventListener('input', () => searchInput.setCustomValidity(''));
+</script>
 {% endblock %}
