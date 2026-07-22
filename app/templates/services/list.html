@@ -79,23 +79,38 @@
           {% endif %}
         </td>
         <td data-label="Цена">
-          <div id="price-view-{{ s.id }}" style="display:flex;align-items:center;gap:8px">
+          <div id="price-view-{{ s.id }}" style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
             <span>{{ "{:,.0f}".format(s.price) }} с</span>
             {% if can_edit_price %}
             <button type="button" class="btn btn-secondary" style="padding:3px 8px;font-size:11px"
                     onclick="toggleBlock({{ s.id }}, true)">Изменить</button>
             {% endif %}
+            {% if price_history.get(s.id) %}
+            <button type="button" class="price-history-btn" data-service-id="{{ s.id }}" data-service-name="{{ s.name }}"
+                    style="background:none;border:none;color:var(--primary);cursor:pointer;
+                           font-size:12px;padding:4px 2px">История →</button>
+            {% endif %}
           </div>
           {% if can_edit_price %}
           <form method="post" action="/services/{{ s.id }}/price" id="price-form-{{ s.id }}"
-                style="display:none;align-items:center;gap:6px"
+                style="display:none;flex-direction:column;gap:8px;margin-top:8px;max-width:200px"
                 onsubmit="return confirm('Сохранить новую цену для «{{ s.name }}»?')">
             <input type="hidden" name="org_id" value="{{ current_org_id or '' }}">
-            <input type="number" name="price" value="{{ s.price|int }}" class="form-control"
-                   style="width:100px;padding:4px 8px;font-size:13px">
-            <button type="submit" class="btn btn-primary" style="padding:4px 10px;font-size:12px">Сохранить</button>
-            <button type="button" class="btn btn-secondary" style="padding:4px 10px;font-size:12px"
-                    onclick="toggleBlock({{ s.id }}, false)">Отмена</button>
+            <div>
+              <input type="number" name="price" value="{{ s.price|int }}" class="form-control"
+                     style="padding:4px 8px;font-size:13px">
+              <div style="font-size:11px;color:var(--text-muted);margin-top:2px">сом/мес</div>
+            </div>
+            <div>
+              <input type="date" name="effective_date" value="{{ today }}" class="form-control"
+                     style="padding:4px 8px;font-size:13px">
+              <div style="font-size:11px;color:var(--text-muted);margin-top:2px">Действует с (для истории, необязательно)</div>
+            </div>
+            <div style="display:flex;gap:6px">
+              <button type="submit" class="btn btn-primary" style="padding:4px 10px;font-size:12px">Сохранить</button>
+              <button type="button" class="btn btn-secondary" style="padding:4px 10px;font-size:12px"
+                      onclick="toggleBlock({{ s.id }}, false)">Отмена</button>
+            </div>
           </form>
           {% endif %}
         </td>
@@ -120,10 +135,52 @@
   </div>
   {% endif %}
 </div>
+
+<div class="modal-overlay" id="price-history-modal-overlay" hidden>
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="price-history-title">
+    <div class="modal-header">
+      <h3 id="price-history-title">История цен</h3>
+      <button type="button" class="modal-close" aria-label="Закрыть"
+              onclick="closeModal('price-history-modal-overlay')">✕</button>
+    </div>
+    <table class="table" id="price-history-table">
+      <thead>
+        <tr>
+          <th>Дата</th>
+          <th>Цена</th>
+          <th>Изменил</th>
+        </tr>
+      </thead>
+      <tbody id="price-history-body"></tbody>
+    </table>
+    <div style="margin-top:16px">
+      <button type="button" class="btn btn-secondary" style="width:100%"
+              onclick="closeModal('price-history-modal-overlay')">Закрыть</button>
+    </div>
+  </div>
+</div>
 {% endblock %}
 
 {% block scripts %}
 <script>
+const PRICE_HISTORY = {{ price_history | tojson }};
+
+function openPriceHistory(serviceId, serviceName) {
+  document.getElementById('price-history-title').textContent = 'История цен — ' + serviceName;
+  const rows = PRICE_HISTORY[serviceId] || [];
+  document.getElementById('price-history-body').innerHTML = rows.map(r => `
+    <tr>
+      <td data-label="Дата">${r.date}</td>
+      <td data-label="Цена">${r.price} с</td>
+      <td data-label="Изменил" style="color:var(--text-muted);font-size:13px">${r.who}${r.when ? ', ' + r.when : ''}</td>
+    </tr>`).join('');
+  openModal('price-history-modal-overlay');
+}
+
+document.querySelectorAll('.price-history-btn').forEach(btn => {
+  btn.addEventListener('click', () => openPriceHistory(btn.dataset.serviceId, btn.dataset.serviceName));
+});
+
 function toggleBlock(id, editing) {
   document.getElementById('price-view-' + id).style.display = editing ? 'none' : 'flex';
   document.getElementById('price-form-' + id).style.display = editing ? 'flex' : 'none';

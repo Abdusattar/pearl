@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import date, datetime
 from pathlib import Path
 from urllib.parse import quote
 
@@ -9,17 +9,17 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.dependencies import get_current_user, get_accessible_orgs, resolve_org
-from app.models import Service, Organization
+from app.models import Service, Organization, ServicePriceHistory, User
 
 router = APIRouter(prefix="/services", tags=["services"])
 templates = Jinja2Templates(directory=str(Path(__file__).parent.parent / "templates"))
 
-# Менять уже установленную цену услуги — только реальные собственники
-# (Айдай/Талас), по прямому запросу Абдусаттара (13.07). Заводить новую
+# Менять уже установленную цену услуги — по прямому запросу Абдусаттара (13.07,
+# расширено 22.07 — временно добавлены сам Абдусаттар и Махабат). Заводить новую
 # услугу с ценой (создание) — не ограничено, только правка существующей.
-# id проверены напрямую по прод-БД 13.07 (изначально были указаны 61/64 —
-# несуществующие id, из-за чего ни Айдай, ни Талас не могли менять цену).
-PRICE_EDITORS = {5, 6}  # Айдай (founder), Талас (owner)
+# id проверены напрямую по прод-БД (SELECT id, role FROM users) — реальные:
+# 1 Абдусаттар (owner), 4 Махабат (staff), 5 Айдай (founder), 6 Талас (owner).
+PRICE_EDITORS = {1, 4, 5, 6}
 
 
 @router.get("/", response_class=HTMLResponse)
@@ -35,6 +35,23 @@ def service_list(request: Request, org_id: str | None = None, error: str | None 
         query = query.filter(Service.organization_id == current_org.id)
     services = query.order_by(Service.is_tuition.desc(), Service.name).all()
 
+    price_history = {}
+    if services:
+        rows = (
+            db.query(ServicePriceHistory, User.name)
+            .outerjoin(User, User.id == ServicePriceHistory.changed_by)
+            .filter(ServicePriceHistory.service_id.in_([s.id for s in services]))
+            .order_by(ServicePriceHistory.effective_date.desc(), ServicePriceHistory.changed_at.desc())
+            .all()
+        )
+        for h, user_name in rows:
+            price_history.setdefault(h.service_id, []).append({
+                "date": h.effective_date.strftime("%d.%m.%Y"),
+                "price": f"{float(h.price):,.0f}".replace(",", " "),
+                "who": user_name or "— (при создании)",
+                "when": h.changed_at.strftime("%d.%m %H:%M") if h.changed_at else "",
+            })
+
     return templates.TemplateResponse("services/list.html", {
         "request": request,
         "current_user": user,
@@ -42,6 +59,8 @@ def service_list(request: Request, org_id: str | None = None, error: str | None 
         "current_org_id": current_org.id if current_org else None,
         "current_org": current_org,
         "services": services,
+        "price_history": price_history,
+        "today": date.today().isoformat(),
         "active_page": "services",
         "can_edit_price": user.id in PRICE_EDITORS,
         "error": error,
@@ -93,7 +112,13 @@ def create_service(
         price_val = 0
 
     if name and price_val > 0:
-        db.add(Service(organization_id=int(org_id), name=name, price=price_val))
+        service = Service(organization_id=int(org_id), name=name, price=price_val)
+        db.add(service)
+        db.flush()
+        db.add(ServicePriceHistory(
+            service_id=service.id, price=price_val,
+            effective_date=date.today(), changed_by=user.id,
+        ))
         db.commit()
 
     return RedirectResponse(f"/services/?org_id={org_id}", status_code=303)
@@ -104,6 +129,7 @@ def update_service_price(
     service_id: int,
     request: Request,
     price: str = Form(...),
+    effective_date: str = Form(""),
     org_id: str = Form(default=""),
     db: Session = Depends(get_db),
 ):
@@ -120,8 +146,16 @@ def update_service_price(
         price_val = float(price)
     except ValueError:
         price_val = 0
+    try:
+        eff_date = date.fromisoformat(effective_date) if effective_date else date.today()
+    except ValueError:
+        eff_date = date.today()
     if s and price_val > 0:
         s.price = price_val
+        db.add(ServicePriceHistory(
+            service_id=s.id, price=price_val,
+            effective_date=eff_date, changed_by=user.id,
+        ))
         db.commit()
     return RedirectResponse(base_url, status_code=303)
 

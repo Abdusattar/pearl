@@ -407,6 +407,22 @@ class Service(Base):
     deleted_at      = Column(DateTime)
 
 
+class ServicePriceHistory(Base):
+    """Журнал изменений цены услуги (22.07) — каждое сохранение новой цены
+    добавляет строку, старые не трогаются и не удаляются. effective_date —
+    дата, с которой цена действует в жизни (вводит человек, может быть задним
+    числом), НЕ используется расчётом: generate_monthly_charges() всегда берёт
+    текущую Service.price на момент начисления. changed_at/changed_by — кто и
+    когда физически сохранил запись в системе (аудит, отдельно от effective_date)."""
+    __tablename__ = "service_price_history"
+    id             = Column(Integer, primary_key=True)
+    service_id     = Column(Integer, ForeignKey("services.id"), nullable=False)
+    price          = Column(Numeric(10, 2), nullable=False)
+    effective_date = Column(Date, nullable=False)
+    changed_by     = Column(Integer, ForeignKey("users.id"))
+    changed_at     = Column(DateTime, server_default=func.now())
+
+
 class StudentService(Base):
     """Подключение услуги ребёнку — с историей (start_date/end_date), как Enrollment."""
     __tablename__ = "student_services"
