@@ -6,7 +6,13 @@
 {% block content %}
 <div class="page-header">
   <h1>Журнал посещаемости</h1>
-  <a href="/attendance/?org_id={{ current_org_id or '' }}" class="btn btn-secondary">← Посещаемость</a>
+  <div style="display:flex;gap:10px">
+    {% if current_org_id %}
+    <button type="button" id="open-absence-modal-btn" class="btn btn-primary"
+            onclick="openModal('absence-modal-overlay')">+ Отметить отсутствие</button>
+    {% endif %}
+    <a href="/attendance/?org_id={{ current_org_id or '' }}" class="btn btn-secondary">← Посещаемость</a>
+  </div>
 </div>
 
 {% if request.query_params.get('saved') %}
@@ -19,43 +25,6 @@
 {% if not current_org_id %}
 <div class="card" style="text-align:center;padding:32px;color:var(--text-muted)">Объект не выбран.</div>
 {% else %}
-
-<div class="card">
-  <h3 style="margin-bottom:14px">Отметить отсутствие на период</h3>
-  <form method="post" action="/attendance/absence-range">
-    <input type="hidden" name="org_id" value="{{ current_org_id }}">
-    <div class="form-group" style="position:relative">
-      <label>Ребёнок</label>
-      <input type="hidden" name="student_id" id="student-id-input">
-      <input type="text" id="student-search" class="form-control" autocomplete="off"
-             placeholder="Начните вводить имя..." required>
-      <div id="student-dropdown" style="display:none;position:absolute;z-index:100;left:0;right:0;top:100%;background:#fff;border:1px solid var(--border);border-radius:6px;box-shadow:0 4px 12px rgba(0,0,0,.1);max-height:220px;overflow-y:auto"></div>
-    </div>
-    <div style="display:flex;gap:12px;flex-wrap:wrap">
-      <div class="form-group" style="flex:1;min-width:140px">
-        <label>С</label>
-        <input type="date" name="start_date" class="form-control" required max="{{ today }}" value="{{ today }}">
-      </div>
-      <div class="form-group" style="flex:1;min-width:140px">
-        <label>По</label>
-        <input type="date" name="end_date" class="form-control" required value="{{ today }}">
-      </div>
-    </div>
-    <div class="form-group">
-      <label>Причина</label>
-      <select name="reason" class="form-control" required>
-        <option value="vacation">Отпуск</option>
-        <option value="sick">Болезнь</option>
-        <option value="other">Другое</option>
-      </select>
-    </div>
-    <div class="form-group">
-      <label>Комментарий (необязательно)</label>
-      <input type="text" name="comment" class="form-control" maxlength="200" placeholder="Например: вернётся 25.07">
-    </div>
-    <button type="submit" class="btn btn-primary btn-lg">Сохранить отсутствие</button>
-  </form>
-</div>
 
 <div class="card">
   <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
@@ -132,12 +101,62 @@
   {% endif %}
 </div>
 
+<div class="modal-overlay" id="absence-modal-overlay" hidden>
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="absence-modal-title">
+    <div class="modal-header">
+      <h3 id="absence-modal-title">Отметить отсутствие на период</h3>
+      <button type="button" class="modal-close" aria-label="Закрыть"
+              onclick="closeModal('absence-modal-overlay')">✕</button>
+    </div>
+    <form method="post" action="/attendance/absence-range">
+      <input type="hidden" name="org_id" value="{{ current_org_id }}">
+      <div class="form-group" style="position:relative">
+        <label>Ребёнок</label>
+        <input type="hidden" name="student_id" id="student-id-input">
+        <input type="text" id="student-search" class="form-control" autocomplete="off"
+               data-autofocus placeholder="Начните вводить имя..." required>
+        <div id="student-dropdown" style="display:none;position:absolute;z-index:100;left:0;right:0;top:100%;background:#fff;border:1px solid var(--border);border-radius:6px;box-shadow:0 4px 12px rgba(0,0,0,.1);max-height:220px;overflow-y:auto"></div>
+      </div>
+      <div style="display:flex;gap:12px;flex-wrap:wrap">
+        <div class="form-group" style="flex:1;min-width:140px">
+          <label>С</label>
+          <input type="date" name="start_date" class="form-control" required max="{{ today }}" value="{{ today }}">
+        </div>
+        <div class="form-group" style="flex:1;min-width:140px">
+          <label>По</label>
+          <input type="date" name="end_date" class="form-control" required value="{{ today }}">
+        </div>
+      </div>
+      <div class="form-group">
+        <label>Причина</label>
+        <select name="reason" class="form-control" required>
+          <option value="vacation">Отпуск</option>
+          <option value="sick">Болезнь</option>
+          <option value="other">Другое</option>
+        </select>
+      </div>
+      <div class="form-group" style="margin-bottom:0">
+        <label>Комментарий (необязательно)</label>
+        <input type="text" name="comment" class="form-control" maxlength="200" placeholder="Например: вернётся 25.07">
+      </div>
+      <div style="display:flex;gap:10px;margin-top:18px">
+        <button type="submit" class="btn btn-primary" style="flex:1">Сохранить отсутствие</button>
+        <button type="button" class="btn btn-secondary" onclick="closeModal('absence-modal-overlay')">Отмена</button>
+      </div>
+    </form>
+  </div>
+</div>
+
 {% endif %}
 {% endblock %}
 
 {% block scripts %}
 <script>
 const STUDENTS = {{ students | tojson }};
+
+{% if request.query_params.get('error') %}
+document.addEventListener('DOMContentLoaded', () => openModal('absence-modal-overlay'));
+{% endif %}
 
 const searchInput = document.getElementById('student-search');
 const idInput = document.getElementById('student-id-input');
