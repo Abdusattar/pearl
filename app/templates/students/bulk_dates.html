@@ -65,6 +65,9 @@
           <td data-label="Тариф" style="font-size:13px;color:var(--text-muted)">
             {% if r.tariff_badge is not none %}
             {{ "{:,.0f}".format(r.tariff_badge).replace(",", " ") }} с
+            {% if r.tariff_is_legacy and legacy_tariff_until %}
+            <span style="font-size:11px">(до {{ legacy_tariff_until.strftime("%d.%m") }})</span>
+            {% endif %}
             {% else %}
             —
             {% endif %}

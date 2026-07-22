@@ -181,12 +181,14 @@ def bulk_dates_form(request: Request, org_id: str | None = None, db: Session = D
         active = next((e for e in rows if e.end_date is None), None)
 
         tariff_badge = None
+        tariff_is_legacy = False
         if new_price is not None and s.status in ("active", "frozen"):
             base = new_price
             if legacy_active:
                 since = continuous_since_from_enrollments(rows)
                 if since and since < current_org.legacy_tariff_cutoff:
                     base = float(current_org.legacy_tariff_price)
+                    tariff_is_legacy = True
             tariff_badge = max(0.0, base - float(s.discount_amount or 0))
 
         student_rows.append({
@@ -196,6 +198,7 @@ def bulk_dates_form(request: Request, org_id: str | None = None, db: Session = D
             "group_id": active.group_id if active else None,
             "start_date": rows[0].start_date.isoformat() if rows else "",
             "tariff_badge": tariff_badge,
+            "tariff_is_legacy": tariff_is_legacy,
         })
 
     return templates.TemplateResponse("students/bulk_dates.html", {
@@ -205,6 +208,7 @@ def bulk_dates_form(request: Request, org_id: str | None = None, db: Session = D
         "current_org_id": current_org.id if current_org else None,
         "groups": groups,
         "student_rows": student_rows,
+        "legacy_tariff_until": current_org.legacy_tariff_until if current_org else None,
     })
 
 
