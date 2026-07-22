@@ -181,18 +181,25 @@ def update_service_price(
     org_id: str = Form(default=""),
     legacy_enrolled_before: str = Form(""),
     legacy_until: str = Form(""),
+    legacy_old_price: str = Form(""),
     db: Session = Depends(get_db),
 ):
     """Правка цены услуги. Для тарифа "Обучение" (is_tuition) можно в этом же
     запросе зафиксировать переходный период для "старых" детей — сначала
-    (внутри этой же транзакции) снимается снимок ТЕКУЩЕЙ цены как
+    (внутри этой же транзакции) снимается снимок цены как
     Student.legacy_tariff_amount для активных детей, зачисленных раньше
     legacy_enrolled_before, и только ПОСЛЕ этого цена услуги меняется на
     новую. Порядок гарантирован кодом в одном запросе — раньше это были два
     отдельных действия (карточка "Тариф переходного периода" + правка цены),
     и 22.07 реальный случай показал: если сначала подняли цену, а потом
     запустили фиксацию "старых" — она снимала уже НОВУЮ цену, а не старую,
-    и переходный период переставал что-либо защищать."""
+    и переходный период переставал что-либо защищать.
+
+    legacy_old_price — редактируемое поле (по умолчанию равно текущей цене
+    в форме), не жёстко «текущая цена услуги» — тот же день 22.07 показал,
+    что реальность может УЖЕ разойтись с базой (цену подняли раньше, чем
+    успели зафиксировать старых), и тогда «текущая» цена в БД — это уже
+    новая, а не та, что реально надо сохранить старым."""
     user = get_current_user(request, db)
     if not user:
         return RedirectResponse("/login", status_code=302)
@@ -222,7 +229,10 @@ def update_service_price(
         except ValueError:
             cutoff = until = None
         if cutoff and until:
-            old_price = s.price  # снимок ДО замены — то, что реально платят "старые" сейчас
+            try:
+                old_price = float(legacy_old_price) if legacy_old_price else s.price
+            except ValueError:
+                old_price = s.price
             first_enrollment = dict(
                 db.query(Enrollment.student_id, func.min(Enrollment.start_date))
                 .join(Student, Student.id == Enrollment.student_id)
