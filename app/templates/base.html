@@ -281,6 +281,17 @@
     .modal { padding: 18px; border-radius: 10px; }
     .modal-close { min-width: 44px; min-height: 44px; }
   }
+
+  /* STICKY SAVE BAR — переиспользуемый паттерн для длинных списков/форм (22.07):
+     основное действие остаётся на экране независимо от того, где в списке правишь,
+     не нужно скроллить через весь остаток. На мобильном приподнят над bottom-nav. */
+  .sticky-save-bar {
+    position: sticky; bottom: 0; background: var(--surface);
+    border-top: 1px solid var(--border); padding: 12px 0; margin-top: 16px;
+  }
+  @media (max-width: 768px) {
+    .sticky-save-bar { bottom: 60px; }
+  }
 </style>
 </head>
 <body>

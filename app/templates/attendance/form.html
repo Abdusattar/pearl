@@ -89,7 +89,7 @@
     Отмечай галочкой только тех, кого сегодня НЕТ. Остальные по умолчанию — пришли.
   </div>
 
-  <div style="display:flex;gap:12px;max-width:640px">
+  <div class="sticky-save-bar" style="display:flex;gap:12px;max-width:640px">
     <button type="submit" class="btn btn-primary btn-lg" style="flex:1">Сохранить посещаемость</button>
     {% if has_saved %}
     <button type="button" class="btn btn-secondary" onclick="toggleBlock('att', false)">Отмена</button>

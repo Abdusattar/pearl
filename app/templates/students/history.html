@@ -18,7 +18,20 @@
   {% endif %}
 
   <div style="margin-top:18px">
-    <div style="font-size:13px;color:var(--text-muted);margin-bottom:10px">История начислений и оплат ({{ ledger|length }})</div>
+    <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:10px;flex-wrap:wrap">
+      <div style="font-size:13px;color:var(--text-muted)">История начислений и оплат ({{ ledger|length }})</div>
+      {% if months|length > 1 %}
+      <form method="get" style="margin:0">
+        {% if source %}<input type="hidden" name="source" value="{{ source }}">{% endif %}
+        <select name="month" class="form-control" style="font-size:12px;padding:5px 8px;width:auto" onchange="this.form.submit()">
+          <option value="" {% if not current_month %}selected{% endif %}>Все месяцы</option>
+          {% for m in months %}
+          <option value="{{ m }}" {% if m == current_month %}selected{% endif %}>{{ m[5:7] }}.{{ m[0:4] }}</option>
+          {% endfor %}
+        </select>
+      </form>
+      {% endif %}
+    </div>
     <table class="table">
       <thead><tr><th>Дата</th><th>Сумма</th><th>Описание</th></tr></thead>
       <tbody>

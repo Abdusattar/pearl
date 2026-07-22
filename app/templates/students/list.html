@@ -36,7 +36,7 @@
         <option value="all" {% if status == 'all' %}selected{% endif %}>Все</option>
       </select>
       <button type="submit" class="btn btn-secondary">Найти</button>
-      {% if q or current_group_id %}
+      {% if q or current_group_id or status != 'active' %}
         <a href="/students/?org_id={{ current_org_id }}" class="btn btn-secondary">Сбросить</a>
       {% endif %}
     </form>
@@ -61,7 +61,7 @@
         </td>
       </tr>
       {% for s in grp.students %}
-      <tr data-href="/students/{{ s.id }}/edit" style="cursor:pointer">
+      <tr data-href="/students/{{ s.id }}/edit" style="cursor:pointer" tabindex="0">
         <td data-label="PIN">
           <span style="font-family:monospace;font-weight:700;font-size:15px;color:var(--primary)">
             {{ s.pin }}
@@ -109,6 +109,12 @@
 document.querySelectorAll('tr[data-href]').forEach(function(row) {
   row.addEventListener('click', function(e) {
     if (!e.target.closest('a, button')) {
+      window.location = row.dataset.href;
+    }
+  });
+  row.addEventListener('keydown', function(e) {
+    if ((e.key === 'Enter' || e.key === ' ') && !e.target.closest('a, button')) {
+      e.preventDefault();
       window.location = row.dataset.href;
     }
   });

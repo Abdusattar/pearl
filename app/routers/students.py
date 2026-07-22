@@ -523,7 +523,10 @@ def edit_student_billing(
 # ── БАЛАНС И ИСТОРИЯ (просмотр + ручная корректировка) ───────────────────────────
 
 @router.get("/{student_id}/history", response_class=HTMLResponse)
-def student_history(student_id: int, request: Request, source: str | None = None, db: Session = Depends(get_db)):
+def student_history(
+    student_id: int, request: Request, source: str | None = None,
+    month: str | None = None, db: Session = Depends(get_db),
+):
     user = get_current_user(request, db)
     if not user:
         return RedirectResponse("/login", status_code=302)
@@ -537,11 +540,22 @@ def student_history(student_id: int, request: Request, source: str | None = None
     else:
         back_url, back_label, active_page = f"/students/{student_id}/edit", "← Личные данные и оплата", "students"
 
+    # Баланс — всегда по всей истории целиком, фильтр по месяцу его не трогает
+    # (иначе долг на экране разъехался бы с реальным). Список ниже — можно
+    # сузить до месяца, если история давно копится (22.07, найдено на аудите
+    # модуля «Дети» — таблица без пагинации могла расти неограниченно).
+    full_ledger = get_ledger(db, student.id)
+    months = sorted({row["date"].strftime("%Y-%m") for row in full_ledger}, reverse=True)
+    ledger = [row for row in full_ledger if not month or row["date"].strftime("%Y-%m") == month]
+
     return templates.TemplateResponse("students/history.html", {
         "request": request,
         "student": student,
         "balance": get_balance(db, student.id),
-        "ledger": get_ledger(db, student.id),
+        "ledger": ledger,
+        "months": months,
+        "current_month": month,
+        "source": source,
         "current_org_id": student.organization_id,
         "back_url": back_url,
         "back_label": back_label,
