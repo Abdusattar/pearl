@@ -71,9 +71,21 @@
   </div>
 
   {% if student_rows %}
-  <button type="submit" class="btn btn-primary" style="margin-top:16px">Сохранить изменённое</button>
+  <div class="bulk-save-bar">
+    <button type="submit" class="btn btn-primary">Сохранить изменённое</button>
+  </div>
   {% endif %}
 </form>
+
+<style>
+  .bulk-save-bar {
+    position: sticky; bottom: 0; background: var(--surface);
+    border-top: 1px solid var(--border); padding: 12px 0; margin-top: 16px;
+  }
+  @media (max-width: 768px) {
+    .bulk-save-bar { bottom: 60px; }
+  }
+</style>
 {% endblock %}
 
 {% block scripts %}
