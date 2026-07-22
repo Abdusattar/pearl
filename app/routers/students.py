@@ -198,8 +198,24 @@ def bulk_dates_save(
     if not user:
         return RedirectResponse("/login", status_code=302)
 
+    if not student_id:
+        return RedirectResponse(f"/students/bulk-dates?org_id={org_id}", status_code=303)
+
+    # Форма всегда шлёт ВСЕ строки таблицы (даже нетронутые — их текущие значения
+    # просто едут назад как есть), не только изменённую. При ~80 детях на объект
+    # старая версия дёргала по 2-4 отдельных запроса в БД на каждую строку внутри
+    # питоновского цикла (update_student()/set_first_enrollment_start() сами делают
+    # свои SELECT) — правка одного ребёнка ощущалась как "зависание". Тут — один
+    # батч-запрос на всех детей/зачисления объекта разом (как уже делает GET-версия
+    # этой же страницы), и запись только по строкам, где значение реально изменилось.
+    students = {s.id: s for s in db.query(Student).filter(Student.id.in_(student_id)).all()}
+    enrollments_by_student: dict[int, list[Enrollment]] = {}
+    for e in db.query(Enrollment).filter(Enrollment.student_id.in_(student_id)) \
+            .order_by(Enrollment.start_date.asc(), Enrollment.id.asc()).all():
+        enrollments_by_student.setdefault(e.student_id, []).append(e)
+
     for i, sid in enumerate(student_id):
-        student = db.query(Student).filter(Student.id == sid).first()
+        student = students.get(sid)
         if not student:
             continue
         st = status[i] if i < len(status) else "active"
@@ -207,13 +223,21 @@ def bulk_dates_save(
         gid = int(gid_raw) if gid_raw.isdigit() else None
         date_raw = (start_date[i] if i < len(start_date) else "").strip()
 
-        update_student(
-            db, sid, student.last_name or "", student.first_name or "",
-            student.patronymic or "", gid, st, student.parent_name, student.parent_contact,
-        )
+        s_rows = enrollments_by_student.get(sid, [])
+        current_enrollment = next((e for e in s_rows if e.end_date is None), None)
+        current_gid = current_enrollment.group_id if current_enrollment else None
+        first_start = s_rows[0].start_date if s_rows else None
+
+        if st != student.status or gid != current_gid:
+            update_student(
+                db, sid, student.last_name or "", student.first_name or "",
+                student.patronymic or "", gid, st, student.parent_name, student.parent_contact,
+            )
         if date_raw:
             try:
-                set_first_enrollment_start(db, sid, date.fromisoformat(date_raw))
+                new_date = date.fromisoformat(date_raw)
+                if new_date != first_start:
+                    set_first_enrollment_start(db, sid, new_date)
             except ValueError:
                 pass
 
