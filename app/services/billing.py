@@ -18,6 +18,23 @@ def get_tuition_service(db: Session, organization_id: int) -> Service | None:
     )
 
 
+def continuous_since_from_enrollments(enrollments: list[Enrollment]) -> date | None:
+    """Та же логика, что continuous_enrollment_since(), но по уже загруженному
+    списку Enrollment (отсортированному по start_date по возрастанию) — чтобы
+    страницы со списком детей (bulk-dates) могли посчитать это без запроса на
+    каждого ребёнка (тот же N+1, что уже чинили в bulk_dates_save)."""
+    if not enrollments:
+        return None
+    since = enrollments[-1].start_date
+    for i in range(len(enrollments) - 1, 0, -1):
+        prev = enrollments[i - 1]
+        curr = enrollments[i]
+        if prev.end_date is not None and curr.start_date > prev.end_date:
+            break
+        since = prev.start_date
+    return since
+
+
 def continuous_enrollment_since(db: Session, student_id: int) -> date | None:
     """Дата начала ТЕКУЩЕЙ непрерывной цепочки зачисления ребёнка — идём от
     самой свежей записи Enrollment назад, пока следующая (более ранняя) впритык
@@ -34,16 +51,7 @@ def continuous_enrollment_since(db: Session, student_id: int) -> date | None:
         .order_by(Enrollment.start_date.asc(), Enrollment.id.asc())
         .all()
     )
-    if not enrollments:
-        return None
-    since = enrollments[-1].start_date
-    for i in range(len(enrollments) - 1, 0, -1):
-        prev = enrollments[i - 1]
-        curr = enrollments[i]
-        if prev.end_date is not None and curr.start_date > prev.end_date:
-            break
-        since = prev.start_date
-    return since
+    return continuous_since_from_enrollments(enrollments)
 
 
 def _tuition_fee(db: Session, student: Student) -> float:

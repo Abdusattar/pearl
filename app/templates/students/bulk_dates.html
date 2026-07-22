@@ -33,6 +33,7 @@
           <th style="width:200px">Группа</th>
           <th style="width:140px">Статус</th>
           <th style="width:160px">Дата поступления</th>
+          <th style="width:110px">Тариф</th>
         </tr>
       </thead>
       <tbody>
@@ -60,6 +61,13 @@
           <td data-label="Дата поступления">
             <input type="date" name="start_date" class="form-control" style="font-size:13px"
                    value="{{ r.start_date }}" data-original="{{ r.start_date }}">
+          </td>
+          <td data-label="Тариф" style="font-size:13px;color:var(--text-muted)">
+            {% if r.tariff_badge is not none %}
+            {{ "{:,.0f}".format(r.tariff_badge).replace(",", " ") }} с
+            {% else %}
+            —
+            {% endif %}
           </td>
         </tr>
         {% endfor %}

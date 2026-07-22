@@ -14,6 +14,7 @@ from app.services.students import (
 )
 from app.services.billing import (
     generate_monthly_charges, get_balance, get_ledger, set_student_services, get_tuition_service,
+    continuous_since_from_enrollments,
 )
 from app.dependencies import get_current_user, get_accessible_orgs, resolve_org
 
@@ -162,16 +163,39 @@ def bulk_dates_form(request: Request, org_id: str | None = None, db: Session = D
         for e in rows:
             enrollments_by_student.setdefault(e.student_id, []).append(e)
 
+    # Бейдж "сколько будет платить" по тарифу (22.07) — та же формула, что
+    # billing._tuition_fee(), но по уже загрученным enrollments_by_student
+    # (без запроса на каждого ребёнка) — чтобы Махабат сразу видела результат
+    # правки даты, не открывая /services/.
+    tuition_service = get_tuition_service(db, current_org.id) if current_org else None
+    new_price = float(tuition_service.price) if tuition_service else None
+    legacy_active = bool(
+        current_org and current_org.legacy_tariff_cutoff
+        and current_org.legacy_tariff_price is not None
+        and current_org.legacy_tariff_until and date.today() <= current_org.legacy_tariff_until
+    )
+
     student_rows = []
     for s in students:
         rows = enrollments_by_student.get(s.id, [])
         active = next((e for e in rows if e.end_date is None), None)
+
+        tariff_badge = None
+        if new_price is not None and s.status in ("active", "frozen"):
+            base = new_price
+            if legacy_active:
+                since = continuous_since_from_enrollments(rows)
+                if since and since < current_org.legacy_tariff_cutoff:
+                    base = float(current_org.legacy_tariff_price)
+            tariff_badge = max(0.0, base - float(s.discount_amount or 0))
+
         student_rows.append({
             "id": s.id,
             "name": s.name,
             "status": s.status,
             "group_id": active.group_id if active else None,
             "start_date": rows[0].start_date.isoformat() if rows else "",
+            "tariff_badge": tariff_badge,
         })
 
     return templates.TemplateResponse("students/bulk_dates.html", {
