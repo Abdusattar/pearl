@@ -14,7 +14,7 @@ from app.services.students import (
 )
 from app.services.billing import (
     generate_monthly_charges, get_balance, get_ledger, set_student_services, get_tuition_service,
-    continuous_since_from_enrollments,
+    continuous_since_from_enrollments, tuition_base_price,
 )
 from app.dependencies import get_current_user, get_accessible_orgs, resolve_org
 
@@ -411,8 +411,7 @@ def _edit_context(db: Session, student: Student, error: str | None = None):
         )
     }
     active_services = [s for s in services if s.id in active_service_ids]
-    tuition_service = get_tuition_service(db, student.organization_id)
-    base_tuition_price = float(tuition_service.price) if tuition_service else 0.0
+    base_tuition_price = tuition_base_price(db, student)
     org = db.query(Organization).get(student.organization_id)
     return {
         "student": student,
@@ -514,8 +513,7 @@ def edit_student_billing(
     except ValueError:
         discount_som = -1  # заведомо невалидное — попадёт в проверку ниже
 
-    tuition_service = get_tuition_service(db, student.organization_id)
-    base_price = float(tuition_service.price) if tuition_service else 0.0
+    base_price = tuition_base_price(db, student)
     if not (0 <= discount_som <= base_price):
         ctx = _edit_context(db, student, error=f"Скидка должна быть числом от 0 до {base_price:.0f} сом")
         ctx.update({"request": request, "accessible_orgs": get_accessible_orgs(user, db), "current_user": user})

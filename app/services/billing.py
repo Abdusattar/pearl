@@ -54,7 +54,13 @@ def continuous_enrollment_since(db: Session, student_id: int) -> date | None:
     return continuous_since_from_enrollments(enrollments)
 
 
-def _tuition_fee(db: Session, student: Student) -> float:
+def tuition_base_price(db: Session, student: Student) -> float:
+    """Тариф за учёбу ДО скидки — текущая цена услуги, либо цена переходного
+    периода, если ребёнок непрерывно зачислен раньше границы (22.07). Вынесена
+    отдельно от _tuition_fee(), чтобы карточка ребёнка могла показать и базу,
+    и итог после скидки раздельно (раньше карточка брала голую Service.price,
+    вообще не зная о переходном тарифе — реальное начисление считало верно,
+    а витрина ребёнку показывала не ту сумму)."""
     tuition_service = get_tuition_service(db, student.organization_id)
     base = float(tuition_service.price) if tuition_service else 0.0
     org = db.query(Organization).get(student.organization_id)
@@ -63,6 +69,11 @@ def _tuition_fee(db: Session, student: Student) -> float:
             since = continuous_enrollment_since(db, student.id)
             if since and since < org.legacy_tariff_cutoff:
                 base = float(org.legacy_tariff_price)
+    return base
+
+
+def _tuition_fee(db: Session, student: Student) -> float:
+    base = tuition_base_price(db, student)
     discount = float(student.discount_amount or 0)
     return max(0.0, base - discount)
 
