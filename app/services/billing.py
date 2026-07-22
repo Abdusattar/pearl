@@ -21,6 +21,10 @@ def get_tuition_service(db: Session, organization_id: int) -> Service | None:
 def _tuition_fee(db: Session, student: Student) -> float:
     tuition_service = get_tuition_service(db, student.organization_id)
     base = float(tuition_service.price) if tuition_service else 0.0
+    if student.legacy_tariff_amount is not None:
+        org = db.query(Organization).get(student.organization_id)
+        if org and org.legacy_tariff_until and date.today() <= org.legacy_tariff_until:
+            base = float(student.legacy_tariff_amount)
     discount = float(student.discount_amount or 0)
     return max(0.0, base - discount)
 

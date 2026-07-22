@@ -57,6 +57,55 @@
   </form>
   {% endif %}
 </div>
+{% set tuition = services | selectattr('is_tuition') | first %}
+{% if can_edit_price and tuition %}
+<div class="card" style="max-width:560px;margin-bottom:20px">
+  <h3 style="font-size:15px;margin-bottom:6px">Тариф переходного периода</h3>
+  <div style="font-size:12px;color:var(--text-muted);margin-bottom:12px">
+    Перед повышением базовой цены — зафиксировать <strong>{{ "{:,.0f}".format(tuition.price) }} сом</strong>
+    (текущая цена «{{ tuition.name }}» прямо сейчас) как временную для детей,
+    зачисленных раньше выбранной даты. Они продолжат платить эту сумму до
+    указанной даты, новые дети сразу платят по новому тарифу, когда его поднимете.
+  </div>
+
+  {% if request.query_params.get('legacy_marked') %}
+  <div class="alert alert-success">Зафиксировано детей на прежней цене: {{ request.query_params.get('legacy_marked') }}</div>
+  {% endif %}
+
+  <div id="price-view-legacy" style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+    {% if current_org.legacy_tariff_until %}
+    <span>До {{ current_org.legacy_tariff_until.strftime("%d.%m.%Y") }} — {{ legacy_count }} {{ "ребёнок" if legacy_count == 1 else "детей" }} на прежней цене</span>
+    {% else %}
+    <span style="color:var(--text-muted)">Не настроено</span>
+    {% endif %}
+    <button type="button" class="btn btn-secondary" style="padding:3px 8px;font-size:11px"
+            onclick="toggleBlock('legacy', true)">Настроить</button>
+  </div>
+
+  <form method="post" action="/services/legacy-tariff" id="price-form-legacy"
+        data-tuition-price="{{ tuition.price|int }}"
+        style="display:none;flex-direction:column;gap:10px;margin-top:10px;max-width:280px">
+    <input type="hidden" name="org_id" value="{{ current_org_id or '' }}">
+    <div>
+      <label style="font-size:12px;color:var(--text-muted);display:block;margin-bottom:4px">Зачислены раньше (кто «старый»)</label>
+      <input type="date" name="enrolled_before" id="legacy-cutoff" class="form-control" required
+             max="{{ today }}" style="padding:6px 10px;font-size:13px">
+    </div>
+    <div>
+      <label style="font-size:12px;color:var(--text-muted);display:block;margin-bottom:4px">Действует до</label>
+      <input type="date" name="until_date" class="form-control" required min="{{ today }}"
+             value="{{ current_org.legacy_tariff_until.isoformat() if current_org.legacy_tariff_until else '' }}"
+             style="padding:6px 10px;font-size:13px">
+    </div>
+    <div id="legacy-preview" style="font-size:12px;color:var(--text-muted);min-height:16px"></div>
+    <div style="display:flex;gap:6px">
+      <button type="submit" class="btn btn-primary" style="padding:5px 12px;font-size:12px">Зафиксировать</button>
+      <button type="button" class="btn btn-secondary" style="padding:5px 12px;font-size:12px"
+              onclick="toggleBlock('legacy', false)">Отмена</button>
+    </div>
+  </form>
+</div>
+{% endif %}
 {% endif %}
 
 <div class="card">
@@ -184,6 +233,39 @@ document.querySelectorAll('.price-history-btn').forEach(btn => {
 function toggleBlock(id, editing) {
   document.getElementById('price-view-' + id).style.display = editing ? 'none' : 'flex';
   document.getElementById('price-form-' + id).style.display = editing ? 'flex' : 'none';
+}
+
+const legacyForm = document.getElementById('price-form-legacy');
+if (legacyForm) {
+  const cutoffInput = document.getElementById('legacy-cutoff');
+  const previewEl = document.getElementById('legacy-preview');
+  const orgId = legacyForm.querySelector('[name="org_id"]').value;
+  const tuitionPrice = legacyForm.dataset.tuitionPrice;
+  let lastCount = null;
+
+  async function updatePreview() {
+    if (!cutoffInput.value) { previewEl.textContent = ''; lastCount = null; return; }
+    previewEl.textContent = 'Считаю...';
+    try {
+      const res = await fetch(`/services/legacy-tariff-preview?org_id=${orgId}&enrolled_before=${cutoffInput.value}`);
+      const data = await res.json();
+      lastCount = data.count;
+      previewEl.textContent = data.count === null
+        ? ''
+        : `Затронет детей: ${data.count} (по цене ${tuitionPrice} сом)`;
+    } catch (e) {
+      previewEl.textContent = '';
+    }
+  }
+  cutoffInput.addEventListener('change', updatePreview);
+
+  legacyForm.addEventListener('submit', e => {
+    const until = legacyForm.querySelector('[name="until_date"]').value;
+    const countText = lastCount === null ? '' : `${lastCount} детей`;
+    const msg = `Зафиксировать ${tuitionPrice} сом для ${countText} (зачислены до ${cutoffInput.value}) `
+      + `до ${until} — снять это потом можно только через базу, не через интерфейс. Продолжить?`;
+    if (!confirm(msg)) e.preventDefault();
+  });
 }
 </script>
 {% endblock %}

@@ -17,6 +17,10 @@ class Organization(Base):
     # константа в коде (16.07, софт планируется другим садикам/школам с другими
     # цифрами). Редактируется на /services/ теми же, кто меняет тариф.
     frozen_discount_percent = Column(Numeric(5, 2), nullable=False, default=50, server_default='50')
+    # Дата, до которой действует Student.legacy_tariff_amount у детей этого
+    # объекта (22.07) — единая на всех, не константа в коде. После этой даты
+    # legacy_tariff_amount перестаёт читаться расчётом начислений сам по себе.
+    legacy_tariff_until = Column(Date)
     created_at = Column(DateTime, server_default=func.now())
 
     children  = relationship("Organization", foreign_keys=[parent_id],
@@ -70,6 +74,14 @@ class Student(Base):
     discount_reason  = Column(Text)
     discount_set_by  = Column(Integer, ForeignKey("users.id"))
     discount_set_at  = Column(DateTime)
+    # Временная "замороженная" цена за учёбу для ребёнка, зачисленного до
+    # повышения базового тарифа (22.07) — отдельно от discount_amount (та
+    # скидка — за многодетность/льготу, эта — историческая цена переходного
+    # периода). Действует, только пока сегодня <= Organization.legacy_tariff_until;
+    # после — просто перестаёт читаться, без ручной отмены. Проставляется разовым
+    # скриптом только активным на момент запуска детям — вернувшиеся позже "выбывшие"
+    # его не получают (см. wiki/architecture/billing_module).
+    legacy_tariff_amount = Column(Numeric(10, 2))
     created_at      = Column(DateTime, server_default=func.now())
     updated_at      = Column(DateTime, server_default=func.now(), onupdate=func.now())
     deleted_at      = Column(DateTime)
