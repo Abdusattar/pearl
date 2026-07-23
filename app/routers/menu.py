@@ -5,6 +5,7 @@ from typing import List
 from fastapi import APIRouter, Depends, Form, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
+from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from app.database import get_db
@@ -154,6 +155,16 @@ def menu_day_save(
         return JSONResponse({"error": "unauthorized"}, status_code=401)
 
     d = date_type.fromisoformat(date)
+
+    # advisory lock на (org_id, дата) — сериализует параллельные сохранения одного дня:
+    # без него быстрые правки разных приёмов пищи подряд шлют несколько overlapping
+    # POST, каждый видит "нечего удалять" и вставляет свою копию — реальные дубли
+    # блюд на проде (20/23/27.07). Держится до конца транзакции, снимается сам.
+    date_key = int(d.strftime("%Y%m%d"))
+    db.execute(
+        text("SELECT pg_advisory_xact_lock(:org_id, :date_key)"),
+        {"org_id": ctx["current_org"].id, "date_key": date_key},
+    )
 
     db.query(MenuEntry).filter(
         MenuEntry.organization_id == ctx["current_org"].id,

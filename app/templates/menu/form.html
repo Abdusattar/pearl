@@ -178,7 +178,13 @@ document.querySelectorAll('.dish-input').forEach(input => {
   const dayId = input.dataset.date, meal = input.dataset.meal;
   let timer = null;
 
-  function render(items) {
+  function render(query, items) {
+    // Ответ на debounce-запрос может прийти уже после того, как поле очищено
+    // Enter'ом или выбором подсказки (запрос не отменялся) — без этой проверки
+    // дропдаун всплывал заново с устаревшей подсказкой на уже добавленное блюдо,
+    // и случайный клик рядом добавлял его повторно (найдено на реальных данных
+    // 23.07 — несколько блюд задвоились в один приём пищи).
+    if (query !== input.value.trim()) return;
     if (!items.length) { dropdown.style.display = 'none'; return; }
     dropdown.innerHTML = items.map(d => `
       <div class="ac-item" data-name="${d.name.replace(/"/g,'&quot;')}"
@@ -189,6 +195,7 @@ document.querySelectorAll('.dish-input').forEach(input => {
         e.preventDefault();
         addChip(dayId, meal, el.dataset.name);
         input.value = '';
+        clearTimeout(timer);
         dropdown.style.display = 'none';
       });
     });
@@ -200,7 +207,7 @@ document.querySelectorAll('.dish-input').forEach(input => {
     if (!q) { dropdown.style.display = 'none'; return; }
     timer = setTimeout(() => {
       fetch('/menu/dishes/search?q=' + encodeURIComponent(q))
-        .then(r => r.json()).then(render);
+        .then(r => r.json()).then(items => render(q, items));
     }, 150);
   });
 
@@ -210,6 +217,7 @@ document.querySelectorAll('.dish-input').forEach(input => {
       if (input.value.trim()) {
         addChip(dayId, meal, input.value);
         input.value = '';
+        clearTimeout(timer);
         dropdown.style.display = 'none';
       }
     }
