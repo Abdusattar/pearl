@@ -7,7 +7,7 @@ from fastapi.templating import Jinja2Templates
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.models import Organization, Student, User, Group, Enrollment, Service, StudentService, AuditLog
+from app.models import Organization, Student, User, Group, Enrollment, Service, StudentService, AuditLog, Charge
 from app.services.students import (
     get_next_free_pin, update_student, compose_name, archive_stale_students,
     set_first_enrollment_start,
@@ -99,6 +99,24 @@ def list_students(
         .all()
     )
 
+    # Оплата за текущий месяц — берём уже посчитанный Charge (generate_monthly_charges
+    # выше в этой же функции гарантирует, что он есть), не пересчитываем тариф заново:
+    # так в списке видна ФАКТИЧЕСКАЯ сумма (легаси-тариф, скидка, заморозка%,
+    # пропорция, допуслуги), а не только голый тариф без скидок.
+    charge_by_student = {}
+    if students:
+        period = date.today().replace(day=1)
+        rows = (
+            db.query(Charge.student_id, Charge.amount)
+            .filter(
+                Charge.student_id.in_([s.id for s in students]),
+                Charge.date == period,
+                Charge.description == "Начисление за месяц",
+            )
+            .all()
+        )
+        charge_by_student = {sid: float(amount) for sid, amount in rows}
+
     # Список по умолчанию сгруппирован по группе (алфавитный порядок групп,
     # внутри группы — по PIN, как и раньше). Дети без группы — секцией в конце.
     grouped_students = []
@@ -117,6 +135,7 @@ def list_students(
         "available_groups": available_groups,
         "current_group_id": group_id_int,
         "groups_by_student": groups_by_student,
+        "charge_by_student": charge_by_student,
         "q": q or "",
         "status": status,
         "accessible_orgs": accessible,

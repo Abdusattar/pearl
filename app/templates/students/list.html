@@ -50,12 +50,13 @@
         <th>ФИО ребёнка</th>
         <th>Группа</th>
         <th style="width:90px">Статус</th>
+        <th style="width:110px">Оплата (месяц)</th>
       </tr>
     </thead>
     {% for grp in grouped_students %}
     <tbody>
       <tr>
-        <td colspan="4" style="background:var(--bg);font-size:13px;text-transform:uppercase;
+        <td colspan="5" style="background:var(--bg);font-size:13px;text-transform:uppercase;
             letter-spacing:.5px;color:var(--text-muted);padding:8px 12px">
           {{ grp.name }} <span style="font-weight:400;text-transform:none;letter-spacing:0">({{ grp.students|length }})</span>
         </td>
@@ -78,6 +79,13 @@
           <span class="badge" style="background:#e0e7ff;color:#3730a3">Заморожен</span>
           {% else %}
           <span class="badge badge-pending">Выбыл</span>
+          {% endif %}
+        </td>
+        <td data-label="Оплата (месяц)" style="font-size:13px">
+          {% if charge_by_student.get(s.id) is not none %}
+          {{ "{:,.0f}".format(charge_by_student[s.id]).replace(",", " ") }} с
+          {% else %}
+          <span style="color:var(--text-muted)">—</span>
           {% endif %}
         </td>
       </tr>

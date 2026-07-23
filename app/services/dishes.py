@@ -59,9 +59,13 @@ def get_or_create_dish(db: Session, name: str) -> Dish:
 
     candidates = search_dishes(db, name, limit=1)
     if candidates and candidates[0]["score"] >= FUZZY_AUTO_MATCH:
-        matched = db.get(Dish, candidates[0]["id"])
-        if matched:
-            return matched
+        # WRatio съезжает на partial-ratio при сильном расхождении длин — длинный
+        # текст ложно матчится на короткое существующее блюдо (score >85 даже без
+        # смысловой связи). Опечатки похожи по длине, поэтому это не мешает защите.
+        if len(candidates[0]["name"]) >= 0.6 * len(name):
+            matched = db.get(Dish, candidates[0]["id"])
+            if matched:
+                return matched
 
     dish = Dish(name=name)
     db.add(dish)
