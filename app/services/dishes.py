@@ -39,7 +39,12 @@ def search_dishes(db: Session, raw: str, limit: int = 8) -> list[dict]:
 
     remaining = {d.id: d.name for d in all_dishes if d.id not in seen}
     if remaining:
-        matches = process.extract(raw, remaining, scorer=fuzz.WRatio, limit=limit)
+        # token_sort_ratio, не WRatio: WRatio на сильном расхождении длин съезжает
+        # на partial-ratio и выдаёт один и тот же "случайный" балл (~85.5) вообще
+        # без смысловой связи между строками (проверено на реальных данных 23.07 и
+        # 27.07 — раз в несколько недель ловим новую пару с этим артефактом).
+        # token_sort_ratio честно отражает реальное сходство и не имеет этого сдвига.
+        matches = process.extract(raw, remaining, scorer=fuzz.token_sort_ratio, limit=limit)
         for name, score, did in matches:
             if score >= FUZZY_THRESHOLD:
                 result.append({"id": did, "name": name, "score": round(score, 1)})
@@ -59,12 +64,9 @@ def get_or_create_dish(db: Session, name: str) -> Dish:
 
     candidates = search_dishes(db, name, limit=1)
     if candidates and candidates[0]["score"] >= FUZZY_AUTO_MATCH:
-        # WRatio съезжает на partial-ratio при сильном расхождении длин строк
-        # в ЛЮБУЮ сторону — короткий текст ложно матчится на длинное существующее
-        # блюдо (и наоборот), score >85 даже без смысловой связи (проверено на
-        # реальных данных: "Рыбьи биточки на пару" против ". Овсяная каша на
-        # молоке со сливочным маслом" дало 85.5). Опечатки похожи по длине в обе
-        # стороны, поэтому симметричная проверка их не заденет.
+        # Доп. страховка поверх скорера: при сильном расхождении длин в ЛЮБУЮ
+        # сторону не доверяем авто-матчу, даже если score прошёл порог. Опечатки
+        # похожи по длине в обе стороны, поэтому симметричная проверка их не заденет.
         candidate_len = len(candidates[0]["name"])
         shorter, longer = sorted((candidate_len, len(name)))
         if shorter >= 0.6 * longer:
