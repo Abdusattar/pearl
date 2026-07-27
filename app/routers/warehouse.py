@@ -12,7 +12,7 @@ from app.database import get_db
 from app.dependencies import get_current_user, get_accessible_orgs, resolve_org
 from app.models import ExpenseCategory, Organization, Product, WarehouseReceipt, WriteOff
 from app.services.products import get_or_create_product
-from app.services.writeoff_calc import compute_day_draft
+from app.services.writeoff_calc import AUTO_REASON, auto_apply_if_pending, compute_day_draft
 
 router = APIRouter(prefix="/warehouse", tags=["warehouse"])
 templates = Jinja2Templates(directory=str(Path(__file__).parent.parent / "templates"))
@@ -155,6 +155,10 @@ def index(request: Request, org_id: str | None = None, db: Session = Depends(get
     all_orgs = db.query(Organization).all()
     org_ids = _descendants(ctx["current_org"].id, all_orgs) if ctx["current_org"] else set()
 
+    if ctx["current_org"]:
+        yesterday = date_type.today() - timedelta(days=1)
+        auto_apply_if_pending(db, ctx["current_org"].id, yesterday, ctx["current_user"].id)
+
     balances = _get_balances(db, org_ids)
     total_value = sum(b["balance_value"] for b in balances)
 
@@ -231,6 +235,36 @@ def writeoff_add_save(
 MEAL_TYPES = ["Завтрак", "Обед", "Полдник", "Ужин"]
 
 
+@router.post("/products/{product_id}/grams-per-unit")
+def set_grams_per_unit(
+    product_id: int,
+    request: Request,
+    grams_per_unit: str = Form(...),
+    org_id: str | None = Form(None),
+    writeoff_date: str | None = Form(None),
+    db: Session = Depends(get_db),
+):
+    """Вписать вес 1 шт. (Хлеб/Яйцо и т.п.) прямо со страницы списания — не
+    отдельный раздел склада (туда у staff и доступа нет), а на месте, где
+    видно, что вес неизвестен (27.07)."""
+    user = get_current_user(request, db)
+    if not user:
+        return RedirectResponse("/login", status_code=302)
+    try:
+        val = float(grams_per_unit.replace(",", "."))
+    except ValueError:
+        val = None
+    if val and val > 0:
+        product = db.get(Product, product_id)
+        if product:
+            product.grams_per_unit = val
+            db.commit()
+    redirect_url = f"/warehouse/writeoff/auto?org_id={org_id or ''}"
+    if writeoff_date:
+        redirect_url += f"&writeoff_date={writeoff_date}"
+    return RedirectResponse(redirect_url, status_code=303)
+
+
 @router.get("/writeoff/auto", response_class=HTMLResponse)
 def writeoff_auto_form(request: Request, org_id: str | None = None, writeoff_date: str | None = None,
                         db: Session = Depends(get_db)):
@@ -270,6 +304,20 @@ def writeoff_auto_save(
     draft = compute_day_draft(db, ctx["current_org"].id, d)
     total_present = draft["total_present"]
 
+    # Авто-джоб мог уже провести эту дату сам (см. auto_apply_if_pending) — ручное
+    # подтверждение здесь считается правкой этих же чисел, а не добавкой поверх них,
+    # иначе продукт задвоился бы. Мягко убираем старые авто-строки за эту дату/объект
+    # и вставляем то, что реально подтвердили на экране (тот же приём, что и в
+    # recurring_expenses — исправил/удалил и провёл заново, не плюсом).
+    old_auto = db.query(WriteOff).filter(
+        WriteOff.organization_id == ctx["current_org"].id,
+        WriteOff.date == d,
+        WriteOff.reason == AUTO_REASON,
+        WriteOff.deleted_at.is_(None),
+    ).all()
+    for w in old_auto:
+        w.deleted_at = func.now()
+
     for i, pid_str in enumerate(item_product_id):
         pid_str = pid_str.strip()
         qty_str = item_quantity[i].strip() if i < len(item_quantity) else ""
@@ -283,7 +331,7 @@ def writeoff_auto_save(
             continue
         db.add(WriteOff(
             date=d, product_id=int(pid_str), quantity=qty,
-            organization_id=ctx["current_org"].id, reason="авто-расчёт по меню и явке",
+            organization_id=ctx["current_org"].id, reason=AUTO_REASON,
             children_count=total_present, created_by=ctx["current_user"].id,
         ))
     db.commit()

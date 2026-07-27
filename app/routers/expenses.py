@@ -1,5 +1,5 @@
 import shutil
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import List, Optional
 
@@ -19,6 +19,7 @@ from app.services.products import match_product, rank_candidates, get_or_create_
 from app.services.normalize import normalize_items
 from app.services import recurring_expenses
 from app.services import supplier_ledger
+from app.services.writeoff_calc import auto_apply_if_pending
 from app.dependencies import get_current_user
 
 router = APIRouter(prefix="/expenses", tags=["expenses"])
@@ -276,6 +277,9 @@ def list_expenses(
     accessible = get_accessible_orgs(user, db, all_orgs)
     current_org = resolve_org(org_id, user, db, all_orgs)
     current_org_id = current_org.id if current_org else None
+
+    if current_org_id:
+        auto_apply_if_pending(db, current_org_id, date.today() - timedelta(days=1), user.id)
 
     # Остаток долга с учётом платежей из ленты (не просто amount - amount_paid — тот факт
     # не знает про погашения, сделанные позже через /suppliers). Кэш на запрос, т.к. один

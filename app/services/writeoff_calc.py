@@ -2,7 +2,9 @@ from datetime import date as date_type
 
 from sqlalchemy.orm import Session
 
-from app.models import Attendance, DishIngredient, Enrollment, Group, MenuEntry, Product, Student
+from app.models import Attendance, DishIngredient, Enrollment, Group, MenuEntry, Product, Student, WriteOff
+
+AUTO_REASON = "авто-расчёт по меню и явке"
 
 # unit товара -> как перевести граммы рецепта в это количество склада.
 # кг/л: граммы/1000 (для л — допущение плотность ≈1 г/мл, справедливо для молока/масла).
@@ -107,3 +109,36 @@ def compute_day_draft(db: Session, org_id: int, target_date: date_type) -> dict:
         "rows": items,
         "unlinked": unlinked,
     }
+
+
+def auto_apply_if_pending(db: Session, org_id: int, target_date: date_type, user_id: int) -> None:
+    """Проводит авто-списание за target_date, если для этой даты ещё не проводилось —
+    вызывается "лениво" при заходе на страницы, которые и так открывают каждый день
+    (Склад, Расходы), без отдельного крон-джоба — тот же приём, что и в billing.py для
+    ежемесячных начислений (27.07: рассчитывать на то, что кто-то откроет специальный
+    экран списания, нельзя, у людей и так много других задач)."""
+    already = db.query(WriteOff.id).filter(
+        WriteOff.organization_id == org_id,
+        WriteOff.date == target_date,
+        WriteOff.reason == AUTO_REASON,
+        WriteOff.deleted_at.is_(None),
+    ).first()
+    if already:
+        return
+
+    draft = compute_day_draft(db, org_id, target_date)
+    if not draft["dish_names"]:
+        return  # меню на этот день не заполнено — нечего проводить
+
+    posted = False
+    for item in draft["rows"]:
+        if item["needs_manual"] or not item["quantity"] or item["quantity"] <= 0:
+            continue
+        db.add(WriteOff(
+            date=target_date, product_id=item["product_id"], quantity=item["quantity"],
+            organization_id=org_id, reason=AUTO_REASON,
+            children_count=draft["total_present"], created_by=user_id,
+        ))
+        posted = True
+    if posted:
+        db.commit()

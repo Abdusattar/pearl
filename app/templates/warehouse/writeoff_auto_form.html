@@ -74,7 +74,18 @@
           <td style="padding:6px 4px;font-size:11px;color:var(--text-muted)">
             {{ item.total_g }} г
             {% if item.needs_manual %}
-            <div style="color:#b45309">неизвестен вес 1 {{ item.unit }} — впиши сам</div>
+            <div style="color:#b45309;margin-top:4px">
+              неизвестен вес 1 {{ item.unit }} — вписал(а) выше сам(а), или укажи вес
+              один раз навсегда:
+              <form method="post" action="/warehouse/products/{{ item.product_id }}/grams-per-unit"
+                    style="display:inline-flex;gap:4px;align-items:center;margin-top:4px">
+                <input type="hidden" name="org_id" value="{{ current_org_id }}">
+                <input type="hidden" name="writeoff_date" value="{{ writeoff_date }}">
+                <input type="number" name="grams_per_unit" step="0.1" placeholder="грамм"
+                       style="width:70px;font-size:11px;padding:3px 5px;border:1px solid var(--border);border-radius:4px">
+                <button type="submit" style="font-size:11px;padding:3px 8px;background:var(--primary);color:#fff;border:none;border-radius:4px;cursor:pointer">запомнить</button>
+              </form>
+            </div>
             {% endif %}
           </td>
         </tr>
