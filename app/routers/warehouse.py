@@ -12,6 +12,7 @@ from app.database import get_db
 from app.dependencies import get_current_user, get_accessible_orgs, resolve_org
 from app.models import ExpenseCategory, Organization, Product, WarehouseReceipt, WriteOff
 from app.services.products import get_or_create_product
+from app.services.writeoff_calc import compute_day_draft
 
 router = APIRouter(prefix="/warehouse", tags=["warehouse"])
 templates = Jinja2Templates(directory=str(Path(__file__).parent.parent / "templates"))
@@ -223,6 +224,65 @@ def writeoff_add_save(
 
 
 MEAL_TYPES = ["Завтрак", "Обед", "Полдник", "Ужин"]
+
+
+@router.get("/writeoff/auto", response_class=HTMLResponse)
+def writeoff_auto_form(request: Request, org_id: str | None = None, writeoff_date: str | None = None,
+                        db: Session = Depends(get_db)):
+    ctx = _base_ctx(request, db, org_id)
+    if ctx is None:
+        return RedirectResponse("/login", status_code=302)
+    if not ctx["current_org"]:
+        return RedirectResponse(f"/warehouse/?org_id={org_id or ''}", status_code=302)
+
+    target_date = date_type.fromisoformat(writeoff_date) if writeoff_date else date_type.today()
+    draft = compute_day_draft(db, ctx["current_org"].id, target_date)
+
+    ctx.update({
+        "writeoff_date": target_date.isoformat(),
+        "draft": draft,
+        "error": None,
+    })
+    return templates.TemplateResponse("warehouse/writeoff_auto_form.html", ctx)
+
+
+@router.post("/writeoff/auto", response_class=HTMLResponse)
+def writeoff_auto_save(
+    request: Request,
+    org_id: str | None = Form(None),
+    writeoff_date: str = Form(...),
+    item_product_id: List[str] = Form(default=[]),
+    item_quantity: List[str] = Form(default=[]),
+    db: Session = Depends(get_db),
+):
+    ctx = _base_ctx(request, db, org_id)
+    if ctx is None:
+        return RedirectResponse("/login", status_code=302)
+    if not ctx["current_org"]:
+        return RedirectResponse(f"/warehouse/?org_id={org_id or ''}", status_code=302)
+
+    d = date_type.fromisoformat(writeoff_date)
+    draft = compute_day_draft(db, ctx["current_org"].id, d)
+    total_present = draft["total_present"]
+
+    for i, pid_str in enumerate(item_product_id):
+        pid_str = pid_str.strip()
+        qty_str = item_quantity[i].strip() if i < len(item_quantity) else ""
+        if not pid_str or not qty_str:
+            continue
+        try:
+            qty = float(qty_str.replace(",", "."))
+        except ValueError:
+            continue
+        if qty <= 0:
+            continue
+        db.add(WriteOff(
+            date=d, product_id=int(pid_str), quantity=qty,
+            organization_id=ctx["current_org"].id, reason="авто-расчёт по меню и явке",
+            children_count=total_present, created_by=ctx["current_user"].id,
+        ))
+    db.commit()
+    return RedirectResponse(f"/warehouse/?org_id={ctx['current_org_id']}", status_code=302)
 
 
 @router.get("/writeoff/meal", response_class=HTMLResponse)

@@ -1,0 +1,103 @@
+{% extends "base.html" %}
+{% block title %}Авто-списание по меню — Склад{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <h1>Списание по меню и явке</h1>
+  <a href="/warehouse/?org_id={{ current_org_id }}" class="btn btn-secondary">← Назад</a>
+</div>
+
+<div class="card" style="max-width:720px">
+  <form method="get" action="/warehouse/writeoff/auto" style="margin-bottom:16px">
+    <input type="hidden" name="org_id" value="{{ current_org_id }}">
+    <div class="form-group" style="max-width:220px">
+      <label>Дата</label>
+      <input type="date" name="writeoff_date" class="form-control" value="{{ writeoff_date }}"
+             onchange="this.form.submit()">
+    </div>
+  </form>
+
+  {% if not draft.attendance_marked %}
+  <div class="alert alert-warning">
+    Явка на эту дату не отмечена — расчёт сделан по полному списку зачисленных
+    (как будто отсутствующих нет). Если явка отличается,
+    <a href="/attendance/?org_id={{ current_org_id }}&date={{ writeoff_date }}">отметь её</a> и вернись сюда.
+  </div>
+  {% endif %}
+
+  <div style="font-size:13px;color:var(--text-muted);margin-bottom:12px">
+    Присутствует: <strong>{{ draft.total_present }}</strong>
+    (садик {{ draft.headcount.kindergarten_group }}, школа {{ draft.headcount.class }}) ·
+    Блюд в меню на день: <strong>{{ draft.dish_names | length }}</strong>
+    {% if draft.dish_names %}({{ draft.dish_names | join(', ') }}){% endif %}
+  </div>
+
+  {% if not draft.dish_names %}
+  <div style="text-align:center;padding:32px;color:var(--text-muted)">
+    Меню на эту дату не заполнено — сначала заполни <a href="/menu/?org_id={{ current_org_id }}">меню</a>.
+  </div>
+  {% elif not draft.rows and not draft.unlinked %}
+  <div style="text-align:center;padding:32px;color:var(--text-muted)">
+    Ни для одного блюда дня нет рецептуры (нормы грамм) — заполнить можно
+    только вручную через «Списание на приём пищи».
+  </div>
+  {% else %}
+
+  <form method="post" action="/warehouse/writeoff/auto">
+    <input type="hidden" name="org_id" value="{{ current_org_id }}">
+    <input type="hidden" name="writeoff_date" value="{{ writeoff_date }}">
+
+    <table style="width:100%;border-collapse:collapse;font-size:13px">
+      <thead>
+        <tr style="border-bottom:2px solid var(--border);text-align:left">
+          <th style="padding:6px 4px;width:45%">Товар</th>
+          <th style="padding:6px 4px;width:30%">Списать</th>
+          <th style="padding:6px 4px;width:25%">Расчёт (грамм)</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for item in draft.rows %}
+        <tr style="border-bottom:1px solid var(--border)">
+          <td style="padding:6px 4px">{{ item.name }}</td>
+          <td style="padding:6px 4px">
+            {% if item.needs_manual %}
+            <input type="hidden" name="item_product_id" value="{{ item.product_id }}">
+            <input type="text" name="item_quantity" class="form-control" placeholder="введи сам, {{ item.unit }}"
+                   style="font-size:13px;padding:5px 8px">
+            {% else %}
+            <input type="hidden" name="item_product_id" value="{{ item.product_id }}">
+            <input type="text" name="item_quantity" class="form-control" value="{{ item.quantity }}"
+                   style="font-size:13px;padding:5px 8px">
+            <span style="font-size:11px;color:var(--text-muted)">{{ item.unit }}</span>
+            {% endif %}
+          </td>
+          <td style="padding:6px 4px;font-size:11px;color:var(--text-muted)">
+            {{ item.total_g }} г
+            {% if item.needs_manual %}
+            <div style="color:#b45309">неизвестен вес 1 {{ item.unit }} — впиши сам</div>
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+
+    <button type="submit" class="btn btn-primary" style="margin-top:16px">Списать</button>
+  </form>
+
+  {% if draft.unlinked %}
+  <div style="margin-top:20px;padding-top:16px;border-top:1px solid var(--border)">
+    <div style="font-size:12px;font-weight:600;color:var(--text-muted);margin-bottom:6px">
+      Не списано — сырьё ещё не заведено на складе (появится после инвентаризации):
+    </div>
+    <div style="font-size:12px;color:var(--text-muted)">
+      {% for u in draft.unlinked %}
+      <div>{{ u.names | join(' / ') }} — {{ u.total_g }} г</div>
+      {% endfor %}
+    </div>
+  </div>
+  {% endif %}
+
+  {% endif %}
+</div>
+{% endblock %}

@@ -243,6 +243,13 @@ class Product(Base):
     category            = Column(String(50))                  # мясо, молочные, крупы, овощи, прочее — для склада/AI-подсказок
     expense_category_id = Column(Integer, ForeignKey("expense_categories.id"))  # статья расходов — для авторазбивки по категориям
     is_standard         = Column(Boolean, default=False, nullable=False)
+    # Сколько грамм в 1 unit — нужно для авто-списания по рецептуре (тех.карта даёт
+    # граммы на порцию, склад считает в unit товара). Для кг/л это всегда 1000
+    # (кг и л не хранятся тут — считаются в коде), колонка нужна только для штучных
+    # товаров (Хлеб, Яйцо и т.п.), где вес экземпляра неизвестен без реального
+    # взвешивания на инвентаризации (27.07). NULL = не заполнено, авто-списание для
+    # этого товара не считается, а ждёт ручного ввода количества.
+    grams_per_unit      = Column(Numeric(10, 2), nullable=True)
     created_at          = Column(DateTime, server_default=func.now())
 
     aliases = relationship("ProductAlias", back_populates="product")

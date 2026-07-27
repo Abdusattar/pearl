@@ -5,7 +5,8 @@
 <div class="page-header">
   <h1>Склад</h1>
   <div style="display:flex;gap:10px">
-    <a href="/warehouse/writeoff/meal?org_id={{ current_org_id }}" class="btn btn-primary">− Списание на приём пищи</a>
+    <a href="/warehouse/writeoff/auto?org_id={{ current_org_id }}" class="btn btn-primary">− Списание по меню (авто)</a>
+    <a href="/warehouse/writeoff/meal?org_id={{ current_org_id }}" class="btn btn-secondary">− Списание на приём пищи</a>
     <a href="/warehouse/writeoff/add?org_id={{ current_org_id }}" class="btn btn-secondary">− Списание (порча/прочее)</a>
     {% if current_user.role != "staff" %}
     <a href="/warehouse/products/?org_id={{ current_org_id }}" class="btn btn-secondary">Продукты</a>
