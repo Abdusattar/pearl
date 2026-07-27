@@ -1,4 +1,4 @@
-from datetime import date as date_type
+from datetime import date as date_type, timedelta
 from pathlib import Path
 from typing import List
 
@@ -172,11 +172,16 @@ def index(request: Request, org_id: str | None = None, db: Session = Depends(get
         .limit(5).all()
     )
 
+    tomorrow = date_type.today() + timedelta(days=1)
+    tomorrow_draft = compute_day_draft(db, ctx["current_org"].id, tomorrow) if ctx["current_org"] else None
+
     ctx.update({
         "balances": balances,
         "total_value": total_value,
         "recent_receipts": recent_receipts,
         "recent_writeoffs": recent_writeoffs,
+        "tomorrow_date": tomorrow.isoformat(),
+        "tomorrow_missing": tomorrow_draft["unlinked"] if tomorrow_draft else [],
     })
     return templates.TemplateResponse("warehouse/index.html", ctx)
 

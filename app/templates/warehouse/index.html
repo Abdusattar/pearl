@@ -15,6 +15,14 @@
   </div>
 </div>
 
+{% if tomorrow_missing %}
+<div class="alert alert-warning" style="margin-bottom:16px">
+  <strong>На завтра ({{ tomorrow_date[8:10] }}.{{ tomorrow_date[5:7] }}) не хватает на складе:</strong>
+  {{ tomorrow_missing | map(attribute="names") | map("join", " / ") | join(", ") }}
+  — <a href="/warehouse/writeoff/auto?org_id={{ current_org_id }}&writeoff_date={{ tomorrow_date }}">подробнее</a>
+</div>
+{% endif %}
+
 {% if balances %}
 <div class="card">
   <table class="table">
