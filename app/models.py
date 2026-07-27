@@ -268,6 +268,24 @@ class Dish(Base):
     created_at = Column(DateTime, server_default=func.now())
 
 
+class DishIngredient(Base):
+    """Рецептура блюда — грамм сырья на 1 порцию, отдельно садик/школа (тех.карта).
+    Источник истины для авто-расчёта списания со склада по факту явки (27.07).
+    product_id может быть NULL — часть сырья ещё не заведена как Product на складе
+    (появится после инвентаризации), raw_name хранит исходное название для привязки."""
+    __tablename__ = "dish_ingredients"
+    id           = Column(Integer, primary_key=True)
+    dish_id      = Column(Integer, ForeignKey("dishes.id"), nullable=False)
+    product_id   = Column(Integer, ForeignKey("products.id"), nullable=True)
+    raw_name     = Column(String(200), nullable=False)
+    qty_sadik_g  = Column(Numeric(10, 2))
+    qty_shkola_g = Column(Numeric(10, 2))
+    created_at   = Column(DateTime, server_default=func.now())
+
+    dish    = relationship("Dish")
+    product = relationship("Product")
+
+
 class MenuEntry(Base):
     """Меню на дату/приём пищи. Несколько строк на один (date, meal_type)
     допустимо — обед может состоять из супа+второго+компота отдельными
