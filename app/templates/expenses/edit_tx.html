@@ -97,7 +97,7 @@
 
     <div class="form-group">
       <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
-        <input type="checkbox" id="paid-full-checkbox" {% if not tx.debt or tx.debt <= 0 %}checked{% endif %}
+        <input type="checkbox" name="paid_full" value="1" id="paid-full-checkbox" {% if not tx.debt or tx.debt <= 0 %}checked{% endif %}
                onchange="togglePaidFull()" style="width:16px;height:16px">
         <span>Оплачено полностью</span>
       </label>

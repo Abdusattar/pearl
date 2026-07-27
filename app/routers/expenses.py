@@ -839,6 +839,7 @@ def handle_confirm(
     action: str = Form(...),
     amount: float = Form(None),
     amount_paid: str = Form(None),
+    paid_full: str = Form(None),
     due_date: str = Form(None),
     description: str = Form(None),
     date_: str = Form(None, alias="date"),
@@ -904,11 +905,14 @@ def handle_confirm(
         except (ValueError, AttributeError):
             return None
 
-    amount_paid_val = _parse_amount(amount_paid)
-    # Не оплачено полностью (частично или в долг). Если равно сумме или не указано —
-    # считаем оплаченным полностью (NULL, историческое поведение).
-    if amount_paid_val is not None and amount_paid_val >= amount:
+    # Чекбокс "Оплачено полностью" — источник истины. Пустое поле "Оплачено" при
+    # снятой галочке значит "оплачено 0" (долг = вся сумма), а не "не указано".
+    if paid_full:
         amount_paid_val = None
+    else:
+        amount_paid_val = _parse_amount(amount_paid) or 0.0
+        if amount_paid_val >= amount:
+            amount_paid_val = None
     due_date_val = date.fromisoformat(due_date) if due_date else None
 
     sid = resolve_supplier(db, supplier_id, new_supplier_name, new_supplier_phone)
@@ -1068,6 +1072,7 @@ def handle_add(
     org_id: int = Form(...),
     amount: float = Form(...),
     amount_paid: str = Form(None),
+    paid_full: str = Form(None),
     due_date: str = Form(None),
     category_id: str | None = Form(None),
     description: str = Form(None),
@@ -1125,9 +1130,12 @@ def handle_add(
         except ValueError:
             return None
 
-    amount_paid_val = _parse_amount(amount_paid)
-    if amount_paid_val is not None and amount_paid_val >= amount:
+    if paid_full:
         amount_paid_val = None
+    else:
+        amount_paid_val = _parse_amount(amount_paid) or 0.0
+        if amount_paid_val >= amount:
+            amount_paid_val = None
     due_date_val = date.fromisoformat(due_date) if due_date else None
 
     if is_service_mode:
@@ -1354,6 +1362,7 @@ def handle_edit_tx(
     org_id: int = Form(None),
     amount: float = Form(...),
     amount_paid: str = Form(None),
+    paid_full: str = Form(None),
     due_date: str = Form(None),
     category_id: str | None = Form(None),
     description: str = Form(None),
@@ -1377,9 +1386,16 @@ def handle_edit_tx(
         except ValueError:
             return None
 
-    amount_paid_val = _parse_amount(amount_paid)
-    if amount_paid_val is not None and amount_paid_val >= amount:
+    # Чекбокс — единственный источник истины насчёт "оплачено полностью".
+    # Пустое поле "Оплачено" при снятой галочке значит "оплачено 0" (долг = вся сумма),
+    # а не "не указано -> оплачено полностью" (был баг: снятая галочка + очищенное
+    # поле откатывались обратно в NULL, и долг не появлялся).
+    if paid_full:
         amount_paid_val = None
+    else:
+        amount_paid_val = _parse_amount(amount_paid) or 0.0
+        if amount_paid_val >= amount:
+            amount_paid_val = None
 
     tx.amount = amount
     tx.amount_paid = amount_paid_val
@@ -1480,6 +1496,7 @@ def handle_edit_manual(
     org_id: int = Form(...),
     amount: float = Form(...),
     amount_paid: str = Form(None),
+    paid_full: str = Form(None),
     due_date: str = Form(None),
     description: str = Form(None),
     date_: str = Form(None, alias="date"),
@@ -1549,9 +1566,12 @@ def handle_edit_manual(
         except ValueError:
             return None
 
-    amount_paid_val = _parse_amount(amount_paid)
-    if amount_paid_val is not None and amount_paid_val >= amount:
+    if paid_full:
         amount_paid_val = None
+    else:
+        amount_paid_val = _parse_amount(amount_paid) or 0.0
+        if amount_paid_val >= amount:
+            amount_paid_val = None
     due_date_val = date.fromisoformat(due_date) if due_date else None
 
     resolved_items, item_error = resolve_manual_items(
