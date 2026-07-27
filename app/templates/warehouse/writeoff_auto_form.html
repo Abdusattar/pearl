@@ -77,14 +77,12 @@
             <div style="color:#b45309;margin-top:4px">
               неизвестен вес 1 {{ item.unit }} — вписал(а) выше сам(а), или укажи вес
               один раз навсегда:
-              <form method="post" action="/warehouse/products/{{ item.product_id }}/grams-per-unit"
-                    style="display:inline-flex;gap:4px;align-items:center;margin-top:4px">
-                <input type="hidden" name="org_id" value="{{ current_org_id }}">
-                <input type="hidden" name="writeoff_date" value="{{ writeoff_date }}">
-                <input type="number" name="grams_per_unit" step="0.1" placeholder="грамм"
+              <span style="display:inline-flex;gap:4px;align-items:center;margin-top:4px">
+                <input type="number" class="gpu-input" data-product-id="{{ item.product_id }}" step="0.1" placeholder="грамм"
                        style="width:70px;font-size:11px;padding:3px 5px;border:1px solid var(--border);border-radius:4px">
-                <button type="submit" style="font-size:11px;padding:3px 8px;background:var(--primary);color:#fff;border:none;border-radius:4px;cursor:pointer">запомнить</button>
-              </form>
+                <button type="button" class="gpu-save-btn" data-product-id="{{ item.product_id }}"
+                        style="font-size:11px;padding:3px 8px;background:var(--primary);color:#fff;border:none;border-radius:4px;cursor:pointer">запомнить</button>
+              </span>
             </div>
             {% endif %}
           </td>
@@ -111,4 +109,30 @@
 
   {% endif %}
 </div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+// Кнопка "запомнить" — обычный <form> внутри общей формы списания невалиден
+// (вложенные form ломают HTML, клик по внутренней кнопке отправлял внешнюю
+// "Списать" — реальный баг 27.07). Поэтому здесь fetch(), а не форма.
+document.querySelectorAll('.gpu-save-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    const pid = btn.dataset.productId;
+    const input = document.querySelector(`.gpu-input[data-product-id="${pid}"]`);
+    const val = (input.value || '').trim();
+    if (!val) { input.focus(); return; }
+    const params = new URLSearchParams();
+    params.set('grams_per_unit', val);
+    params.set('org_id', '{{ current_org_id }}');
+    params.set('writeoff_date', '{{ writeoff_date }}');
+    btn.disabled = true;
+    fetch('/warehouse/products/' + pid + '/grams-per-unit', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: params.toString(),
+    }).then(() => location.reload());
+  });
+});
+</script>
 {% endblock %}
