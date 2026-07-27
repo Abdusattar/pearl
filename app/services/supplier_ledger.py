@@ -15,6 +15,10 @@ from sqlalchemy.orm import Session
 from app.models import ReceiptTransaction, Supplier, SupplierPayment, Transaction
 
 ZERO = Decimal("0")
+# Копейки (тыйын) в обороте фактически не участвуют — остаток долга меньше 1 сома
+# не является реальным долгом (округление/копеечный хвост от ручного ввода), а не
+# то, что кто-то реально должен вернуть.
+DUST = Decimal("1")
 
 
 def _debt_buckets(db: Session, supplier_id: int) -> list[dict]:
@@ -56,7 +60,7 @@ def _debt_buckets(db: Session, supplier_id: int) -> list[dict]:
     for t in txs:
         paid = t.amount_paid if t.amount_paid is not None else t.amount
         original = Decimal(t.amount) - Decimal(paid)
-        if original > ZERO:
+        if original >= DUST:
             buckets.append({
                 "kind": "purchase",
                 "date": t.date,
