@@ -59,7 +59,7 @@ def list_for_month(db: Session, organization_id: int, user_role: str, m_start: d
         .order_by(RecurringExpenseTemplate.id)
         .all()
     )
-    if user_role not in ("owner", "founder"):
+    if user_role not in ("owner", "founder", "staff"):
         templates = [t for t in templates if not t.owner_only]
 
     rows = []

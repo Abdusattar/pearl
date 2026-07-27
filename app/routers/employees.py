@@ -15,21 +15,10 @@ templates = Jinja2Templates(directory=str(Path(__file__).parent.parent / "templa
 
 
 def _guard(request: Request, db: Session):
-    """Оклады — чувствительные данные, доступ только owner/founder
-    (не Мунаре/Махабат/Айжан) — решено 10.07."""
-    user = get_current_user(request, db)
-    if not user:
-        return None, RedirectResponse("/login", status_code=302)
-    if user.role not in ("owner", "founder"):
-        return None, RedirectResponse("/", status_code=302)
-    return user, None
-
-
-def _add_guard(request: Request, db: Session):
-    """/employees/add — только ФИО+роль, без оклада и без списка. Даёт
-    role=staff (напр. Махабат) возможность заводить сотрудников, не открывая
-    зарплатную ведомость — решение 10.07 про секретность окладов остаётся в
-    силе (согласовано 17.07)."""
+    """Оклады — чувствительные данные, доступ только owner/founder/staff
+    (не Мунаре/Айжан) — решено 10.07. Махабат (role=staff) добавлена 27.07:
+    она главный учётчик Сокулука и уже знает зарплаты сотрудников на практике,
+    секретность от неё смысла не имеет — пусть ведёт ведомость сама."""
     user = get_current_user(request, db)
     if not user:
         return None, RedirectResponse("/login", status_code=302)
@@ -93,7 +82,7 @@ def create_employee(
 @router.get("/add", response_class=HTMLResponse)
 def employee_add_form(request: Request, org_id: str | None = None, saved: str | None = None,
                        db: Session = Depends(get_db)):
-    user, redirect = _add_guard(request, db)
+    user, redirect = _guard(request, db)
     if redirect:
         return redirect
 
@@ -116,7 +105,7 @@ def employee_add(
     role: str = Form(default=""),
     db: Session = Depends(get_db),
 ):
-    user, redirect = _add_guard(request, db)
+    user, redirect = _guard(request, db)
     if redirect:
         return redirect
 

@@ -1246,7 +1246,7 @@ def recurring_post(
     tmpl = db.get(RecurringExpenseTemplate, template_id)
     if not tmpl or not tmpl.active or tmpl.organization_id != org_id:
         return RedirectResponse(f"/expenses/recurring?org_id={org_id}&month={month}", status_code=303)
-    if tmpl.owner_only and user.role not in ("owner", "founder"):
+    if tmpl.owner_only and user.role not in ("owner", "founder", "staff"):
         return RedirectResponse("/expenses/", status_code=302)
     if amount <= 0:
         return RedirectResponse(f"/expenses/recurring?org_id={org_id}&month={month}", status_code=303)
