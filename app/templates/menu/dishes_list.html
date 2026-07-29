@@ -1,0 +1,64 @@
+{% extends "base.html" %}
+{% block title %}Блюда — Жемчужина{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <h1>Блюда</h1>
+  <a href="/menu/?org_id={{ current_org_id }}" class="btn btn-secondary">← Меню</a>
+</div>
+
+<div class="card" style="max-width:720px">
+  <div style="display:flex;gap:10px;margin-bottom:16px;flex-wrap:wrap">
+    <form method="get" style="flex:1;min-width:180px">
+      <input type="hidden" name="org_id" value="{{ current_org_id }}">
+      <input type="text" name="q" class="form-control" placeholder="Поиск блюда..."
+             value="{{ q }}" style="font-size:16px" onchange="this.form.submit()">
+    </form>
+    <button type="button" class="btn btn-primary" onclick="toggleNewDish()">+ Новое блюдо</button>
+  </div>
+
+  <form method="post" action="/menu/dishes/new" id="new-dish-form" style="display:none;margin-bottom:16px;padding:12px;border:1px solid var(--border);border-radius:8px">
+    <input type="hidden" name="org_id" value="{{ current_org_id }}">
+    <div class="form-group" style="margin-bottom:8px">
+      <label>Название блюда</label>
+      <input type="text" name="name" class="form-control" style="font-size:16px" required autofocus>
+    </div>
+    <button type="submit" class="btn btn-primary">Создать и открыть рецепт</button>
+  </form>
+
+  {% if not rows %}
+  <div style="text-align:center;padding:32px;color:var(--text-muted)">
+    {% if q %}Ничего не найдено по «{{ q }}».{% else %}Блюд пока нет.{% endif %}
+  </div>
+  {% else %}
+  <table style="width:100%;border-collapse:collapse;font-size:14px">
+    <tbody>
+      {% for r in rows %}
+      <tr style="border-bottom:1px solid var(--border)">
+        <td style="padding:10px 4px">
+          <a href="/menu/dishes/{{ r.id }}?org_id={{ current_org_id }}" style="color:var(--text);text-decoration:none;font-weight:var(--fw-semi)">{{ r.name }}</a>
+        </td>
+        <td style="padding:10px 4px;text-align:right;white-space:nowrap">
+          {% if r.ingredient_count > 0 %}
+          <span style="color:var(--success);font-size:13px">✓ рецепт есть ({{ r.ingredient_count }})</span>
+          {% else %}
+          <span style="color:#b45309;font-size:13px">⚠ рецепта нет</span>
+          {% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% endif %}
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+function toggleNewDish() {
+  const f = document.getElementById('new-dish-form');
+  f.style.display = f.style.display === 'none' ? '' : 'none';
+  if (f.style.display !== 'none') f.querySelector('input[name=name]').focus();
+}
+</script>
+{% endblock %}

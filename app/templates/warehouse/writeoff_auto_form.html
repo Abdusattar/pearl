@@ -25,6 +25,17 @@
   </div>
   {% endif %}
 
+  {% if draft.dishes_without_recipe %}
+  <div class="alert alert-warning">
+    Без рецепта:
+    {% for d in draft.dishes_without_recipe %}
+    «{{ d.name }}» (<a href="/menu/dishes/{{ d.id }}?org_id={{ current_org_id }}&return_date={{ writeoff_date }}">добавить рецепт →</a>){% if not loop.last %}, {% endif %}
+    {% endfor %}
+    — по {{ 'этому блюду' if draft.dishes_without_recipe|length == 1 else 'этим блюдам' }} сегодня ничего не спишется автоматически.
+    После добавления рецепта вернись сюда и нажми «Списать» ниже — сама явка не пересчитается.
+  </div>
+  {% endif %}
+
   <div style="font-size:13px;color:var(--text-muted);margin-bottom:12px">
     Присутствует: <strong>{{ draft.total_present }}</strong>
     (садик {{ draft.headcount.kindergarten_group }}, школа {{ draft.headcount.class }}) ·

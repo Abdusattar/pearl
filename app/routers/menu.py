@@ -5,12 +5,12 @@ from typing import List
 from fastapi import APIRouter, Depends, Form, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
-from sqlalchemy import text
+from sqlalchemy import func, text
 from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.dependencies import get_current_user, get_accessible_orgs, resolve_org
-from app.models import Dish, MenuEntry
+from app.models import Dish, DishIngredient, MenuEntry
 from app.services.dishes import get_or_create_dish, frequent_dishes
 
 router = APIRouter(prefix="/menu", tags=["menu"])
@@ -215,3 +215,145 @@ def dishes_for_meal(org_id: int, date: str, meal_type: str, db: Session = Depend
         .all()
     )
     return [{"id": r.dish_id, "name": r.dish.name} for r in rows]
+
+
+@router.get("/dishes/", response_class=HTMLResponse)
+def dishes_list(request: Request, org_id: str | None = None, q: str | None = None,
+                 db: Session = Depends(get_db)):
+    ctx = _base_ctx(request, db, org_id)
+    if ctx is None:
+        return RedirectResponse("/login", status_code=302)
+
+    dishes = db.query(Dish).order_by(Dish.name).all()
+    counts = dict(
+        db.query(DishIngredient.dish_id, func.count(DishIngredient.id))
+        .group_by(DishIngredient.dish_id)
+        .all()
+    )
+    rows = [{"id": d.id, "name": d.name, "ingredient_count": counts.get(d.id, 0)} for d in dishes]
+    if q:
+        q_low = q.strip().lower()
+        rows = [r for r in rows if q_low in r["name"].lower()]
+
+    ctx.update({"rows": rows, "q": q or ""})
+    return templates.TemplateResponse("menu/dishes_list.html", ctx)
+
+
+@router.post("/dishes/new")
+def dishes_new(request: Request, org_id: str | None = Form(None), name: str = Form(...),
+                db: Session = Depends(get_db)):
+    ctx = _base_ctx(request, db, org_id)
+    if ctx is None:
+        return RedirectResponse("/login", status_code=302)
+    dish = get_or_create_dish(db, name)
+    db.commit()
+    return RedirectResponse(f"/menu/dishes/{dish.id}?org_id={ctx['current_org_id'] or ''}", status_code=302)
+
+
+@router.get("/dishes/{dish_id}", response_class=HTMLResponse)
+def dish_detail(request: Request, dish_id: int, org_id: str | None = None,
+                 return_date: str | None = None, db: Session = Depends(get_db)):
+    ctx = _base_ctx(request, db, org_id)
+    if ctx is None:
+        return RedirectResponse("/login", status_code=302)
+
+    dish = db.get(Dish, dish_id)
+    if not dish:
+        return RedirectResponse(f"/menu/dishes/?org_id={ctx['current_org_id'] or ''}", status_code=302)
+
+    ingredients = (
+        db.query(DishIngredient)
+        .filter(DishIngredient.dish_id == dish_id)
+        .order_by(DishIngredient.id)
+        .all()
+    )
+    ctx.update({"dish": dish, "ingredients": ingredients, "return_date": return_date, "error": None})
+    return templates.TemplateResponse("menu/dish_detail.html", ctx)
+
+
+def _to_float(s: str) -> float | None:
+    if not s:
+        return None
+    try:
+        return float(s.replace(",", "."))
+    except ValueError:
+        return None
+
+
+@router.post("/dishes/{dish_id}", response_class=HTMLResponse)
+def dish_save(
+    request: Request,
+    dish_id: int,
+    org_id: str | None = Form(None),
+    return_date: str | None = Form(None),
+    item_product_id: List[str] = Form(default=[]),
+    item_name: List[str] = Form(default=[]),
+    item_qty_sadik: List[str] = Form(default=[]),
+    item_qty_shkola: List[str] = Form(default=[]),
+    db: Session = Depends(get_db),
+):
+    """Полная замена рецепта блюда — проще и надёжнее построчного diff (тот же
+    приём, что и в menu_day_save: удалить всё за этот dish_id, вставить заново
+    то, что реально отправила форма)."""
+    ctx = _base_ctx(request, db, org_id)
+    if ctx is None:
+        return RedirectResponse("/login", status_code=302)
+
+    dish = db.get(Dish, dish_id)
+    if not dish:
+        return RedirectResponse(f"/menu/dishes/?org_id={ctx['current_org_id'] or ''}", status_code=302)
+
+    parsed_rows = []
+    bad_rows = []
+    for i, raw_name in enumerate(item_name):
+        raw_name = raw_name.strip()
+        if not raw_name:
+            continue
+        pid_str = item_product_id[i].strip() if i < len(item_product_id) else ""
+        sadik_str = item_qty_sadik[i].strip() if i < len(item_qty_sadik) else ""
+        shkola_str = item_qty_shkola[i].strip() if i < len(item_qty_shkola) else ""
+        sadik_val = _to_float(sadik_str)
+        shkola_val = _to_float(shkola_str)
+
+        row = {
+            "product_id": int(pid_str) if pid_str.isdigit() else None,
+            "name": raw_name, "sadik": sadik_val, "shkola": shkola_val,
+        }
+        parsed_rows.append(row)
+
+        # Строка, которая при сохранении не даст НИ ОДНОГО грамма списания —
+        # либо обе колонки пустые, либо текст не распознан как число (опечатка
+        # вроде "40г") — раньше сохранялась молча и просто не участвовала в
+        # авто-списании, без единого сигнала об этом (найдено advisor'ом 29.07).
+        sadik_bad = bool(sadik_str) and sadik_val is None
+        shkola_bad = bool(shkola_str) and shkola_val is None
+        if sadik_bad or shkola_bad:
+            bad_rows.append(f'«{raw_name}» — не распознано число ({sadik_str or shkola_str})')
+        elif sadik_val is None and shkola_val is None:
+            bad_rows.append(f'«{raw_name}» — не указан вес ни для садика, ни для школы')
+
+    if bad_rows:
+        ingredients = (
+            db.query(DishIngredient).filter(DishIngredient.dish_id == dish_id).order_by(DishIngredient.id).all()
+        )
+        ctx.update({
+            "dish": dish, "ingredients": ingredients, "return_date": return_date,
+            "error": "Не сохранено — проверь строки: " + "; ".join(bad_rows),
+            "form_rows": parsed_rows,
+        })
+        return templates.TemplateResponse("menu/dish_detail.html", ctx)
+
+    db.query(DishIngredient).filter(DishIngredient.dish_id == dish_id).delete(synchronize_session=False)
+    for row in parsed_rows:
+        db.add(DishIngredient(
+            dish_id=dish_id, product_id=row["product_id"], raw_name=row["name"],
+            qty_sadik_g=row["sadik"], qty_shkola_g=row["shkola"],
+        ))
+    db.commit()
+
+    if return_date:
+        return RedirectResponse(
+            f"/warehouse/writeoff/auto?org_id={ctx['current_org_id'] or ''}&writeoff_date={return_date}",
+            status_code=302,
+        )
+    return RedirectResponse(f"/menu/dishes/{dish_id}?org_id={ctx['current_org_id'] or ''}", status_code=302)

@@ -1,0 +1,186 @@
+{% extends "base.html" %}
+{% block title %}{{ dish.name }} — Рецепт{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <h1>{{ dish.name }}</h1>
+  <a href="/menu/dishes/?org_id={{ current_org_id }}" class="btn btn-secondary">← Блюда</a>
+</div>
+
+<div class="card" style="max-width:720px">
+
+  {% if ingredients %}
+  <div id="view-block" style="{{ 'display:none' if error else '' }}">
+    <table style="width:100%;border-collapse:collapse;font-size:14px;margin-bottom:16px">
+      <thead>
+        <tr style="border-bottom:2px solid var(--border);text-align:left">
+          <th style="padding:6px 4px">Сырьё</th>
+          <th style="padding:6px 4px;text-align:right">Садик, г</th>
+          <th style="padding:6px 4px;text-align:right">Школа, г</th>
+          <th style="padding:6px 4px">Товар на складе</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for ing in ingredients %}
+        <tr style="border-bottom:1px solid var(--border)">
+          <td style="padding:8px 4px">{{ ing.raw_name }}</td>
+          <td style="padding:8px 4px;text-align:right">{{ ing.qty_sadik_g | default('—', true) }}</td>
+          <td style="padding:8px 4px;text-align:right">{{ ing.qty_shkola_g | default('—', true) }}</td>
+          <td style="padding:8px 4px">
+            {% if ing.product %}
+            {{ ing.product.name }}
+            {% else %}
+            <span style="color:#b45309">не привязан</span>
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    <button type="button" class="btn btn-secondary" onclick="showEdit()">✎ Редактировать рецепт</button>
+  </div>
+  {% endif %}
+
+  <div id="edit-block" style="{{ 'display:none' if (ingredients and not error) else '' }}">
+    {% if error %}
+    <div class="alert alert-error" style="margin-bottom:12px">{{ error }}</div>
+    {% elif not ingredients %}
+    <div style="color:var(--text-muted);font-size:13px;margin-bottom:12px">
+      У этого блюда пока нет рецепта — добавь ингредиенты, чтобы склад считал списание сам.
+    </div>
+    {% endif %}
+
+    <form method="post" action="/menu/dishes/{{ dish.id }}">
+      <input type="hidden" name="org_id" value="{{ current_org_id }}">
+      {% if return_date %}<input type="hidden" name="return_date" value="{{ return_date }}">{% endif %}
+      <div style="font-size:12px;color:var(--text-muted);margin-bottom:6px">
+        Заполни грамм для своего объекта (садик и/или школа) — если оба поля пустые, строка не спишет ничего, и сохранить не даст.
+      </div>
+      <table style="width:100%;border-collapse:collapse;font-size:13px" id="items-table">
+        <thead>
+          <tr style="border-bottom:2px solid var(--border);text-align:left">
+            <th style="padding:6px 4px;width:40%">Сырьё</th>
+            <th style="padding:6px 4px;width:20%">Садик, г</th>
+            <th style="padding:6px 4px;width:20%">Школа, г</th>
+            <th style="padding:6px 4px;width:10%"></th>
+          </tr>
+        </thead>
+        <tbody id="items-body"></tbody>
+      </table>
+      <button type="button" onclick="addRow()" style="margin-top:8px;font-size:12px;color:var(--primary);background:none;border:none;cursor:pointer;padding:8px 0">+ добавить ингредиент</button>
+
+      <div style="margin-top:12px;display:flex;gap:10px">
+        <button type="submit" class="btn btn-primary">Сохранить рецепт</button>
+        {% if ingredients %}
+        <button type="button" class="btn btn-secondary" onclick="showView()">Отмена</button>
+        {% endif %}
+      </div>
+    </form>
+  </div>
+
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+{% if form_rows %}
+const EXISTING_ROWS = [
+  {% for row in form_rows %}
+  { productId: {{ row.product_id or 'null' }}, name: {{ row.name | tojson }},
+    sadik: {{ row.sadik if row.sadik is not none else 'null' }},
+    shkola: {{ row.shkola if row.shkola is not none else 'null' }} },
+  {% endfor %}
+];
+{% else %}
+const EXISTING_ROWS = [
+  {% for ing in ingredients %}
+  { productId: {{ ing.product_id or 'null' }}, name: {{ ing.raw_name | tojson }},
+    sadik: {{ ing.qty_sadik_g if ing.qty_sadik_g is not none else 'null' }},
+    shkola: {{ ing.qty_shkola_g if ing.qty_shkola_g is not none else 'null' }} },
+  {% endfor %}
+];
+{% endif %}
+
+function showEdit() {
+  document.getElementById('view-block').style.display = 'none';
+  document.getElementById('edit-block').style.display = '';
+}
+function showView() {
+  document.getElementById('view-block').style.display = '';
+  document.getElementById('edit-block').style.display = 'none';
+}
+
+function addRow(prefill) {
+  const tbody = document.getElementById('items-body');
+  const row = document.createElement('tr');
+  row.style.borderBottom = '1px solid var(--border)';
+  row.innerHTML = `
+    <td style="padding:4px;position:relative">
+      <input type="hidden" class="item-pid" name="item_product_id" value="${prefill && prefill.productId ? prefill.productId : ''}">
+      <input type="text" class="form-control item-name" name="item_name" autocomplete="off"
+             placeholder="Начни печатать товар..." style="font-size:16px;padding:5px 8px"
+             value="${prefill ? prefill.name.replace(/"/g,'&quot;') : ''}">
+      <div class="ac-dropdown" style="display:none;position:absolute;z-index:100;left:4px;right:4px;top:100%;background:#fff;border:1px solid var(--border);border-radius:6px;box-shadow:0 4px 12px rgba(0,0,0,.1);max-height:180px;overflow-y:auto"></div>
+      <div class="link-hint" style="font-size:11px;color:var(--text-muted);margin-top:2px">${prefill && prefill.productId ? '✓ привязан к складу' : (prefill ? 'не привязан к складу' : '')}</div>
+    </td>
+    <td style="padding:4px">
+      <input type="text" class="form-control" name="item_qty_sadik" inputmode="decimal" placeholder="0"
+             style="font-size:16px;padding:5px 8px;text-align:right" value="${prefill && prefill.sadik !== null ? prefill.sadik : ''}">
+    </td>
+    <td style="padding:4px">
+      <input type="text" class="form-control" name="item_qty_shkola" inputmode="decimal" placeholder="0"
+             style="font-size:16px;padding:5px 8px;text-align:right" value="${prefill && prefill.shkola !== null ? prefill.shkola : ''}">
+    </td>
+    <td style="padding:4px;text-align:center">
+      <button type="button" onclick="this.closest('tr').remove()" style="background:none;border:none;color:var(--text-muted);cursor:pointer;font-size:18px;padding:10px;min-width:44px;min-height:44px">×</button>
+    </td>
+  `;
+  tbody.appendChild(row);
+  initRow(row);
+}
+
+function initRow(row) {
+  const input = row.querySelector('.item-name');
+  const dropdown = row.querySelector('.ac-dropdown');
+  const hiddenId = row.querySelector('.item-pid');
+  const hint = row.querySelector('.link-hint');
+  let timer = null;
+
+  function render(items) {
+    if (!items.length) { dropdown.style.display = 'none'; return; }
+    dropdown.innerHTML = items.map(p => `
+      <div class="ac-item" data-id="${p.id}" data-name="${p.name.replace(/"/g,'&quot;')}"
+           style="padding:8px 10px;cursor:pointer;font-size:13px">${p.name}</div>`).join('');
+    dropdown.style.display = '';
+    dropdown.querySelectorAll('.ac-item').forEach(el => {
+      el.addEventListener('mousedown', e => {
+        e.preventDefault();
+        input.value = el.dataset.name;
+        hiddenId.value = el.dataset.id;
+        hint.textContent = '✓ привязан к складу';
+        dropdown.style.display = 'none';
+      });
+    });
+  }
+
+  input.addEventListener('input', () => {
+    hiddenId.value = '';
+    hint.textContent = 'не привязан к складу';
+    clearTimeout(timer);
+    const q = input.value.trim();
+    if (!q) { dropdown.style.display = 'none'; return; }
+    timer = setTimeout(() => {
+      fetch('/expenses/products/search?q=' + encodeURIComponent(q))
+        .then(r => r.json()).then(render);
+    }, 180);
+  });
+  input.addEventListener('blur', () => setTimeout(() => { dropdown.style.display = 'none'; }, 180));
+}
+
+if (EXISTING_ROWS.length) {
+  EXISTING_ROWS.forEach(r => addRow(r));
+} else {
+  addRow();
+}
+</script>
+{% endblock %}

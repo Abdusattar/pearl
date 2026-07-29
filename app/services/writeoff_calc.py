@@ -60,6 +60,17 @@ def compute_day_draft(db: Session, org_id: int, target_date: date_type) -> dict:
         if dish_ids else []
     )
 
+    # Блюда дня, у которых вообще нет ни строки рецептуры — типично новые блюда,
+    # добавленные прямо в Меню без захода на /menu/dishes/{id} (29.07). Для них
+    # авто-списание молча даёт 0 — предупреждаем явно, а не тихо теряем расход.
+    dish_ids_with_recipe = {ing.dish_id for ing in ing_rows}
+    dishes_without_recipe = {
+        e.dish_id: e.dish.name for e in entries if e.dish_id not in dish_ids_with_recipe
+    }
+    dishes_without_recipe = [
+        {"id": did, "name": name} for did, name in dishes_without_recipe.items()
+    ]
+
     # агрегируем граммы по товару (None = сырьё ещё не привязано к Product)
     agg: dict = {}
     for ing in ing_rows:
@@ -108,6 +119,7 @@ def compute_day_draft(db: Session, org_id: int, target_date: date_type) -> dict:
         "dish_names": [e.dish.name for e in entries],
         "rows": items,
         "unlinked": unlinked,
+        "dishes_without_recipe": dishes_without_recipe,
     }
 
 
