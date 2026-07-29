@@ -259,25 +259,8 @@ def dishes_list(request: Request, org_id: str | None = None, q: str | None = Non
         .group_by(DishIngredient.dish_id)
         .all()
     )
-    usage = dict(
-        db.query(MenuEntry.dish_id, func.count(MenuEntry.id))
-        .group_by(MenuEntry.dish_id)
-        .all()
-    )
-    writeoff_usage = dict(
-        db.query(WriteOff.dish_id, func.count(WriteOff.id))
-        .filter(WriteOff.dish_id.isnot(None))
-        .group_by(WriteOff.dish_id)
-        .all()
-    )
     rows = [
-        {
-            "id": d.id, "name": d.name,
-            "ingredient_count": counts.get(d.id, 0),
-            "times_used": usage.get(d.id, 0),
-            "writeoff_used": writeoff_usage.get(d.id, 0),
-            "deletable": usage.get(d.id, 0) == 0 and writeoff_usage.get(d.id, 0) == 0,
-        }
+        {"id": d.id, "name": d.name, "ingredient_count": counts.get(d.id, 0)}
         for d in dishes
     ]
     if q:
@@ -449,39 +432,26 @@ def dish_rename(request: Request, dish_id: int, org_id: str | None = Form(None),
     return RedirectResponse(f"/menu/dishes/{dish_id}?org_id={ctx['current_org_id'] or ''}", status_code=302)
 
 
-def _dish_in_use(db: Session, dish_id: int) -> bool:
-    """Все места, где на dishes.id стоит FK, кроме dish_ingredients (её саму
-    чистим при удалении/слиянии, не она мешает удалить блюдо) и
-    dish_merge_dismissed (служебная, тоже чистим сама, не бизнес-данные)."""
-    if db.query(MenuEntry.id).filter(MenuEntry.dish_id == dish_id).first():
-        return True
-    if db.query(WriteOff.id).filter(WriteOff.dish_id == dish_id).first():
-        return True
-    return False
-
-
 @router.post("/dishes/{dish_id}/delete")
 def dish_delete(request: Request, dish_id: int, org_id: str | None = Form(None),
-                 force: str | None = Form(None), db: Session = Depends(get_db)):
-    """Без force — только блюда, которых нигде не было (безопасная кнопка).
-    С force=1 — удаляет и использованное блюдо (запрошено 29.07 для разбора
-    завала в тех.карте: часть мусорных/дублирующих блюд успела попасть в
-    меню, и вычищать их приходится вместе с использованием, а не только
-    пустые карточки). Что происходит с force:
+                 db: Session = Depends(get_db)):
+    """Удаляет блюдо безусловно, независимо от того, использовалось ли оно
+    (решено 29.07 — одна простая кнопка, без деления "безопасно/полностью",
+    чтобы можно было чистить каталог без раздумий). Каскад:
     - MenuEntry этого блюда удаляются — те дни/приёмы пищи в Меню станут
-      пустыми, их нужно будет заново заполнить (осознанно, человек это
-      сделает сам, не пытаемся угадать замену)
+      пустыми, их нужно будет заново заполнить (осознанно, не пытаемся
+      угадать замену)
     - WriteOff НЕ удаляются — это факт "что списали со склада", он не
       перестаёт быть правдой. dish_id в них становится NULL (колонка для
       этого и nullable) — списание остаётся, просто без привязки к блюду
     Для похожих блюд, которые правда одно и то же — слияние на
-    /dishes/duplicates сохраняет историю лучше, чем удаление с force."""
+    /dishes/duplicates сохраняет историю лучше, чем удаление."""
     ctx = _base_ctx(request, db, org_id)
     if ctx is None:
         return RedirectResponse("/login", status_code=302)
 
     dish = db.get(Dish, dish_id)
-    if dish and (force == "1" or not _dish_in_use(db, dish_id)):
+    if dish:
         db.query(MenuEntry).filter(MenuEntry.dish_id == dish_id).delete(synchronize_session=False)
         db.query(WriteOff).filter(WriteOff.dish_id == dish_id).update({"dish_id": None})
         db.query(DishIngredient).filter(DishIngredient.dish_id == dish_id).delete(synchronize_session=False)

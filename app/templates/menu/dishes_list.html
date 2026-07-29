@@ -51,20 +51,10 @@
           {% endif %}
         </td>
         <td style="padding:10px 4px;text-align:right;white-space:nowrap">
-          {% if r.deletable %}
-          <form method="post" action="/menu/dishes/{{ r.id }}/delete" onsubmit="return confirm('Удалить «' + {{ r.name | tojson }} + '»? Ни разу не использовалось в меню.');" style="display:inline">
+          <form method="post" action="/menu/dishes/{{ r.id }}/delete" onsubmit="return confirm('Удалить «' + {{ r.name | tojson }} + '»?');" style="display:inline">
             <input type="hidden" name="org_id" value="{{ current_org_id }}">
             <button type="submit" style="background:none;border:none;color:var(--text-muted);cursor:pointer;font-size:12px;padding:8px;min-height:36px">🗑 удалить</button>
           </form>
-          {% else %}
-          <form method="post" action="/menu/dishes/{{ r.id }}/delete"
-                onsubmit="return confirm('Удалить «' + {{ r.name | tojson }} + '» полностью?');"
-                style="display:inline">
-            <input type="hidden" name="org_id" value="{{ current_org_id }}">
-            <input type="hidden" name="force" value="1">
-            <button type="submit" style="background:none;border:none;color:#b91c1c;cursor:pointer;font-size:12px;padding:8px;min-height:36px">🗑 удалить полностью</button>
-          </form>
-          {% endif %}
         </td>
       </tr>
       {% endfor %}
