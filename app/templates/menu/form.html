@@ -68,17 +68,9 @@
   <div style="margin-bottom:14px">
     <label style="font-size:13px;font-weight:600;color:var(--text-muted);display:block;margin-bottom:6px">{{ mt }}</label>
 
-    {% if chips_by_meal[mt] %}
-    <div style="margin-bottom:6px">
-      {% for d in chips_by_meal[mt] %}
-      <button type="button" class="chip-pick" data-date="{{ day_id }}" data-meal="{{ mt }}" data-name="{{ d.name }}">{{ d.name }}</button>
-      {% endfor %}
-    </div>
-    {% endif %}
-
     <div class="chip-list" data-meal="{{ mt }}">
       {% for d in day.meals[mt] %}
-      <span class="chip" data-name="{{ d.name }}">
+      <span class="chip" data-id="{{ d.id }}" data-name="{{ d.name }}">
         {{ d.name }}
         <button type="button" class="chip-remove">×</button>
       </span>
@@ -87,7 +79,7 @@
 
     <div style="position:relative;max-width:320px;margin-top:4px">
       <input type="text" class="form-control dish-input" autocomplete="off"
-             placeholder="Напечатать блюдо и Enter..." style="font-size:13px;padding:6px 10px"
+             placeholder="Начни печатать блюдо..." style="font-size:13px;padding:6px 10px"
              data-date="{{ day_id }}" data-meal="{{ mt }}">
       <div class="ac-dropdown" style="display:none;position:absolute;z-index:100;left:0;right:0;top:100%;background:#fff;border:1px solid var(--border);border-radius:6px;box-shadow:0 4px 12px rgba(0,0,0,.1);max-height:160px;overflow-y:auto"></div>
     </div>
@@ -101,25 +93,23 @@
 <script>
 const CURRENT_ORG_ID = "{{ current_org_id }}";
 
-function chipEl(name, forceNew) {
+function chipEl(id, name) {
   const chip = document.createElement('span');
   chip.className = 'chip';
+  chip.dataset.id = id;
   chip.dataset.name = name;
-  if (forceNew) chip.dataset.forceNew = '1';
   chip.innerHTML = `${name} <button type="button" class="chip-remove">×</button>`;
   return chip;
 }
 
-function addChip(dayId, meal, name, forceNew) {
+function addChip(dayId, meal, id, name) {
   name = (name || '').trim();
-  if (!name) return;
+  if (!name || !id) return;
   const card = document.getElementById('day-card_' + dayId);
   const list = card.querySelector(`.chip-list[data-meal="${CSS.escape(meal)}"]`);
-  const exists = [...list.querySelectorAll('.chip')].some(
-    c => c.dataset.name.toLowerCase() === name.toLowerCase()
-  );
+  const exists = [...list.querySelectorAll('.chip')].some(c => String(c.dataset.id) === String(id));
   if (exists) return;
-  list.appendChild(chipEl(name, forceNew));
+  list.appendChild(chipEl(id, name));
   scheduleSave(dayId);
 }
 
@@ -145,8 +135,7 @@ function scheduleSave(dayId) {
     const meal = list.dataset.meal;
     list.querySelectorAll('.chip').forEach(chip => {
       fd.append('meal', meal);
-      fd.append('dish', chip.dataset.name);
-      fd.append('force_new', chip.dataset.forceNew === '1' ? '1' : '');
+      fd.append('dish_id', chip.dataset.id);
     });
   });
   fetch('/menu/day', { method: 'POST', body: fd })
@@ -156,7 +145,7 @@ function scheduleSave(dayId) {
         const meal = list.dataset.meal;
         const items = data.meals[meal] || [];
         list.innerHTML = '';
-        items.forEach(it => list.appendChild(chipEl(it.name)));
+        items.forEach(it => list.appendChild(chipEl(it.id, it.name)));
       });
       setStatus(dayId, 'saved');
     })
@@ -170,22 +159,23 @@ document.addEventListener('click', e => {
     const dayId = chip.closest('.menu-day').dataset.date;
     chip.remove();
     scheduleSave(dayId);
-    return;
-  }
-  const pickBtn = e.target.closest('.chip-pick');
-  if (pickBtn) {
-    addChip(pickBtn.dataset.date, pickBtn.dataset.meal, pickBtn.dataset.name);
   }
 });
 
-const SOFT_CONFIRM_MIN = 72;   // = FUZZY_THRESHOLD в dishes.py
-const SOFT_CONFIRM_MAX = 85;   // = FUZZY_AUTO_MATCH — выше сервер и так сам смэтчит
-
+// С 29.07 в меню можно добавить только блюдо, у которого уже есть рецепт —
+// свободный ввод больше ничего не создаёт (см. menu_day_save). Подсказки
+// "обычно даём" тоже убраны — выбор только из автокомплита по каталогу.
 document.querySelectorAll('.dish-input').forEach(input => {
   const dropdown = input.parentElement.querySelector('.ac-dropdown');
+  const hint = document.createElement('div');
+  hint.style.cssText = 'font-size:11px;color:#b45309;margin-top:3px;display:none';
+  input.parentElement.appendChild(hint);
   const dayId = input.dataset.date, meal = input.dataset.meal;
   let timer = null;
   let lastQuery = '', lastItems = [];
+
+  function hideHint() { hint.style.display = 'none'; }
+  function showHint(text) { hint.textContent = text; hint.style.display = ''; }
 
   function render(query, items) {
     lastQuery = query;
@@ -198,75 +188,54 @@ document.querySelectorAll('.dish-input').forEach(input => {
     if (query !== input.value.trim()) return;
     if (!items.length) { dropdown.style.display = 'none'; return; }
     dropdown.innerHTML = items.map(d => `
-      <div class="ac-item" data-name="${d.name.replace(/"/g,'&quot;')}"
+      <div class="ac-item" data-id="${d.id}" data-name="${d.name.replace(/"/g,'&quot;')}"
            style="padding:7px 10px;cursor:pointer;font-size:13px">${d.name}</div>`).join('');
     dropdown.style.display = '';
     dropdown.querySelectorAll('.ac-item').forEach(el => {
       el.addEventListener('mousedown', e => {
         e.preventDefault();
-        addChip(dayId, meal, el.dataset.name);
+        addChip(dayId, meal, el.dataset.id, el.dataset.name);
         input.value = '';
+        hideHint();
         clearTimeout(timer);
         dropdown.style.display = 'none';
       });
     });
   }
 
-  function showConfirm(typed, candidateName, score) {
-    dropdown.innerHTML = `
-      <div style="padding:10px">
-        <div style="font-size:12px;margin-bottom:8px">Похоже на «${candidateName.replace(/"/g,'&quot;')}» (совпадение ${Math.round(score)}%). Это оно?</div>
-        <div style="display:flex;gap:8px">
-          <button type="button" class="confirm-yes" style="flex:1;font-size:12px;padding:8px;min-height:36px;background:var(--primary);color:#fff;border:none;border-radius:6px;cursor:pointer">Да, это оно</button>
-          <button type="button" class="confirm-no" style="flex:1;font-size:12px;padding:8px;min-height:36px;background:var(--surface);border:1px solid var(--border);border-radius:6px;cursor:pointer">Нет, это другое</button>
-        </div>
-      </div>`;
-    dropdown.style.display = '';
-    dropdown.querySelector('.confirm-yes').addEventListener('mousedown', e => {
-      e.preventDefault();
-      addChip(dayId, meal, candidateName);
-      input.value = '';
-      dropdown.style.display = 'none';
-    });
-    dropdown.querySelector('.confirm-no').addEventListener('mousedown', e => {
-      e.preventDefault();
-      addChip(dayId, meal, typed, true);
-      input.value = '';
-      dropdown.style.display = 'none';
-    });
-  }
-
   input.addEventListener('input', () => {
+    hideHint();
     clearTimeout(timer);
     const q = input.value.trim();
     if (!q) { dropdown.style.display = 'none'; return; }
     timer = setTimeout(() => {
-      fetch('/menu/dishes/search?q=' + encodeURIComponent(q))
+      fetch('/menu/dishes/search?only_with_recipe=1&q=' + encodeURIComponent(q))
         .then(r => r.json()).then(items => render(q, items));
     }, 150);
   });
 
   input.addEventListener('keydown', e => {
-    if (e.key === 'Enter') {
-      e.preventDefault();
-      const typed = input.value.trim();
-      if (!typed) return;
-      clearTimeout(timer);
+    if (e.key !== 'Enter') return;
+    e.preventDefault();
+    const typed = input.value.trim();
+    if (!typed) return;
+    clearTimeout(timer);
 
-      // Мягкое подтверждение (29.07): свежий фаззи-результат по этому же
-      // запросу уже пришёл, и топ-кандидат не точное совпадение, но достаточно
-      // похож — не создаём молча новое блюдо, спрашиваем. Ниже порога или без
-      // свежего ответа (race с debounce) — ведём себя как раньше, без трения.
-      const top = (lastQuery === typed) ? lastItems[0] : null;
-      const isExact = top && top.name.toLowerCase() === typed.toLowerCase();
-      if (top && !isExact && top.score >= SOFT_CONFIRM_MIN && top.score < SOFT_CONFIRM_MAX) {
-        showConfirm(typed, top.name, top.score);
-        return;
-      }
-
-      addChip(dayId, meal, typed);
+    // Enter добавляет только однозначное совпадение — точное имя (без учёта
+    // регистра) или единственный вариант в свежем списке подсказок. Иначе
+    // ничего не создаём молча (раньше здесь тихо заводилось новое блюдо без
+    // рецепта — источник основного бардака в каталоге) — просим выбрать
+    // из списка или сначала завести рецепт в «Блюда».
+    const fresh = lastQuery === typed ? lastItems : [];
+    const exact = fresh.find(d => d.name.toLowerCase() === typed.toLowerCase());
+    const pick = exact || (fresh.length === 1 ? fresh[0] : null);
+    if (pick) {
+      addChip(dayId, meal, pick.id, pick.name);
       input.value = '';
+      hideHint();
       dropdown.style.display = 'none';
+    } else {
+      showHint('Такого блюда с рецептом нет — выбери из списка ниже или сначала заведи рецепт в «Блюда».');
     }
   });
   input.addEventListener('blur', () => setTimeout(() => { dropdown.style.display = 'none'; }, 180));

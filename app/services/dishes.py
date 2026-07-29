@@ -1,5 +1,5 @@
 from rapidfuzz import process, fuzz
-from sqlalchemy import func, desc
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.models import Dish, DishIngredient, DishMergeDismissed, MenuEntry
@@ -141,18 +141,3 @@ def find_duplicate_candidates(db: Session, limit: int = 40) -> list[dict]:
 
     candidates.sort(key=lambda c: -c["score"])
     return candidates[:limit]
-
-
-def frequent_dishes(db: Session, meal_type: str, limit: int = 8) -> list[dict]:
-    """Блюда, чаще всего встречавшиеся в MenuEntry для этого приёма пищи —
-    «быстрый выбор» чипами вместо печатания заново каждую неделю (10.07)."""
-    rows = (
-        db.query(Dish.id, Dish.name, func.count(MenuEntry.id).label("cnt"))
-        .join(MenuEntry, MenuEntry.dish_id == Dish.id)
-        .filter(MenuEntry.meal_type == meal_type)
-        .group_by(Dish.id, Dish.name)
-        .order_by(desc("cnt"))
-        .limit(limit)
-        .all()
-    )
-    return [{"id": r.id, "name": r.name} for r in rows]

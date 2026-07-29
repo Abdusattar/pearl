@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.dependencies import get_current_user, get_accessible_orgs, resolve_org
 from app.models import Dish, DishIngredient, DishMergeDismissed, MenuEntry, WriteOff
-from app.services.dishes import get_or_create_dish, frequent_dishes, find_duplicate_candidates
+from app.services.dishes import get_or_create_dish, find_duplicate_candidates
 
 router = APIRouter(prefix="/menu", tags=["menu"])
 templates = Jinja2Templates(directory=str(Path(__file__).parent.parent / "templates"))
@@ -79,8 +79,6 @@ def menu_form(request: Request, org_id: str | None = None, start: str | None = N
             {"id": e.dish_id, "name": e.dish.name}
         )
 
-    chips_by_meal = {mt: frequent_dishes(db, mt) for mt in MEAL_TYPES}
-
     # предупреждение (не блок) — ближайший будний день без единой записи меню
     warning_date = None
     for d in days:
@@ -122,7 +120,7 @@ def menu_form(request: Request, org_id: str | None = None, start: str | None = N
     ]
 
     ctx.update({
-        "day_cards": day_cards, "meal_types": MEAL_TYPES, "chips_by_meal": chips_by_meal,
+        "day_cards": day_cards, "meal_types": MEAL_TYPES,
         "start_date": start_date.isoformat(),
         "prev_start": (start_date - timedelta(days=7)).isoformat(),
         "next_start": (start_date + timedelta(days=7)).isoformat(),
@@ -140,17 +138,21 @@ def menu_day_save(
     org_id: str | None = Form(None),
     date: str = Form(...),
     meal: List[str] = Form(default=[]),
-    dish: List[str] = Form(default=[]),
-    force_new: List[str] = Form(default=[]),
+    dish_id: List[str] = Form(default=[]),
     db: Session = Depends(get_db),
 ):
     """Автосохранение одного дня — вызывается фронтом сразу при добавлении/
     удалении блюда, без общей кнопки «Сохранить» (решено 17.07, см.
     wiki/blueprints/menu_module.md). Затрагивает только эту дату — соседние
-    дни в диапазоне не трогаем. Возвращает канонический список блюд по дню —
-    get_or_create_dish может смэтчить опечатку на уже существующее блюдо, и
-    фронту нужно перерисовать чипы под настоящим названием, а не тем, что
-    ввёл пользователь."""
+    дни в диапазоне не трогаем.
+
+    С 29.07 в меню можно добавить только блюдо, у которого уже есть рецепт
+    (dish_ingredients) — свободный ввод текста и создание блюда "на лету"
+    отсюда убраны (см. get_or_create_dish, теперь только для /dishes/new).
+    Причина: без рецепта авто-списание по блюду молча давало 0 — источник
+    большей части задвоений/мусора в каталоге, который потом разгребали
+    вручную. Фронт уже не даёт добавить нереципированное блюдо, но сервер
+    перепроверяет сам — id пришёл из формы, доверять клиенту нельзя."""
     ctx = _base_ctx(request, db, org_id)
     if ctx is None or ctx["current_org"] is None:
         return JSONResponse({"error": "unauthorized"}, status_code=401)
@@ -167,22 +169,39 @@ def menu_day_save(
         {"org_id": ctx["current_org"].id, "date_key": date_key},
     )
 
+    # Блюда, которые на эту дату уже были в меню ДО этого сохранения (могли
+    # попасть туда ещё до 29.07, когда рецепт не требовался). Каждое
+    # автосохранение дня пересылает ВСЕ текущие чипы, включая эти старые —
+    # без этой брони новая проверка рецепта молча стирала бы уже стоящие в
+    # меню блюда при любой правке дня (найдено advisor'ом 29.07 и
+    # воспроизведено: добавление одного блюда с рецептом гасило все старые
+    # без рецепта в том же дне). Новые добавления без рецепта по-прежнему
+    # блокируются — бронь только для того, что реально уже стояло.
+    already_had = {
+        row[0] for row in db.query(MenuEntry.dish_id).filter(
+            MenuEntry.organization_id == ctx["current_org"].id,
+            MenuEntry.date == d,
+        )
+    }
+
     db.query(MenuEntry).filter(
         MenuEntry.organization_id == ctx["current_org"].id,
         MenuEntry.date == d,
     ).delete(synchronize_session=False)
 
     for i, meal_type in enumerate(meal):
-        dish_name = dish[i].strip() if i < len(dish) else ""
-        if not dish_name:
+        did_str = dish_id[i].strip() if i < len(dish_id) else ""
+        if not did_str.isdigit():
             continue
-        is_force_new = i < len(force_new) and force_new[i] == "1"
-        dish_obj = get_or_create_dish(db, dish_name, force_new=is_force_new)
+        did = int(did_str)
+        has_recipe = db.query(DishIngredient.id).filter(DishIngredient.dish_id == did).first()
+        if not has_recipe and did not in already_had:
+            continue
         db.add(MenuEntry(
             organization_id=ctx["current_org"].id,
             date=d,
             meal_type=meal_type,
-            dish_id=dish_obj.id,
+            dish_id=did,
             created_by=ctx["current_user"].id,
         ))
     db.commit()
@@ -200,9 +219,17 @@ def menu_day_save(
 
 
 @router.get("/dishes/search")
-def dishes_search(q: str = "", db: Session = Depends(get_db)):
+def dishes_search(q: str = "", only_with_recipe: bool = False, db: Session = Depends(get_db)):
     from app.services.dishes import search_dishes
-    return search_dishes(db, q)
+    results = search_dishes(db, q)
+    if only_with_recipe and results:
+        reciped_ids = {
+            row[0] for row in db.query(DishIngredient.dish_id)
+            .filter(DishIngredient.dish_id.in_([r["id"] for r in results]))
+            .distinct()
+        }
+        results = [r for r in results if r["id"] in reciped_ids]
+    return results
 
 
 @router.get("/dishes/for-meal")
@@ -237,15 +264,19 @@ def dishes_list(request: Request, org_id: str | None = None, q: str | None = Non
         .group_by(MenuEntry.dish_id)
         .all()
     )
-    writeoff_dish_ids = {
-        row[0] for row in db.query(WriteOff.dish_id).filter(WriteOff.dish_id.isnot(None)).distinct()
-    }
+    writeoff_usage = dict(
+        db.query(WriteOff.dish_id, func.count(WriteOff.id))
+        .filter(WriteOff.dish_id.isnot(None))
+        .group_by(WriteOff.dish_id)
+        .all()
+    )
     rows = [
         {
             "id": d.id, "name": d.name,
             "ingredient_count": counts.get(d.id, 0),
             "times_used": usage.get(d.id, 0),
-            "deletable": usage.get(d.id, 0) == 0 and d.id not in writeoff_dish_ids,
+            "writeoff_used": writeoff_usage.get(d.id, 0),
+            "deletable": usage.get(d.id, 0) == 0 and writeoff_usage.get(d.id, 0) == 0,
         }
         for d in dishes
     ]
@@ -431,18 +462,28 @@ def _dish_in_use(db: Session, dish_id: int) -> bool:
 
 @router.post("/dishes/{dish_id}/delete")
 def dish_delete(request: Request, dish_id: int, org_id: str | None = Form(None),
-                 db: Session = Depends(get_db)):
-    """Только для блюд, которые ни разу не встречались ни в Меню, ни в ручном
-    списании на приём пищи — используемое блюдо удалить нельзя (и незачем:
-    если оно больше не нужно, само перестанет появляться в чипах "обычно
-    даём"). Для склеивания похожих блюд — слияние, не удаление, см.
-    /dishes/duplicates."""
+                 force: str | None = Form(None), db: Session = Depends(get_db)):
+    """Без force — только блюда, которых нигде не было (безопасная кнопка).
+    С force=1 — удаляет и использованное блюдо (запрошено 29.07 для разбора
+    завала в тех.карте: часть мусорных/дублирующих блюд успела попасть в
+    меню, и вычищать их приходится вместе с использованием, а не только
+    пустые карточки). Что происходит с force:
+    - MenuEntry этого блюда удаляются — те дни/приёмы пищи в Меню станут
+      пустыми, их нужно будет заново заполнить (осознанно, человек это
+      сделает сам, не пытаемся угадать замену)
+    - WriteOff НЕ удаляются — это факт "что списали со склада", он не
+      перестаёт быть правдой. dish_id в них становится NULL (колонка для
+      этого и nullable) — списание остаётся, просто без привязки к блюду
+    Для похожих блюд, которые правда одно и то же — слияние на
+    /dishes/duplicates сохраняет историю лучше, чем удаление с force."""
     ctx = _base_ctx(request, db, org_id)
     if ctx is None:
         return RedirectResponse("/login", status_code=302)
 
     dish = db.get(Dish, dish_id)
-    if dish and not _dish_in_use(db, dish_id):
+    if dish and (force == "1" or not _dish_in_use(db, dish_id)):
+        db.query(MenuEntry).filter(MenuEntry.dish_id == dish_id).delete(synchronize_session=False)
+        db.query(WriteOff).filter(WriteOff.dish_id == dish_id).update({"dish_id": None})
         db.query(DishIngredient).filter(DishIngredient.dish_id == dish_id).delete(synchronize_session=False)
         db.query(DishMergeDismissed).filter(
             (DishMergeDismissed.dish_id_a == dish_id) | (DishMergeDismissed.dish_id_b == dish_id)
