@@ -10,8 +10,8 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.dependencies import get_current_user, get_accessible_orgs, resolve_org
-from app.models import Dish, DishIngredient, MenuEntry
-from app.services.dishes import get_or_create_dish, frequent_dishes
+from app.models import Dish, DishIngredient, DishMergeDismissed, MenuEntry, WriteOff
+from app.services.dishes import get_or_create_dish, frequent_dishes, find_duplicate_candidates
 
 router = APIRouter(prefix="/menu", tags=["menu"])
 templates = Jinja2Templates(directory=str(Path(__file__).parent.parent / "templates"))
@@ -141,6 +141,7 @@ def menu_day_save(
     date: str = Form(...),
     meal: List[str] = Form(default=[]),
     dish: List[str] = Form(default=[]),
+    force_new: List[str] = Form(default=[]),
     db: Session = Depends(get_db),
 ):
     """Автосохранение одного дня — вызывается фронтом сразу при добавлении/
@@ -175,7 +176,8 @@ def menu_day_save(
         dish_name = dish[i].strip() if i < len(dish) else ""
         if not dish_name:
             continue
-        dish_obj = get_or_create_dish(db, dish_name)
+        is_force_new = i < len(force_new) and force_new[i] == "1"
+        dish_obj = get_or_create_dish(db, dish_name, force_new=is_force_new)
         db.add(MenuEntry(
             organization_id=ctx["current_org"].id,
             date=d,
@@ -230,12 +232,29 @@ def dishes_list(request: Request, org_id: str | None = None, q: str | None = Non
         .group_by(DishIngredient.dish_id)
         .all()
     )
-    rows = [{"id": d.id, "name": d.name, "ingredient_count": counts.get(d.id, 0)} for d in dishes]
+    usage = dict(
+        db.query(MenuEntry.dish_id, func.count(MenuEntry.id))
+        .group_by(MenuEntry.dish_id)
+        .all()
+    )
+    writeoff_dish_ids = {
+        row[0] for row in db.query(WriteOff.dish_id).filter(WriteOff.dish_id.isnot(None)).distinct()
+    }
+    rows = [
+        {
+            "id": d.id, "name": d.name,
+            "ingredient_count": counts.get(d.id, 0),
+            "times_used": usage.get(d.id, 0),
+            "deletable": usage.get(d.id, 0) == 0 and d.id not in writeoff_dish_ids,
+        }
+        for d in dishes
+    ]
     if q:
         q_low = q.strip().lower()
         rows = [r for r in rows if q_low in r["name"].lower()]
 
-    ctx.update({"rows": rows, "q": q or ""})
+    duplicate_count = len(find_duplicate_candidates(db, limit=1000))
+    ctx.update({"rows": rows, "q": q or "", "duplicate_count": duplicate_count})
     return templates.TemplateResponse("menu/dishes_list.html", ctx)
 
 
@@ -248,6 +267,15 @@ def dishes_new(request: Request, org_id: str | None = Form(None), name: str = Fo
     dish = get_or_create_dish(db, name)
     db.commit()
     return RedirectResponse(f"/menu/dishes/{dish.id}?org_id={ctx['current_org_id'] or ''}", status_code=302)
+
+
+@router.get("/dishes/duplicates", response_class=HTMLResponse)
+def dish_duplicates(request: Request, org_id: str | None = None, db: Session = Depends(get_db)):
+    ctx = _base_ctx(request, db, org_id)
+    if ctx is None:
+        return RedirectResponse("/login", status_code=302)
+    ctx.update({"candidates": find_duplicate_candidates(db)})
+    return templates.TemplateResponse("menu/dishes_duplicates.html", ctx)
 
 
 @router.get("/dishes/{dish_id}", response_class=HTMLResponse)
@@ -357,3 +385,154 @@ def dish_save(
             status_code=302,
         )
     return RedirectResponse(f"/menu/dishes/{dish_id}?org_id={ctx['current_org_id'] or ''}", status_code=302)
+
+
+@router.post("/dishes/{dish_id}/rename", response_class=HTMLResponse)
+def dish_rename(request: Request, dish_id: int, org_id: str | None = Form(None),
+                 name: str = Form(...), db: Session = Depends(get_db)):
+    ctx = _base_ctx(request, db, org_id)
+    if ctx is None:
+        return RedirectResponse("/login", status_code=302)
+
+    dish = db.get(Dish, dish_id)
+    new_name = name.strip()
+    if dish and new_name:
+        clash = (
+            db.query(Dish)
+            .filter(func.lower(Dish.name) == new_name.lower(), Dish.id != dish_id)
+            .first()
+        )
+        if clash:
+            ingredients = (
+                db.query(DishIngredient).filter(DishIngredient.dish_id == dish_id).order_by(DishIngredient.id).all()
+            )
+            ctx.update({
+                "dish": dish, "ingredients": ingredients, "return_date": None, "error": None,
+                "rename_error": f"Уже есть блюдо «{clash.name}» — переименовать в такое же нельзя. "
+                                 f"Если это одно и то же блюдо, слей их на экране «Похожие блюда».",
+                "rename_value": new_name,
+            })
+            return templates.TemplateResponse("menu/dish_detail.html", ctx)
+        dish.name = new_name
+        db.commit()
+    return RedirectResponse(f"/menu/dishes/{dish_id}?org_id={ctx['current_org_id'] or ''}", status_code=302)
+
+
+def _dish_in_use(db: Session, dish_id: int) -> bool:
+    """Все места, где на dishes.id стоит FK, кроме dish_ingredients (её саму
+    чистим при удалении/слиянии, не она мешает удалить блюдо) и
+    dish_merge_dismissed (служебная, тоже чистим сама, не бизнес-данные)."""
+    if db.query(MenuEntry.id).filter(MenuEntry.dish_id == dish_id).first():
+        return True
+    if db.query(WriteOff.id).filter(WriteOff.dish_id == dish_id).first():
+        return True
+    return False
+
+
+@router.post("/dishes/{dish_id}/delete")
+def dish_delete(request: Request, dish_id: int, org_id: str | None = Form(None),
+                 db: Session = Depends(get_db)):
+    """Только для блюд, которые ни разу не встречались ни в Меню, ни в ручном
+    списании на приём пищи — используемое блюдо удалить нельзя (и незачем:
+    если оно больше не нужно, само перестанет появляться в чипах "обычно
+    даём"). Для склеивания похожих блюд — слияние, не удаление, см.
+    /dishes/duplicates."""
+    ctx = _base_ctx(request, db, org_id)
+    if ctx is None:
+        return RedirectResponse("/login", status_code=302)
+
+    dish = db.get(Dish, dish_id)
+    if dish and not _dish_in_use(db, dish_id):
+        db.query(DishIngredient).filter(DishIngredient.dish_id == dish_id).delete(synchronize_session=False)
+        db.query(DishMergeDismissed).filter(
+            (DishMergeDismissed.dish_id_a == dish_id) | (DishMergeDismissed.dish_id_b == dish_id)
+        ).delete(synchronize_session=False)
+        db.delete(dish)
+        db.commit()
+    return RedirectResponse(f"/menu/dishes/?org_id={ctx['current_org_id'] or ''}", status_code=302)
+
+
+@router.post("/dishes/duplicates/merge")
+def dish_duplicates_merge(
+    request: Request,
+    org_id: str | None = Form(None),
+    keep_id: int = Form(...),
+    drop_id: int = Form(...),
+    db: Session = Depends(get_db),
+):
+    """Слияние: keep_id остаётся, drop_id исчезает. Переносим ВСЁ, что на
+    dishes.id ссылается FK (проверено запросом к information_schema 29.07,
+    после того как advisor поймал, что первая версия трогала только
+    MenuEntry/DishIngredient и падала на WriteOff и на собственной новой
+    dish_merge_dismissed):
+    - MenuEntry: репойнтим, но сперва дедуп — если на тот же (org, дата,
+      приём пищи) уже есть запись с keep_id, drop-строка просто лишняя и
+      удаляется, а не дублирует чип в Меню.
+    - WriteOff: репойнтим без разбора — это исторический факт "что
+      готовили", а не карточка блюда, обеим сторонам всё равно один и тот
+      же keep_id корректен.
+    - DishIngredient: если у keep_id рецепта нет, а у drop_id есть —
+      переносим (не теряем единственный существующий рецепт), иначе рецепт
+      drop_id удаляется вместе с ним — Махабат уже выбрала правильную
+      карточку.
+    - DishMergeDismissed: строки, где встречается drop_id, удаляются —
+      иначе они держат мёртвый FK и сами становятся следующей причиной 500."""
+    ctx = _base_ctx(request, db, org_id)
+    if ctx is None:
+        return RedirectResponse("/login", status_code=302)
+
+    keep = db.get(Dish, keep_id)
+    drop = db.get(Dish, drop_id)
+    if keep and drop and keep.id != drop.id:
+        keep_slots = {
+            (row.organization_id, row.date, row.meal_type)
+            for row in db.query(MenuEntry).filter(MenuEntry.dish_id == keep_id)
+        }
+        drop_entries = db.query(MenuEntry).filter(MenuEntry.dish_id == drop_id).all()
+        for entry in drop_entries:
+            slot = (entry.organization_id, entry.date, entry.meal_type)
+            if slot in keep_slots:
+                db.delete(entry)  # keep_id уже стоит в этот день/приём пищи — не дублируем
+            else:
+                entry.dish_id = keep_id
+                keep_slots.add(slot)
+
+        db.query(WriteOff).filter(WriteOff.dish_id == drop_id).update({"dish_id": keep_id})
+
+        keep_has_recipe = db.query(DishIngredient.id).filter(DishIngredient.dish_id == keep_id).first()
+        if keep_has_recipe:
+            db.query(DishIngredient).filter(DishIngredient.dish_id == drop_id).delete(synchronize_session=False)
+        else:
+            db.query(DishIngredient).filter(DishIngredient.dish_id == drop_id).update({"dish_id": keep_id})
+
+        db.query(DishMergeDismissed).filter(
+            (DishMergeDismissed.dish_id_a == drop_id) | (DishMergeDismissed.dish_id_b == drop_id)
+        ).delete(synchronize_session=False)
+
+        db.delete(drop)
+        db.commit()
+    return RedirectResponse(f"/menu/dishes/duplicates?org_id={ctx['current_org_id'] or ''}", status_code=302)
+
+
+@router.post("/dishes/duplicates/dismiss")
+def dish_duplicates_dismiss(
+    request: Request,
+    org_id: str | None = Form(None),
+    dish_a_id: int = Form(...),
+    dish_b_id: int = Form(...),
+    db: Session = Depends(get_db),
+):
+    ctx = _base_ctx(request, db, org_id)
+    if ctx is None:
+        return RedirectResponse("/login", status_code=302)
+
+    lo, hi = sorted((dish_a_id, dish_b_id))
+    exists = (
+        db.query(DishMergeDismissed.id)
+        .filter(DishMergeDismissed.dish_id_a == lo, DishMergeDismissed.dish_id_b == hi)
+        .first()
+    )
+    if not exists:
+        db.add(DishMergeDismissed(dish_id_a=lo, dish_id_b=hi))
+        db.commit()
+    return RedirectResponse(f"/menu/dishes/duplicates?org_id={ctx['current_org_id'] or ''}", status_code=302)

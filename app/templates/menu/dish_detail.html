@@ -3,9 +3,27 @@
 
 {% block content %}
 <div class="page-header">
-  <h1>{{ dish.name }}</h1>
+  <div>
+    <h1 id="dish-title" style="display:inline">{{ dish.name }}</h1>
+    <button type="button" onclick="toggleRename()" title="Переименовать" style="background:none;border:none;color:var(--text-muted);cursor:pointer;font-size:16px;padding:6px;vertical-align:middle">✎</button>
+  </div>
   <a href="/menu/dishes/?org_id={{ current_org_id }}" class="btn btn-secondary">← Блюда</a>
 </div>
+
+<form method="post" action="/menu/dishes/{{ dish.id }}/rename" id="rename-form" style="{{ '' if rename_error else 'display:none' }};max-width:720px;margin-bottom:16px;padding:12px;border:1px solid var(--border);border-radius:8px">
+  <input type="hidden" name="org_id" value="{{ current_org_id }}">
+  {% if rename_error %}
+  <div class="alert alert-error" style="margin-bottom:8px">{{ rename_error }}</div>
+  {% endif %}
+  <div style="display:flex;gap:8px;align-items:flex-end">
+    <div class="form-group" style="margin:0;flex:1">
+      <label>Название блюда</label>
+      <input type="text" name="name" class="form-control" style="font-size:16px" value="{{ rename_value or dish.name }}" required>
+    </div>
+    <button type="submit" class="btn btn-primary">Сохранить название</button>
+    <button type="button" class="btn btn-secondary" onclick="toggleRename()">Отмена</button>
+  </div>
+</form>
 
 <div class="card" style="max-width:720px">
 
@@ -100,6 +118,12 @@ const EXISTING_ROWS = [
   {% endfor %}
 ];
 {% endif %}
+
+function toggleRename() {
+  const f = document.getElementById('rename-form');
+  f.style.display = f.style.display === 'none' ? '' : 'none';
+  if (f.style.display !== 'none') f.querySelector('input[name=name]').focus();
+}
 
 function showEdit() {
   document.getElementById('view-block').style.display = 'none';

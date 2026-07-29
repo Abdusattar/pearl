@@ -2,10 +2,12 @@ from rapidfuzz import process, fuzz
 from sqlalchemy import func, desc
 from sqlalchemy.orm import Session
 
-from app.models import Dish, MenuEntry
+from app.models import Dish, DishIngredient, DishMergeDismissed, MenuEntry
 
 FUZZY_THRESHOLD = 72
 FUZZY_AUTO_MATCH = 85
+DUPLICATE_CANDIDATE_THRESHOLD = 60  # ниже, чем FUZZY_THRESHOLD — это ревью человеком,
+                                     # не тихое действие, можно закинуть шире сеть
 
 
 def _key(raw: str) -> str:
@@ -44,22 +46,37 @@ def search_dishes(db: Session, raw: str, limit: int = 8) -> list[dict]:
         # без смысловой связи между строками (проверено на реальных данных 23.07 и
         # 27.07 — раз в несколько недель ловим новую пару с этим артефактом).
         # token_sort_ratio честно отражает реальное сходство и не имеет этого сдвига.
-        matches = process.extract(raw, remaining, scorer=fuzz.token_sort_ratio, limit=limit)
-        for name, score, did in matches:
+        # Сравниваем в нижнем регистре (29.07) — раньше raw/remaining шли как есть,
+        # и опечатка с другим регистром ("чй" при реальном "Чай") получала заниженный
+        # балл (40 вместо 80) и создавала фантомное блюдо вместо совпадения.
+        remaining_lower = {did: nm.lower() for did, nm in remaining.items()}
+        matches = process.extract(key, remaining_lower, scorer=fuzz.token_sort_ratio, limit=limit)
+        for _, score, did in matches:
             if score >= FUZZY_THRESHOLD:
-                result.append({"id": did, "name": name, "score": round(score, 1)})
+                result.append({"id": did, "name": remaining[did], "score": round(score, 1)})
 
     return result[:limit]
 
 
-def get_or_create_dish(db: Session, name: str) -> Dish:
+def get_or_create_dish(db: Session, name: str, force_new: bool = False) -> Dish:
     """Возвращает существующее блюдо или создаёт новое. Перед созданием
     ищет похожее по нечёткому совпадению — защита от опечаток (10.07),
     чтобы "Каша рисовая"/"Каша ристовая" не расплодились в разные блюда
-    и не разбили будущую статистику по рецептуре."""
+    и не разбили будущую статистику по рецептуре.
+
+    force_new=True — пользователь на экране Меню уже увидел похожий вариант
+    (мягкое подтверждение при вводе, 29.07) и явно сказал "нет, это другое
+    блюдо". Уважаем это решение — фаззи-автослияние не включаем даже если
+    формально прошёл бы порог, иначе её явный выбор тихо перезапишется."""
     name = name.strip()
     dish = db.query(Dish).filter(func.lower(Dish.name) == name.lower()).first()
     if dish:
+        return dish
+
+    if force_new:
+        dish = Dish(name=name)
+        db.add(dish)
+        db.flush()
         return dish
 
     candidates = search_dishes(db, name, limit=1)
@@ -78,6 +95,52 @@ def get_or_create_dish(db: Session, name: str) -> Dish:
     db.add(dish)
     db.flush()
     return dish
+
+
+def find_duplicate_candidates(db: Session, limit: int = 40) -> list[dict]:
+    """Кандидаты на слияние для экрана /menu/dishes/duplicates (29.07) — все пары
+    блюд каталога с высоким текстовым сходством, кроме уже отклонённых Махабат.
+    Только предлагает — ничего не решает и не сливает сама (тот же урок, что и
+    с товарами: фаззи-подбор ненадёжен даже на эталонных данных, финальное
+    слово всегда за человеком). O(n²) по каталогу — ок при текущих ~100 блюдах,
+    пересмотреть, если каталог вырастет на порядок."""
+    dishes = db.query(Dish).order_by(Dish.id).all()
+
+    dismissed = {
+        (row.dish_id_a, row.dish_id_b)
+        for row in db.query(DishMergeDismissed).all()
+    }
+
+    ing_counts = dict(
+        db.query(DishIngredient.dish_id, func.count(DishIngredient.id))
+        .group_by(DishIngredient.dish_id).all()
+    )
+    usage_counts = dict(
+        db.query(MenuEntry.dish_id, func.count(MenuEntry.id))
+        .group_by(MenuEntry.dish_id).all()
+    )
+
+    def _info(d: Dish) -> dict:
+        return {
+            "id": d.id, "name": d.name,
+            "ingredient_count": ing_counts.get(d.id, 0),
+            "times_used": usage_counts.get(d.id, 0),
+        }
+
+    candidates = []
+    for i, a in enumerate(dishes):
+        for b in dishes[i + 1:]:
+            pair_key = (a.id, b.id) if a.id < b.id else (b.id, a.id)
+            if pair_key in dismissed:
+                continue
+            score = fuzz.token_sort_ratio(a.name.lower(), b.name.lower())
+            if score >= DUPLICATE_CANDIDATE_THRESHOLD:
+                candidates.append({
+                    "a": _info(a), "b": _info(b), "score": round(score, 1),
+                })
+
+    candidates.sort(key=lambda c: -c["score"])
+    return candidates[:limit]
 
 
 def frequent_dishes(db: Session, meal_type: str, limit: int = 8) -> list[dict]:

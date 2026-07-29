@@ -293,6 +293,17 @@ class DishIngredient(Base):
     product = relationship("Product")
 
 
+class DishMergeDismissed(Base):
+    """Пара блюд, которую Махабат явно пометила «это разные блюда, не предлагать
+    больше» на экране /menu/dishes/duplicates (29.07). dish_id_a < dish_id_b всегда —
+    канонический порядок, чтобы пара не задвоилась в обе стороны."""
+    __tablename__ = "dish_merge_dismissed"
+    id            = Column(Integer, primary_key=True)
+    dish_id_a     = Column(Integer, ForeignKey("dishes.id"), nullable=False)
+    dish_id_b     = Column(Integer, ForeignKey("dishes.id"), nullable=False)
+    dismissed_at  = Column(DateTime, server_default=func.now())
+
+
 class MenuEntry(Base):
     """Меню на дату/приём пищи. Несколько строк на один (date, meal_type)
     допустимо — обед может состоять из супа+второго+компота отдельными

@@ -1,0 +1,54 @@
+{% extends "base.html" %}
+{% block title %}Похожие блюда — Жемчужина{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <h1>Похожие блюда</h1>
+  <a href="/menu/dishes/?org_id={{ current_org_id }}" class="btn btn-secondary">← Блюда</a>
+</div>
+
+<div style="max-width:720px;font-size:13px;color:var(--text-muted);margin-bottom:16px">
+  Система нашла пары блюд с похожими названиями — возможно, это одно и то же блюдо,
+  записанное дважды под разными словами (опечатка, другая формулировка). Для каждой
+  пары выбери: это правда одно блюдо (какая карточка правильная — та и останется,
+  вторая исчезнет, а её дни в меню переедут на первую), или это просто два похожих,
+  но разных блюда.
+</div>
+
+{% if not candidates %}
+<div class="card" style="max-width:720px;text-align:center;padding:32px;color:var(--text-muted)">
+  Похожих пар не найдено — каталог чистый.
+</div>
+{% else %}
+
+{% for c in candidates %}
+<div class="card" style="max-width:720px;margin-bottom:12px">
+  <div style="font-size:11px;color:var(--text-muted);margin-bottom:10px">Похожи на {{ c.score | round | int }}%</div>
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+    {% for side in [c.a, c.b] %}
+    <div style="border:1px solid var(--border);border-radius:8px;padding:10px">
+      <div style="font-weight:var(--fw-semi);margin-bottom:6px">{{ side.name }}</div>
+      <div style="font-size:12px;color:var(--text-muted);margin-bottom:10px">
+        {% if side.ingredient_count > 0 %}✓ рецепт ({{ side.ingredient_count }}){% else %}⚠ рецепта нет{% endif %}
+        · в меню {{ side.times_used }} раз
+      </div>
+      <form method="post" action="/menu/dishes/duplicates/merge" onsubmit="return confirm('Оставить «' + {{ side.name | tojson }} + '», а вторую карточку удалить? Дни в меню второй карточки переедут на эту.');">
+        <input type="hidden" name="org_id" value="{{ current_org_id }}">
+        <input type="hidden" name="keep_id" value="{{ side.id }}">
+        <input type="hidden" name="drop_id" value="{{ c.b.id if side.id == c.a.id else c.a.id }}">
+        <button type="submit" class="btn btn-secondary" style="width:100%;font-size:12px">Оставить эту</button>
+      </form>
+    </div>
+    {% endfor %}
+  </div>
+  <form method="post" action="/menu/dishes/duplicates/dismiss" style="margin-top:10px">
+    <input type="hidden" name="org_id" value="{{ current_org_id }}">
+    <input type="hidden" name="dish_a_id" value="{{ c.a.id }}">
+    <input type="hidden" name="dish_b_id" value="{{ c.b.id }}">
+    <button type="submit" style="background:none;border:none;color:var(--text-muted);cursor:pointer;font-size:12px;padding:8px 0">Это разные блюда — не предлагать больше</button>
+  </form>
+</div>
+{% endfor %}
+
+{% endif %}
+{% endblock %}

@@ -101,15 +101,16 @@
 <script>
 const CURRENT_ORG_ID = "{{ current_org_id }}";
 
-function chipEl(name) {
+function chipEl(name, forceNew) {
   const chip = document.createElement('span');
   chip.className = 'chip';
   chip.dataset.name = name;
+  if (forceNew) chip.dataset.forceNew = '1';
   chip.innerHTML = `${name} <button type="button" class="chip-remove">×</button>`;
   return chip;
 }
 
-function addChip(dayId, meal, name) {
+function addChip(dayId, meal, name, forceNew) {
   name = (name || '').trim();
   if (!name) return;
   const card = document.getElementById('day-card_' + dayId);
@@ -118,7 +119,7 @@ function addChip(dayId, meal, name) {
     c => c.dataset.name.toLowerCase() === name.toLowerCase()
   );
   if (exists) return;
-  list.appendChild(chipEl(name));
+  list.appendChild(chipEl(name, forceNew));
   scheduleSave(dayId);
 }
 
@@ -145,6 +146,7 @@ function scheduleSave(dayId) {
     list.querySelectorAll('.chip').forEach(chip => {
       fd.append('meal', meal);
       fd.append('dish', chip.dataset.name);
+      fd.append('force_new', chip.dataset.forceNew === '1' ? '1' : '');
     });
   });
   fetch('/menu/day', { method: 'POST', body: fd })
@@ -176,12 +178,18 @@ document.addEventListener('click', e => {
   }
 });
 
+const SOFT_CONFIRM_MIN = 72;   // = FUZZY_THRESHOLD в dishes.py
+const SOFT_CONFIRM_MAX = 85;   // = FUZZY_AUTO_MATCH — выше сервер и так сам смэтчит
+
 document.querySelectorAll('.dish-input').forEach(input => {
   const dropdown = input.parentElement.querySelector('.ac-dropdown');
   const dayId = input.dataset.date, meal = input.dataset.meal;
   let timer = null;
+  let lastQuery = '', lastItems = [];
 
   function render(query, items) {
+    lastQuery = query;
+    lastItems = items;
     // Ответ на debounce-запрос может прийти уже после того, как поле очищено
     // Enter'ом или выбором подсказки (запрос не отменялся) — без этой проверки
     // дропдаун всплывал заново с устаревшей подсказкой на уже добавленное блюдо,
@@ -204,6 +212,30 @@ document.querySelectorAll('.dish-input').forEach(input => {
     });
   }
 
+  function showConfirm(typed, candidateName, score) {
+    dropdown.innerHTML = `
+      <div style="padding:10px">
+        <div style="font-size:12px;margin-bottom:8px">Похоже на «${candidateName.replace(/"/g,'&quot;')}» (совпадение ${Math.round(score)}%). Это оно?</div>
+        <div style="display:flex;gap:8px">
+          <button type="button" class="confirm-yes" style="flex:1;font-size:12px;padding:8px;min-height:36px;background:var(--primary);color:#fff;border:none;border-radius:6px;cursor:pointer">Да, это оно</button>
+          <button type="button" class="confirm-no" style="flex:1;font-size:12px;padding:8px;min-height:36px;background:var(--surface);border:1px solid var(--border);border-radius:6px;cursor:pointer">Нет, это другое</button>
+        </div>
+      </div>`;
+    dropdown.style.display = '';
+    dropdown.querySelector('.confirm-yes').addEventListener('mousedown', e => {
+      e.preventDefault();
+      addChip(dayId, meal, candidateName);
+      input.value = '';
+      dropdown.style.display = 'none';
+    });
+    dropdown.querySelector('.confirm-no').addEventListener('mousedown', e => {
+      e.preventDefault();
+      addChip(dayId, meal, typed, true);
+      input.value = '';
+      dropdown.style.display = 'none';
+    });
+  }
+
   input.addEventListener('input', () => {
     clearTimeout(timer);
     const q = input.value.trim();
@@ -217,12 +249,24 @@ document.querySelectorAll('.dish-input').forEach(input => {
   input.addEventListener('keydown', e => {
     if (e.key === 'Enter') {
       e.preventDefault();
-      if (input.value.trim()) {
-        addChip(dayId, meal, input.value);
-        input.value = '';
-        clearTimeout(timer);
-        dropdown.style.display = 'none';
+      const typed = input.value.trim();
+      if (!typed) return;
+      clearTimeout(timer);
+
+      // Мягкое подтверждение (29.07): свежий фаззи-результат по этому же
+      // запросу уже пришёл, и топ-кандидат не точное совпадение, но достаточно
+      // похож — не создаём молча новое блюдо, спрашиваем. Ниже порога или без
+      // свежего ответа (race с debounce) — ведём себя как раньше, без трения.
+      const top = (lastQuery === typed) ? lastItems[0] : null;
+      const isExact = top && top.name.toLowerCase() === typed.toLowerCase();
+      if (top && !isExact && top.score >= SOFT_CONFIRM_MIN && top.score < SOFT_CONFIRM_MAX) {
+        showConfirm(typed, top.name, top.score);
+        return;
       }
+
+      addChip(dayId, meal, typed);
+      input.value = '';
+      dropdown.style.display = 'none';
     }
   });
   input.addEventListener('blur', () => setTimeout(() => { dropdown.style.display = 'none'; }, 180));
