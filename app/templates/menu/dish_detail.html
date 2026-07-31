@@ -194,7 +194,7 @@ function initRow(row) {
     const q = input.value.trim();
     if (!q) { dropdown.style.display = 'none'; return; }
     timer = setTimeout(() => {
-      fetch('/expenses/products/search?q=' + encodeURIComponent(q))
+      fetch('/expenses/products/search?standard_only=false&q=' + encodeURIComponent(q))
         .then(r => r.json()).then(render);
     }, 180);
   });

@@ -249,10 +249,16 @@ def create_warehouse_receipts(
 from fastapi.responses import JSONResponse
 
 @router.get("/products/search")
-def search_products(q: str = "", db: Session = Depends(get_db)):
+def search_products(q: str = "", standard_only: bool = True, db: Session = Depends(get_db)):
+    """standard_only=True по умолчанию (квитанции/расходы — подбор среди
+    вычищенного эталонного справочника). Экран рецепта (menu/dish_detail.html)
+    зовёт с standard_only=false — рецепту нужен вообще любой товар склада,
+    иначе не найдёт реальные позиции, случайно оставшиеся is_standard=False
+    (найдено 30.07 — «Соль», «Чай чёрный» и другие частые товары были
+    невидимы для этого поиска)."""
     if not q.strip():
         return JSONResponse([])
-    candidates = rank_candidates(db, q.strip(), limit=6)
+    candidates = rank_candidates(db, q.strip(), limit=6, standard_only=standard_only)
     return JSONResponse(candidates)
 
 
