@@ -21,6 +21,14 @@
 </div>
 {% else %}
 
+<div class="alert alert-error" style="max-width:720px;margin-bottom:16px">
+  Меню по дням недоступно, пока здесь есть хотя бы одна пара — сначала разбери
+  все {{ candidates | length }} ниже (слей или отметь «это разные блюда»).
+</div>
+{% endif %}
+
+{% if candidates %}
+
 {% for c in candidates %}
 <div class="card" style="max-width:720px;margin-bottom:12px">
   <div style="font-size:11px;color:var(--text-muted);margin-bottom:10px">Похожи на {{ c.score | round | int }}%</div>

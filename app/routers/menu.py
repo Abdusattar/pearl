@@ -60,6 +60,15 @@ def menu_form(request: Request, org_id: str | None = None, start: str | None = N
     if ctx is None:
         return RedirectResponse("/login", status_code=302)
 
+    # Гейт (30.07): пока в каталоге блюд есть неразрешённые кандидаты на
+    # слияние (дубли), подбивать меню по дням нельзя — иначе дни набиваются
+    # блюдами, часть которых надо ещё слить/отклонить, и потом придётся
+    # переразбирать уже сохранённое меню. Дубли сначала, меню потом.
+    if find_duplicate_candidates(db):
+        return RedirectResponse(
+            f"/menu/dishes/duplicates?org_id={ctx['current_org_id'] or ''}", status_code=302
+        )
+
     today = date_type.today()
     this_monday = _week_monday(today)
     start_date = _week_monday(date_type.fromisoformat(start)) if start else this_monday
@@ -156,6 +165,12 @@ def menu_day_save(
     ctx = _base_ctx(request, db, org_id)
     if ctx is None or ctx["current_org"] is None:
         return JSONResponse({"error": "unauthorized"}, status_code=401)
+
+    # Тот же гейт, что и на GET / — здесь на случай прямого POST мимо формы
+    # (устаревшая открытая вкладка и т.п.), фронт этот случай не обрабатывает
+    # специально, но запись должна остаться заблокированной в любом случае.
+    if find_duplicate_candidates(db):
+        return JSONResponse({"error": "duplicates_pending"}, status_code=409)
 
     d = date_type.fromisoformat(date)
 
