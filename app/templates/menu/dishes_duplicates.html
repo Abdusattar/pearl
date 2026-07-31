@@ -21,9 +21,11 @@
 </div>
 {% else %}
 
-<div class="alert alert-error" style="max-width:720px;margin-bottom:16px">
-  Меню по дням недоступно, пока здесь есть хотя бы одна пара — сначала разбери
-  все {{ candidates | length }} ниже (слей или отметь «это разные блюда»).
+<div class="alert alert-warning" style="max-width:720px;margin-bottom:16px">
+  {{ candidates | length }}
+  {{ 'пара' if candidates | length == 1 else 'пары' if candidates | length < 5 else 'пар' }}
+  ждут разбора — с меню работать можно, но лучше сначала разобрать эти ниже
+  (слить или отметить «это разные блюда»), чтобы список блюд оставался чистым.
 </div>
 {% endif %}
 

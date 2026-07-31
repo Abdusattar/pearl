@@ -60,14 +60,12 @@ def menu_form(request: Request, org_id: str | None = None, start: str | None = N
     if ctx is None:
         return RedirectResponse("/login", status_code=302)
 
-    # Гейт (30.07): пока в каталоге блюд есть неразрешённые кандидаты на
-    # слияние (дубли), подбивать меню по дням нельзя — иначе дни набиваются
-    # блюдами, часть которых надо ещё слить/отклонить, и потом придётся
-    # переразбирать уже сохранённое меню. Дубли сначала, меню потом.
-    if find_duplicate_candidates(db):
-        return RedirectResponse(
-            f"/menu/dishes/duplicates?org_id={ctx['current_org_id'] or ''}", status_code=302
-        )
+    # Мягкое напоминание (30.07, смягчено с жёсткого редиректа в тот же день) —
+    # авто-списание считает каждое блюдо по своему dish_id независимо, дубль
+    # в каталоге не портит цифры склада, только путает человека в списке и
+    # дробит статистику "сколько раз подавали". Значит не блокировать работу
+    # с меню, просто напоминать, пока в очереди что-то есть.
+    pending_duplicates = len(find_duplicate_candidates(db))
 
     today = date_type.today()
     this_monday = _week_monday(today)
@@ -137,6 +135,7 @@ def menu_form(request: Request, org_id: str | None = None, start: str | None = N
         "warning_date": (
             f"{WEEKDAY_NAMES[warning_date.weekday()]}, {warning_date.strftime('%d.%m')}"
         ) if warning_date else None,
+        "pending_duplicates": pending_duplicates,
     })
     return templates.TemplateResponse("menu/form.html", ctx)
 
@@ -165,12 +164,6 @@ def menu_day_save(
     ctx = _base_ctx(request, db, org_id)
     if ctx is None or ctx["current_org"] is None:
         return JSONResponse({"error": "unauthorized"}, status_code=401)
-
-    # Тот же гейт, что и на GET / — здесь на случай прямого POST мимо формы
-    # (устаревшая открытая вкладка и т.п.), фронт этот случай не обрабатывает
-    # специально, но запись должна остаться заблокированной в любом случае.
-    if find_duplicate_candidates(db):
-        return JSONResponse({"error": "duplicates_pending"}, status_code=409)
 
     d = date_type.fromisoformat(date)
 

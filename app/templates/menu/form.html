@@ -17,6 +17,15 @@
 </div>
 {% endif %}
 
+{% if pending_duplicates %}
+<div class="alert alert-warning">
+  В каталоге блюд {{ pending_duplicates }}
+  {{ 'похожая пара' if pending_duplicates == 1 else 'похожих пары' if pending_duplicates < 5 else 'похожих пар' }}
+  ждут разбора — работать с меню это не мешает, но стоит заглянуть и решить:
+  <a href="/menu/dishes/duplicates?org_id={{ current_org_id }}">разобрать похожие блюда →</a>
+</div>
+{% endif %}
+
 <style>
   .week-nav { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
   .week-nav .btn { min-height: 40px; padding: 8px 14px; }
