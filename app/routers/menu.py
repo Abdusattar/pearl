@@ -373,6 +373,12 @@ def dish_save(
             bad_rows.append(f'«{raw_name}» — не распознано число ({sadik_str or shkola_str})')
         elif sadik_val is None and shkola_val is None:
             bad_rows.append(f'«{raw_name}» — не указан вес ни для садика, ни для школы')
+        elif row["product_id"] is None:
+            # Строка без связи со складом раньше сохранялась молча и просто
+            # выпадала из авто-списания — тот же класс «тихого нуля», что и
+            # для нераспознанных чисел (найдено 30.07). Выбор товара из
+            # подсказки строго обязателен, свободный текст не сохраняется.
+            bad_rows.append(f'«{raw_name}» — товар не выбран из подсказки (не привязан к складу)')
 
     if bad_rows:
         ingredients = (
