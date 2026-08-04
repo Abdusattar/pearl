@@ -168,7 +168,8 @@ def get_balance(db: Session, student_id: int) -> float:
         Charge.student_id == student_id
     ).scalar()
     paid = db.query(func.coalesce(func.sum(Transaction.amount), 0)).filter(
-        Transaction.student_id == student_id, Transaction.type == "income"
+        Transaction.student_id == student_id, Transaction.type == "income",
+        Transaction.deleted_at.is_(None),
     ).scalar()
     return float(charged) - float(paid)
 
@@ -219,7 +220,10 @@ def get_balances(db: Session, student_ids: list[int]) -> dict[int, float]:
     )
     payments = dict(
         db.query(Transaction.student_id, func.coalesce(func.sum(Transaction.amount), 0))
-        .filter(Transaction.student_id.in_(student_ids), Transaction.type == "income")
+        .filter(
+            Transaction.student_id.in_(student_ids), Transaction.type == "income",
+            Transaction.deleted_at.is_(None),
+        )
         .group_by(Transaction.student_id)
         .all()
     )
