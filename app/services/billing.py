@@ -2,7 +2,7 @@ from calendar import monthrange
 from datetime import date
 
 from sqlalchemy.orm import Session
-from sqlalchemy import func
+from sqlalchemy import func, text
 
 from app.models import Student, StudentService, Service, Charge, Transaction, Enrollment, Organization
 
@@ -109,6 +109,13 @@ def generate_monthly_charges(db: Session) -> int:
     Статус "frozen" (место держится, ребёнок не ходит) — только процент от тарифа
     (Organization.frozen_discount_percent, настройка объекта, не константа), без
     доп.услуг и без пропорции по дате: ребёнок ими не пользуется, пока заморожен."""
+    # Функция вызывается «лениво» на каждый заход на /students/ и /reports/ —
+    # без этой блокировки два одновременных запроса оба видят «ещё не
+    # начислено» и оба вставляют начисления всем активным детям (найдено
+    # 04.08: 5 запросов подряд в 16:35 задвоили начисления 50 детям на 1.6млн
+    # сом). pg_advisory_xact_lock держится до конца транзакции и сериализует
+    # весь проход, а не только одну строку.
+    db.execute(text("SELECT pg_advisory_xact_lock(hashtext('generate_monthly_charges'))"))
     period = date.today().replace(day=1)
 
     already_charged = {
