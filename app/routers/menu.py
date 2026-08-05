@@ -10,8 +10,9 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.dependencies import get_current_user, get_accessible_orgs, resolve_org
-from app.models import Dish, DishIngredient, DishMergeDismissed, MenuEntry, WriteOff
+from app.models import Dish, DishIngredient, DishMergeDismissed, ExpenseCategory, MenuEntry, WriteOff
 from app.services.dishes import get_or_create_dish, find_duplicate_candidates
+from app.services.products import UNITS, CATEGORIES, UNITS_NEED_GRAMS_PER_UNIT
 
 router = APIRouter(prefix="/menu", tags=["menu"])
 templates = Jinja2Templates(directory=str(Path(__file__).parent.parent / "templates"))
@@ -317,7 +318,11 @@ def dish_detail(request: Request, dish_id: int, org_id: str | None = None,
         .order_by(DishIngredient.id)
         .all()
     )
-    ctx.update({"dish": dish, "ingredients": ingredients, "return_date": return_date, "error": None})
+    ctx.update({
+        "dish": dish, "ingredients": ingredients, "return_date": return_date, "error": None,
+        "units": UNITS, "categories": CATEGORIES, "expense_categories": _leaf_expense_categories(db),
+        "units_need_grams": sorted(UNITS_NEED_GRAMS_PER_UNIT),
+    })
     return templates.TemplateResponse("menu/dish_detail.html", ctx)
 
 
@@ -328,6 +333,18 @@ def _to_float(s: str) -> float | None:
         return float(s.replace(",", "."))
     except ValueError:
         return None
+
+
+def _leaf_expense_categories(db: Session) -> list:
+    """Только листья дерева статей расходов — родительский узел («Товары» и
+    т.п.) не годится как статья конкретного товара, только группировка."""
+    parent_ids = {
+        row[0] for row in db.query(ExpenseCategory.parent_id).filter(ExpenseCategory.parent_id.isnot(None)).distinct()
+    }
+    q = db.query(ExpenseCategory)
+    if parent_ids:
+        q = q.filter(~ExpenseCategory.id.in_(parent_ids))
+    return q.order_by(ExpenseCategory.name).all()
 
 
 @router.post("/dishes/{dish_id}", response_class=HTMLResponse)
@@ -396,6 +413,8 @@ def dish_save(
             "dish": dish, "ingredients": ingredients, "return_date": return_date,
             "error": "Не сохранено — проверь строки: " + "; ".join(bad_rows),
             "form_rows": parsed_rows,
+            "units": UNITS, "categories": CATEGORIES, "expense_categories": _leaf_expense_categories(db),
+        "units_need_grams": sorted(UNITS_NEED_GRAMS_PER_UNIT),
         })
         return templates.TemplateResponse("menu/dish_detail.html", ctx)
 

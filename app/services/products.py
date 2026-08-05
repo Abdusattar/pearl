@@ -6,6 +6,14 @@ from app.models import Product, ProductAlias
 
 FUZZY_THRESHOLD = 72
 
+UNITS = ["кг", "л", "шт", "г", "уп", "пач"]
+CATEGORIES = ["мясо", "птица", "рыба", "молочные", "крупы", "овощи", "фрукты", "масло/жиры", "хлеб", "прочее"]
+# Единицы, где вес 1 штуки не выводится арифметикой (в отличие от кг/л/г) —
+# без grams_per_unit авто-списание по рецепту тихо считает 0 для этого товара
+# (тот же класс «тихого нуля», что и с Томатной пастой на «уп», 27.07).
+UNITS_NEED_GRAMS_PER_UNIT = {"шт", "уп", "пач"}
+DUPLICATE_SCORE_THRESHOLD = 85
+
 
 def _key(raw: str) -> str:
     return raw.strip().lower()

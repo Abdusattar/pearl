@@ -25,3 +25,6 @@ logs/
 
 # Claude internal
 .claude/skills/
+
+# Личные заметки не по теме Pearl (маркетинг и т.п. про другие/будущие проекты)
+marketing/

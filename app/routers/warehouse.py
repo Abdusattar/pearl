@@ -11,14 +11,11 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.dependencies import get_current_user, get_accessible_orgs, resolve_org
 from app.models import ExpenseCategory, Organization, Product, WarehouseReceipt, WriteOff
-from app.services.products import get_or_create_product
+from app.services.products import get_or_create_product, UNITS, CATEGORIES
 from app.services.writeoff_calc import AUTO_REASON, auto_apply_if_pending, compute_day_draft
 
 router = APIRouter(prefix="/warehouse", tags=["warehouse"])
 templates = Jinja2Templates(directory=str(Path(__file__).parent.parent / "templates"))
-
-UNITS = ["кг", "л", "шт", "г", "уп", "пач"]
-CATEGORIES = ["мясо", "птица", "рыба", "молочные", "крупы", "овощи", "фрукты", "масло/жиры", "хлеб", "прочее"]
 
 
 def _descendants(org_id: int, all_orgs: list) -> set:

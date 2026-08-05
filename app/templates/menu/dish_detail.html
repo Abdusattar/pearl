@@ -97,6 +97,60 @@
   </div>
 
 </div>
+
+<div class="modal-overlay" id="create-product-modal" hidden>
+  <div class="modal">
+    <div class="modal-header">
+      <h3>Новый товар</h3>
+      <button type="button" class="modal-close" onclick="closeModal('create-product-modal')">×</button>
+    </div>
+
+    <div id="cp-error" class="alert alert-error" style="display:none;margin-bottom:12px"></div>
+
+    <div id="cp-duplicates" style="display:none;margin-bottom:16px">
+      <div style="font-size:13px;color:var(--text-muted);margin-bottom:8px">Похоже, уже есть в каталоге:</div>
+      <div id="cp-duplicates-list"></div>
+      <div style="border-top:1px solid var(--border);margin-top:12px;padding-top:12px">
+        <button type="button" class="btn btn-secondary" onclick="cpSubmit(true)">Нет, это другой товар — создать новый</button>
+      </div>
+    </div>
+
+    <div id="cp-form">
+      <div class="form-group">
+        <label>Название</label>
+        <input type="text" id="cp-name" class="form-control" style="font-size:16px">
+      </div>
+      <div class="form-group">
+        <label>Единица измерения</label>
+        <select id="cp-unit" class="form-control" style="font-size:16px" onchange="cpToggleGrams()">
+          {% for u in units %}<option value="{{ u }}">{{ u }}</option>{% endfor %}
+        </select>
+      </div>
+      <div class="form-group" id="cp-grams-wrap" style="display:none">
+        <label>Вес одной единицы, г</label>
+        <input type="text" id="cp-grams" inputmode="decimal" class="form-control" style="font-size:16px" placeholder="напр. 350">
+        <div style="font-size:11px;color:var(--text-muted);margin-top:2px">Без этого веса склад не сможет списывать по рецепту</div>
+      </div>
+      <div class="form-group">
+        <label>Категория склада</label>
+        <select id="cp-category" class="form-control" style="font-size:16px">
+          {% for c in categories %}<option value="{{ c }}">{{ c }}</option>{% endfor %}
+        </select>
+      </div>
+      <div class="form-group">
+        <label>Статья расходов</label>
+        <select id="cp-expense-category" class="form-control" style="font-size:16px">
+          <option value="">— выбери —</option>
+          {% for ec in expense_categories %}<option value="{{ ec.id }}">{{ ec.name }}</option>{% endfor %}
+        </select>
+      </div>
+      <div style="display:flex;gap:10px;margin-top:16px">
+        <button type="button" class="btn btn-primary" onclick="cpSubmit(false)">Создать</button>
+        <button type="button" class="btn btn-secondary" onclick="closeModal('create-product-modal')">Отмена</button>
+      </div>
+    </div>
+  </div>
+</div>
 {% endblock %}
 
 {% block scripts %}
@@ -170,11 +224,12 @@ function initRow(row) {
   const hint = row.querySelector('.link-hint');
   let timer = null;
 
-  function render(items) {
-    if (!items.length) { dropdown.style.display = 'none'; return; }
-    dropdown.innerHTML = items.map(p => `
+  function render(items, q) {
+    let html = items.map(p => `
       <div class="ac-item" data-id="${p.id}" data-name="${p.name.replace(/"/g,'&quot;')}"
            style="padding:8px 10px;cursor:pointer;font-size:13px">${p.name}</div>`).join('');
+    html += `<div class="ac-create" style="padding:8px 10px;cursor:pointer;font-size:13px;color:var(--primary);border-top:1px solid var(--border)">+ Создать товар «${q.replace(/</g,'&lt;')}»</div>`;
+    dropdown.innerHTML = html;
     dropdown.style.display = '';
     dropdown.querySelectorAll('.ac-item').forEach(el => {
       el.addEventListener('mousedown', e => {
@@ -184,6 +239,11 @@ function initRow(row) {
         hint.textContent = '✓ привязан к складу';
         dropdown.style.display = 'none';
       });
+    });
+    dropdown.querySelector('.ac-create').addEventListener('mousedown', e => {
+      e.preventDefault();
+      dropdown.style.display = 'none';
+      openCreateProductModal(input, hiddenId, hint, q);
     });
   }
 
@@ -195,10 +255,99 @@ function initRow(row) {
     if (!q) { dropdown.style.display = 'none'; return; }
     timer = setTimeout(() => {
       fetch('/expenses/products/search?standard_only=false&q=' + encodeURIComponent(q))
-        .then(r => r.json()).then(render);
+        .then(r => r.json()).then(items => render(items, q));
     }, 180);
   });
   input.addEventListener('blur', () => setTimeout(() => { dropdown.style.display = 'none'; }, 180));
+}
+
+// ── Создание товара прямо из рецепта (05.08) ────────────────────────────────
+const UNITS_NEED_GRAMS = {{ units_need_grams | tojson }};
+let cpTarget = null;
+
+function openCreateProductModal(inputEl, hiddenIdEl, hintEl, query) {
+  cpTarget = { input: inputEl, hiddenId: hiddenIdEl, hint: hintEl };
+  document.getElementById('cp-name').value = query;
+  document.getElementById('cp-grams').value = '';
+  document.getElementById('cp-expense-category').value = '';
+  document.getElementById('cp-error').style.display = 'none';
+  document.getElementById('cp-duplicates').style.display = 'none';
+  document.getElementById('cp-form').style.display = '';
+  cpToggleGrams();
+  openModal('create-product-modal');
+}
+
+function cpToggleGrams() {
+  const unit = document.getElementById('cp-unit').value;
+  document.getElementById('cp-grams-wrap').style.display = UNITS_NEED_GRAMS.includes(unit) ? '' : 'none';
+}
+
+function cpSubmit(confirmDuplicate) {
+  const name = document.getElementById('cp-name').value.trim();
+  const unit = document.getElementById('cp-unit').value;
+  const category = document.getElementById('cp-category').value;
+  const expenseCategoryId = document.getElementById('cp-expense-category').value;
+  const grams = document.getElementById('cp-grams').value.trim();
+  const errorEl = document.getElementById('cp-error');
+  errorEl.style.display = 'none';
+
+  if (!name) { errorEl.textContent = 'Название обязательно'; errorEl.style.display = ''; return; }
+  if (!expenseCategoryId) { errorEl.textContent = 'Выбери статью расходов'; errorEl.style.display = ''; return; }
+  if (UNITS_NEED_GRAMS.includes(unit) && !grams) {
+    errorEl.textContent = `Для единицы "${unit}" обязателен вес одной штуки в граммах`;
+    errorEl.style.display = '';
+    return;
+  }
+
+  const fd = new FormData();
+  fd.append('name', name);
+  fd.append('unit', unit);
+  fd.append('category', category);
+  fd.append('expense_category_id', expenseCategoryId);
+  if (grams) fd.append('grams_per_unit', grams);
+  if (confirmDuplicate) fd.append('confirm_duplicate', '1');
+
+  fetch('/expenses/products/create', { method: 'POST', body: fd })
+    .then(async r => {
+      const data = await r.json();
+      if (r.status === 409 && data.duplicates) {
+        renderDuplicates(data.duplicates);
+        return;
+      }
+      if (!r.ok) {
+        errorEl.textContent = data.error || 'Не удалось создать товар';
+        errorEl.style.display = '';
+        return;
+      }
+      if (cpTarget) {
+        cpTarget.input.value = data.name;
+        cpTarget.hiddenId.value = data.id;
+        cpTarget.hint.textContent = '✓ привязан к складу';
+      }
+      closeModal('create-product-modal');
+    })
+    .catch(() => { errorEl.textContent = 'Ошибка сети'; errorEl.style.display = ''; });
+}
+
+function renderDuplicates(items) {
+  document.getElementById('cp-form').style.display = 'none';
+  const list = document.getElementById('cp-duplicates-list');
+  list.innerHTML = items.map(p => `
+    <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--border)">
+      <span>${p.name} <span style="color:var(--text-muted);font-size:12px">(${p.score}%)</span></span>
+      <button type="button" class="btn btn-secondary" data-id="${p.id}" data-name="${p.name.replace(/"/g,'&quot;')}" style="font-size:12px;padding:6px 10px">Это он</button>
+    </div>`).join('');
+  list.querySelectorAll('button').forEach(btn => {
+    btn.addEventListener('click', () => {
+      if (cpTarget) {
+        cpTarget.input.value = btn.dataset.name;
+        cpTarget.hiddenId.value = btn.dataset.id;
+        cpTarget.hint.textContent = '✓ привязан к складу';
+      }
+      closeModal('create-product-modal');
+    });
+  });
+  document.getElementById('cp-duplicates').style.display = '';
 }
 
 if (EXISTING_ROWS.length) {

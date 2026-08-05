@@ -7,6 +7,7 @@ from fastapi import APIRouter, Depends, Form, Request, UploadFile, File
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from sqlalchemy import func
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.database import get_db
@@ -15,7 +16,10 @@ from app.models import (
     Transaction, User, AuditLog, WarehouseReceipt, Supplier, RecurringExpenseTemplate,
 )
 from app.services.ocr import compute_hash, analyze_receipt
-from app.services.products import match_product, rank_candidates, get_or_create_product, ensure_alias
+from app.services.products import (
+    match_product, rank_candidates, get_or_create_product, ensure_alias,
+    UNITS, CATEGORIES, UNITS_NEED_GRAMS_PER_UNIT, DUPLICATE_SCORE_THRESHOLD,
+)
 from app.services.normalize import normalize_items
 from app.services import recurring_expenses
 from app.services import supplier_ledger
@@ -260,6 +264,81 @@ def search_products(q: str = "", standard_only: bool = True, db: Session = Depen
         return JSONResponse([])
     candidates = rank_candidates(db, q.strip(), limit=6, standard_only=standard_only)
     return JSONResponse(candidates)
+
+
+@router.post("/products/create")
+def create_product(
+    name: str = Form(...),
+    unit: str = Form(...),
+    category: str = Form(...),
+    expense_category_id: str = Form(...),
+    grams_per_unit: str | None = Form(None),
+    confirm_duplicate: str | None = Form(None),
+    db: Session = Depends(get_db),
+):
+    """Создание товара прямо с экрана рецепта блюда (menu/dish_detail.html) —
+    единственное место в проекте, где товар заводится осознанно рукой, а не
+    через OCR-чек (get_or_create_product, is_standard=False) или актуализацию
+    склада. Два слоя защиты от дублей (05.08, тот же принцип «второй слой»,
+    что и в billing 04.08): точное совпадение имени возвращает существующий
+    товар без создания нового; fuzzy-проверка ≥85 с standard_only=False
+    (дропдаун на самом экране рецепта ищет тем же standard_only=False —
+    второй слой обязан видеть те же кандидаты, иначе слеп именно к
+    is_standard=False товарам, которых и так плодит OCR) требует явного
+    confirm_duplicate, если человек настаивает, что это другой товар."""
+    name = name.strip()
+    if not name:
+        return JSONResponse({"error": "Название обязательно"}, status_code=400)
+    if unit not in UNITS:
+        return JSONResponse({"error": "Некорректная единица измерения"}, status_code=400)
+    if category not in CATEGORIES:
+        return JSONResponse({"error": "Некорректная категория склада"}, status_code=400)
+
+    cat_id = int(expense_category_id) if expense_category_id.isdigit() else None
+    expense_cat = db.get(ExpenseCategory, cat_id) if cat_id else None
+    if not expense_cat:
+        return JSONResponse({"error": "Статья расходов обязательна"}, status_code=400)
+    has_children = db.query(ExpenseCategory).filter(ExpenseCategory.parent_id == cat_id).first() is not None
+    if has_children:
+        return JSONResponse({"error": "Выбери конечную статью расходов, не раздел"}, status_code=400)
+
+    grams_val = None
+    if unit in UNITS_NEED_GRAMS_PER_UNIT:
+        try:
+            grams_val = float((grams_per_unit or "").replace(",", "."))
+        except ValueError:
+            grams_val = None
+        if not grams_val or grams_val <= 0:
+            return JSONResponse(
+                {"error": f'Для единицы "{unit}" обязателен вес одной штуки в граммах'}, status_code=400
+            )
+
+    existing = db.query(Product).filter(func.lower(Product.name) == name.lower()).first()
+    if existing:
+        return JSONResponse({"id": existing.id, "name": existing.name, "matched": True})
+
+    if not confirm_duplicate:
+        duplicates = [
+            c for c in rank_candidates(db, name, limit=5, standard_only=False)
+            if c["score"] >= DUPLICATE_SCORE_THRESHOLD
+        ]
+        if duplicates:
+            return JSONResponse({"duplicates": duplicates}, status_code=409)
+
+    product = Product(
+        name=name, unit=unit, category=category, expense_category_id=cat_id,
+        grams_per_unit=grams_val, is_standard=True,
+    )
+    db.add(product)
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        existing = db.query(Product).filter(func.lower(Product.name) == name.lower()).first()
+        if existing:
+            return JSONResponse({"id": existing.id, "name": existing.name, "matched": True})
+        return JSONResponse({"error": "Не удалось создать товар"}, status_code=400)
+    return JSONResponse({"id": product.id, "name": product.name, "matched": False})
 
 
 # ── LIST ──────────────────────────────────────────────────────────────────────
