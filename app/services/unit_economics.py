@@ -146,17 +146,22 @@ def category_subtree_ids(db: Session, root_name: str) -> list[int]:
     return [root[0]] + [c[0] for c in children]
 
 
-def monthly_expense_total(db: Session, organization_id: int, category_ids: list[int], m_start: date_type) -> Decimal:
+def monthly_expense_total(db: Session, organization_ids: set[int], category_ids: list[int], m_start: date_type) -> Decimal:
     """Сумма проведённых расходов (Transaction) за месяц по набору категорий
     — считается по `date` (когда реально провели), не по `period`: `period`
     заполняется только для recurring_template_id, обычные проводки его не
-    используют (см. Transaction.period)."""
-    if not category_ids:
+    используют (см. Transaction.period). organization_ids — набор, не один
+    id: коммуналка/охрана скорее всего тоже на весь кампус (Школа+Садик
+    Сокулук), а не разделены по объектам — тот же случай, что kitchen_group
+    для питания, права на проводку сейчас разные у разных ролей (Махабат/
+    пилот — только Садик Сокулук, Айжан — только Школа), так что счёт может
+    реально попасть под любой из двух id."""
+    if not category_ids or not organization_ids:
         return Decimal(0)
     total = (
         db.query(func.sum(Transaction.amount))
         .filter(
-            Transaction.organization_id == organization_id,
+            Transaction.organization_id.in_(organization_ids),
             Transaction.type == "expense",
             Transaction.category_id.in_(category_ids),
             Transaction.deleted_at.is_(None),

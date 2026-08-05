@@ -8,9 +8,14 @@
   <h1>Юнит-экономика</h1>
 </div>
 
-<div class="card" style="max-width:720px;margin-bottom:20px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
-  <div style="font-size:14px;color:var(--text-muted)">Итого расходов за {{ month_label }} (только посчитанные блоки ниже)</div>
-  <div style="font-size:22px;font-weight:700">{{ "{:,.0f}".format(total_cost) }} сом</div>
+<div class="card" style="max-width:720px;margin-bottom:20px">
+  <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
+    <div style="font-size:14px;color:var(--text-muted)">Итого расходов за {{ month_label }} (только посчитанные блоки ниже)</div>
+    <div style="font-size:22px;font-weight:700">{{ "{:,.0f}".format(total_cost) }} сом</div>
+  </div>
+  {% if total_note %}
+  <div style="font-size:13px;color:var(--text-muted);margin-top:10px">⚠️ {{ total_note }}</div>
+  {% endif %}
 </div>
 
 <div class="card" style="max-width:720px;margin-bottom:20px">

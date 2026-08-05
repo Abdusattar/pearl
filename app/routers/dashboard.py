@@ -28,13 +28,21 @@ def _guard(request: Request, db: Session):
     return user, None
 
 
-def _has_any_expense(db: Session, org_id: int, category_ids: list[int]) -> bool:
-    if not category_ids:
+def _campus_note(ever: bool, shared_kitchen: bool, title: str) -> str | None:
+    if not ever:
+        return "Категория заведена, расходов ещё не проводили"
+    if shared_kitchen:
+        return f"«{title}» считается на весь кампус (Школа+Садик Сокулук вместе), не по одному объекту"
+    return None
+
+
+def _has_any_expense(db: Session, org_ids: set[int], category_ids: list[int]) -> bool:
+    if not category_ids or not org_ids:
         return False
     return (
         db.query(Transaction.id)
         .filter(
-            Transaction.organization_id == org_id,
+            Transaction.organization_id.in_(org_ids),
             Transaction.type == "expense",
             Transaction.category_id.in_(category_ids),
             Transaction.deleted_at.is_(None),
@@ -78,17 +86,26 @@ def unit_economics_view(request: Request, org_id: str | None = None, db: Session
     amortization = unit_economics.monthly_amortization(db, oid, m_start)
     assets_count = db.query(Asset.id).filter(Asset.organization_id == oid, Asset.deleted_at.is_(None)).count()
 
+    # Коммуналка/Охрана — тоже на весь кампус (Школа+Садик Сокулук, один
+    # двор/здание), считаем через kitchen_ids по той же причине, что и
+    # питание: право провести счёт под конкретным id сейчас зависит от роли
+    # (Махабат/пилот — Садик Сокулук, Айжан — Школа), реальная проводка
+    # может уйти под любой из двух.
     utility_ids = unit_economics.category_subtree_ids(db, "Коммунальные расходы")
-    utilities = unit_economics.monthly_expense_total(db, oid, utility_ids, m_start)
-    utilities_ever = _has_any_expense(db, oid, utility_ids)
+    utilities = unit_economics.monthly_expense_total(db, kitchen_ids, utility_ids, m_start)
+    utilities_ever = _has_any_expense(db, kitchen_ids, utility_ids)
 
     security_ids = unit_economics.category_subtree_ids(db, "Охрана")
-    security = unit_economics.monthly_expense_total(db, oid, security_ids, m_start)
-    security_ever = _has_any_expense(db, oid, security_ids)
+    security = unit_economics.monthly_expense_total(db, kitchen_ids, security_ids, m_start)
+    security_ever = _has_any_expense(db, kitchen_ids, security_ids)
 
+    # Реклама — не привязана к конкретному зданию (SMM/продвижение целиком),
+    # но своей орг-принадлежности у неё нет по умолчанию — оставляем per-org,
+    # не кампус: единого основания считать её общей нет (в отличие от еды/
+    # коммуналки/охраны, которые физически про одно здание).
     ads_ids = unit_economics.category_subtree_ids(db, "Реклама")
-    ads = unit_economics.monthly_expense_total(db, oid, ads_ids, m_start)
-    ads_ever = _has_any_expense(db, oid, ads_ids)
+    ads = unit_economics.monthly_expense_total(db, {oid}, ads_ids, m_start)
+    ads_ever = _has_any_expense(db, {oid}, ads_ids)
 
     billing = unit_economics.monthly_billing_summary(db, oid, m_start)
 
@@ -98,7 +115,11 @@ def unit_economics_view(request: Request, org_id: str | None = None, db: Session
     if not writeoffs_ever:
         food_note = "Списаний питания ещё не было — механизм не запускался"
     elif shared_kitchen:
-        food_note = "Общая кухня Школы и Садика Сокулук — сумма по обоим объектам вместе, раздельно не считается"
+        # Не "сумма по обоим объектам" — сейчас в Школе нет своих групп/детей
+        # (headcount по классам всегда 0), поэтому вся сумма списаний — это
+        # фактическое потребление Садика. Общий на два объекта — только
+        # закуп/склад, из которого берётся средняя цена (advisor 05.08).
+        food_note = "Пока это списания только Садика Сокулук (в Школе ещё нет своих групп/детей) — цена усреднена по общему складу, закуп идёт под обоими объектами"
 
     blocks = [
         {
@@ -119,12 +140,12 @@ def unit_economics_view(request: Request, org_id: str | None = None, db: Session
         {
             "key": "utilities", "title": "Коммуналка", "value": utilities,
             "ready": utilities_ever,
-            "note": None if utilities_ever else "Категория заведена, расходов ещё не проводили",
+            "note": _campus_note(utilities_ever, shared_kitchen, "Коммуналка"),
         },
         {
             "key": "security", "title": "Охрана", "value": security,
             "ready": security_ever,
-            "note": None if security_ever else "Категория заведена, расходов ещё не проводили",
+            "note": _campus_note(security_ever, shared_kitchen, "Охрана"),
         },
         {
             "key": "ads", "title": "Реклама", "value": ads,
@@ -133,12 +154,19 @@ def unit_economics_view(request: Request, org_id: str | None = None, db: Session
         },
     ]
 
+    total_note = (
+        "Питание/Коммуналка/Охрана — общие на весь кампус (Школа+Садик Сокулук). "
+        "Если смотреть Школу и Садик по очереди и сложить два «Итого» — эти суммы посчитаются дважды."
+        if shared_kitchen else None
+    )
+
     return templates.TemplateResponse("dashboard/unit_economics.html", {
         "request": request,
         "current_user": user,
         "accessible_orgs": accessible,
         "current_org_id": oid,
         "current_org": current_org,
+        "total_note": total_note,
         "active_page": "dashboard",
         "month_label": m_start.strftime("%m.%Y"),
         "blocks": blocks,
