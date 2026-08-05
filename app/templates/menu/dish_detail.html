@@ -28,13 +28,19 @@
 <div class="card" style="max-width:720px">
 
   {% if ingredients %}
+  {% set sadik_ratio = 1.0 if dish.same_portion_for_sadik else sadik_portion_percent / 100 %}
   <div id="view-block" style="{{ 'display:none' if error else '' }}">
+    {% if dish.same_portion_for_sadik %}
+    <div style="font-size:12px;color:var(--text-muted);margin-bottom:8px">Одинаковая порция для садика (штучное блюдо)</div>
+    {% else %}
+    <div style="font-size:12px;color:var(--text-muted);margin-bottom:8px">Садик = {{ "{:g}".format(sadik_portion_percent) }}% от школьной порции (настройка объекта, /services/)</div>
+    {% endif %}
     <table style="width:100%;border-collapse:collapse;font-size:14px;margin-bottom:16px">
       <thead>
         <tr style="border-bottom:2px solid var(--border);text-align:left">
           <th style="padding:6px 4px">Сырьё</th>
-          <th style="padding:6px 4px;text-align:right">Садик, г</th>
           <th style="padding:6px 4px;text-align:right">Школа, г</th>
+          <th style="padding:6px 4px;text-align:right">Садик, г</th>
           <th style="padding:6px 4px">Товар на складе</th>
         </tr>
       </thead>
@@ -42,8 +48,10 @@
         {% for ing in ingredients %}
         <tr style="border-bottom:1px solid var(--border)">
           <td style="padding:8px 4px">{{ ing.raw_name }}</td>
-          <td style="padding:8px 4px;text-align:right">{{ ing.qty_sadik_g | default('—', true) }}</td>
           <td style="padding:8px 4px;text-align:right">{{ ing.qty_shkola_g | default('—', true) }}</td>
+          <td style="padding:8px 4px;text-align:right;color:var(--text-muted)">
+            {{ (ing.qty_shkola_g | float * sadik_ratio) | round(1) if ing.qty_shkola_g is not none else '—' }}
+          </td>
           <td style="padding:8px 4px">
             {% if ing.product %}
             {{ ing.product.name }}
@@ -72,15 +80,20 @@
       <input type="hidden" name="org_id" value="{{ current_org_id }}">
       {% if return_date %}<input type="hidden" name="return_date" value="{{ return_date }}">{% endif %}
       <div style="font-size:12px;color:var(--text-muted);margin-bottom:6px">
-        Заполни грамм для своего объекта (садик и/или школа) — если оба поля пустые, строка не спишет ничего, и сохранить не даст.
+        Заполни граммовку школьной порции — если поле пустое, строка не спишет ничего, и сохранить не даст.
+        Садик считается сам — {{ "{:g}".format(sadik_portion_percent) }}% от школьной (меняется на /services/).
       </div>
+      <label style="display:flex;align-items:center;gap:6px;font-size:13px;margin-bottom:10px;cursor:pointer">
+        <input type="checkbox" id="same-portion-checkbox" name="same_portion_for_sadik" value="1"
+               {{ 'checked' if dish.same_portion_for_sadik }} onchange="refreshAllPreviews()">
+        Одинаковая порция для садика (штучное блюдо — булочка, кекс и т.п.)
+      </label>
       <table style="width:100%;border-collapse:collapse;font-size:13px" id="items-table">
         <thead>
           <tr style="border-bottom:2px solid var(--border);text-align:left">
-            <th style="padding:6px 4px;width:40%">Сырьё</th>
-            <th style="padding:6px 4px;width:20%">Садик, г</th>
-            <th style="padding:6px 4px;width:20%">Школа, г</th>
-            <th style="padding:6px 4px;width:10%"></th>
+            <th style="padding:6px 4px;width:50%">Сырьё</th>
+            <th style="padding:6px 4px;width:30%">Школа, г</th>
+            <th style="padding:6px 4px;width:20%"></th>
           </tr>
         </thead>
         <tbody id="items-body"></tbody>
@@ -159,7 +172,6 @@
 const EXISTING_ROWS = [
   {% for row in form_rows %}
   { productId: {{ row.product_id or 'null' }}, name: {{ row.name | tojson }},
-    sadik: {{ row.sadik if row.sadik is not none else 'null' }},
     shkola: {{ row.shkola if row.shkola is not none else 'null' }} },
   {% endfor %}
 ];
@@ -167,11 +179,25 @@ const EXISTING_ROWS = [
 const EXISTING_ROWS = [
   {% for ing in ingredients %}
   { productId: {{ ing.product_id or 'null' }}, name: {{ ing.raw_name | tojson }},
-    sadik: {{ ing.qty_sadik_g if ing.qty_sadik_g is not none else 'null' }},
     shkola: {{ ing.qty_shkola_g if ing.qty_shkola_g is not none else 'null' }} },
   {% endfor %}
 ];
 {% endif %}
+
+const SADIK_PORTION_PERCENT = {{ sadik_portion_percent }};
+function currentSadikRatio() {
+  const checkbox = document.getElementById('same-portion-checkbox');
+  return (checkbox && checkbox.checked) ? 1 : SADIK_PORTION_PERCENT / 100;
+}
+function refreshAllPreviews() {
+  document.querySelectorAll('#items-body tr').forEach(row => {
+    const input = row.querySelector('.item-qty-shkola');
+    const preview = row.querySelector('.sadik-preview');
+    if (!input || !preview) return;
+    const val = parseFloat((input.value || '').replace(',', '.'));
+    preview.textContent = isNaN(val) ? '' : `Садик: ${(val * currentSadikRatio()).toFixed(1)} г`;
+  });
+}
 
 function toggleRename() {
   const f = document.getElementById('rename-form');
@@ -202,12 +228,9 @@ function addRow(prefill) {
       <div class="link-hint" style="font-size:11px;color:var(--text-muted);margin-top:2px">${prefill && prefill.productId ? '✓ привязан к складу' : (prefill ? 'не привязан к складу' : '')}</div>
     </td>
     <td style="padding:4px">
-      <input type="text" class="form-control" name="item_qty_sadik" inputmode="decimal" placeholder="0"
-             style="font-size:16px;padding:5px 8px;text-align:right" value="${prefill && prefill.sadik !== null ? prefill.sadik : ''}">
-    </td>
-    <td style="padding:4px">
-      <input type="text" class="form-control" name="item_qty_shkola" inputmode="decimal" placeholder="0"
+      <input type="text" class="form-control item-qty-shkola" name="item_qty_shkola" inputmode="decimal" placeholder="0"
              style="font-size:16px;padding:5px 8px;text-align:right" value="${prefill && prefill.shkola !== null ? prefill.shkola : ''}">
+      <div class="sadik-preview" style="font-size:11px;color:var(--text-muted);margin-top:2px;text-align:right"></div>
     </td>
     <td style="padding:4px;text-align:center">
       <button type="button" onclick="this.closest('tr').remove()" style="background:none;border:none;color:var(--text-muted);cursor:pointer;font-size:18px;padding:10px;min-width:44px;min-height:44px">×</button>
@@ -215,6 +238,9 @@ function addRow(prefill) {
   `;
   tbody.appendChild(row);
   initRow(row);
+  const shkolaInput = row.querySelector('.item-qty-shkola');
+  shkolaInput.addEventListener('input', refreshAllPreviews);
+  refreshAllPreviews();
 }
 
 function initRow(row) {

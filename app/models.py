@@ -30,6 +30,13 @@ class Organization(Base):
     legacy_tariff_cutoff = Column(Date)
     legacy_tariff_price = Column(Numeric(10, 2))
     legacy_tariff_until = Column(Date)
+    # % от школьной порции, который кладут ребёнку садика — настройка объекта,
+    # не константа (05.08). Кухня школы и садика Сокулук общая, рецепт хранит
+    # только школьную граммовку (DishIngredient.qty_shkola_g) — садик считается
+    # на лету в writeoff_calc.compute_day_draft, не снимком в БД (тот же урок,
+    # что и с legacy_tariff выше — снимок дрейфует, живой расчёт нет). У каждого
+    # объекта садика — своя настройка (Кожомкул может отличаться от Сокулука).
+    sadik_portion_percent = Column(Numeric(5, 2), nullable=False, default=80, server_default='80')
     created_at = Column(DateTime, server_default=func.now())
 
     children  = relationship("Organization", foreign_keys=[parent_id],
@@ -272,6 +279,11 @@ class Dish(Base):
     __tablename__ = "dishes"
     id         = Column(Integer, primary_key=True)
     name       = Column(String(150), nullable=False, unique=True)
+    # Штучная выпечка и т.п. — где порция ребёнка не делится по проценту
+    # (Булочка/Кекс/Пирог остаются целыми что школе, что садику), 05.08.
+    # На уровне блюда, не строки рецепта — данные подтвердили, что ни одно
+    # из 112 блюд не смешивает оба режима внутри одного рецепта.
+    same_portion_for_sadik = Column(Boolean, nullable=False, default=False, server_default='false')
     created_at = Column(DateTime, server_default=func.now())
 
 

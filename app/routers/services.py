@@ -107,6 +107,35 @@ def update_frozen_percent(
     return RedirectResponse(base_url, status_code=303)
 
 
+@router.post("/sadik-portion-percent")
+def update_sadik_portion_percent(
+    request: Request,
+    percent: str = Form(...),
+    org_id: str = Form(default=""),
+    db: Session = Depends(get_db),
+):
+    """% от школьной порции, который кладут ребёнку садика (05.08) — читается
+    живьём в writeoff_calc.compute_day_draft, ничего не пересчитывает задним
+    числом (только будущие списания)."""
+    user = get_current_user(request, db)
+    if not user:
+        return RedirectResponse("/login", status_code=302)
+    base_url = f"/services/?org_id={org_id}" if org_id else "/services/"
+    if user.id not in PRICE_EDITORS:
+        sep = "&" if "?" in base_url else "?"
+        msg = quote("Менять этот процент может только Айдай или Талас")
+        return RedirectResponse(f"{base_url}{sep}error={msg}", status_code=303)
+    org = db.query(Organization).get(int(org_id)) if org_id.isdigit() else None
+    try:
+        percent_val = float(percent)
+    except ValueError:
+        percent_val = None
+    if org and percent_val is not None and 0 <= percent_val <= 100:
+        org.sadik_portion_percent = percent_val
+        db.commit()
+    return RedirectResponse(base_url, status_code=303)
+
+
 @router.get("/legacy-tariff-preview")
 def legacy_tariff_preview(
     request: Request,

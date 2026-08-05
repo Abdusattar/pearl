@@ -324,10 +324,14 @@ def dish_detail(request: Request, dish_id: int, org_id: str | None = None,
         .order_by(DishIngredient.id)
         .all()
     )
+    # Садик больше не хранится (05.08) — считается на лету от школьной
+    # порции, тот же коэффициент, что использует writeoff_calc.compute_day_draft.
+    sadik_portion_percent = float(ctx["current_org"].sadik_portion_percent) if ctx["current_org"] else 80.0
     ctx.update({
         "dish": dish, "ingredients": ingredients, "return_date": return_date, "error": None,
         "units": UNITS, "categories": CATEGORIES, "expense_categories": _leaf_expense_categories(db),
         "units_need_grams": sorted(UNITS_NEED_GRAMS_PER_UNIT),
+        "sadik_portion_percent": sadik_portion_percent,
     })
     return templates.TemplateResponse("menu/dish_detail.html", ctx)
 
@@ -361,13 +365,15 @@ def dish_save(
     return_date: str | None = Form(None),
     item_product_id: List[str] = Form(default=[]),
     item_name: List[str] = Form(default=[]),
-    item_qty_sadik: List[str] = Form(default=[]),
     item_qty_shkola: List[str] = Form(default=[]),
+    same_portion_for_sadik: str | None = Form(None),
     db: Session = Depends(get_db),
 ):
     """Полная замена рецепта блюда — проще и надёжнее построчного diff (тот же
     приём, что и в menu_day_save: удалить всё за этот dish_id, вставить заново
-    то, что реально отправила форма)."""
+    то, что реально отправила форма). Садик-граммовку больше не принимаем и не
+    храним (05.08) — только школьная порция, садик считается на лету в
+    writeoff_calc.compute_day_draft от неё же."""
     ctx = _base_ctx(request, db, org_id)
     if ctx is None:
         return RedirectResponse("/login", status_code=302)
@@ -383,27 +389,24 @@ def dish_save(
         if not raw_name:
             continue
         pid_str = item_product_id[i].strip() if i < len(item_product_id) else ""
-        sadik_str = item_qty_sadik[i].strip() if i < len(item_qty_sadik) else ""
         shkola_str = item_qty_shkola[i].strip() if i < len(item_qty_shkola) else ""
-        sadik_val = _to_float(sadik_str)
         shkola_val = _to_float(shkola_str)
 
         row = {
             "product_id": int(pid_str) if pid_str.isdigit() else None,
-            "name": raw_name, "sadik": sadik_val, "shkola": shkola_val,
+            "name": raw_name, "shkola": shkola_val,
         }
         parsed_rows.append(row)
 
         # Строка, которая при сохранении не даст НИ ОДНОГО грамма списания —
-        # либо обе колонки пустые, либо текст не распознан как число (опечатка
-        # вроде "40г") — раньше сохранялась молча и просто не участвовала в
-        # авто-списании, без единого сигнала об этом (найдено advisor'ом 29.07).
-        sadik_bad = bool(sadik_str) and sadik_val is None
+        # пустая или текст не распознан как число (опечатка вроде "40г") —
+        # раньше сохранялась молча и просто не участвовала в авто-списании,
+        # без единого сигнала об этом (найдено advisor'ом 29.07).
         shkola_bad = bool(shkola_str) and shkola_val is None
-        if sadik_bad or shkola_bad:
-            bad_rows.append(f'«{raw_name}» — не распознано число ({sadik_str or shkola_str})')
-        elif sadik_val is None and shkola_val is None:
-            bad_rows.append(f'«{raw_name}» — не указан вес ни для садика, ни для школы')
+        if shkola_bad:
+            bad_rows.append(f'«{raw_name}» — не распознано число ({shkola_str})')
+        elif shkola_val is None:
+            bad_rows.append(f'«{raw_name}» — не указан вес школьной порции')
         elif row["product_id"] is None:
             # Строка без связи со складом раньше сохранялась молча и просто
             # выпадала из авто-списания — тот же класс «тихого нуля», что и
@@ -415,20 +418,23 @@ def dish_save(
         ingredients = (
             db.query(DishIngredient).filter(DishIngredient.dish_id == dish_id).order_by(DishIngredient.id).all()
         )
+        sadik_portion_percent = float(ctx["current_org"].sadik_portion_percent) if ctx["current_org"] else 80.0
         ctx.update({
             "dish": dish, "ingredients": ingredients, "return_date": return_date,
             "error": "Не сохранено — проверь строки: " + "; ".join(bad_rows),
             "form_rows": parsed_rows,
             "units": UNITS, "categories": CATEGORIES, "expense_categories": _leaf_expense_categories(db),
-        "units_need_grams": sorted(UNITS_NEED_GRAMS_PER_UNIT),
+            "units_need_grams": sorted(UNITS_NEED_GRAMS_PER_UNIT),
+            "sadik_portion_percent": sadik_portion_percent,
         })
         return templates.TemplateResponse("menu/dish_detail.html", ctx)
 
+    dish.same_portion_for_sadik = bool(same_portion_for_sadik)
     db.query(DishIngredient).filter(DishIngredient.dish_id == dish_id).delete(synchronize_session=False)
     for row in parsed_rows:
         db.add(DishIngredient(
             dish_id=dish_id, product_id=row["product_id"], raw_name=row["name"],
-            qty_sadik_g=row["sadik"], qty_shkola_g=row["shkola"],
+            qty_shkola_g=row["shkola"],
         ))
     db.commit()
 

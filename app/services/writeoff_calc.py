@@ -2,7 +2,7 @@ from datetime import date as date_type
 
 from sqlalchemy.orm import Session
 
-from app.models import Attendance, DishIngredient, Enrollment, Group, MenuEntry, Product, Student, WriteOff
+from app.models import Attendance, Dish, DishIngredient, Enrollment, Group, MenuEntry, Organization, Product, Student, WriteOff
 
 AUTO_REASON = "авто-расчёт по меню и явке"
 
@@ -71,12 +71,26 @@ def compute_day_draft(db: Session, org_id: int, target_date: date_type) -> dict:
         {"id": did, "name": name} for did, name in dishes_without_recipe.items()
     ]
 
+    # Садик-граммовка больше не хранится (05.08) — считается на лету от
+    # школьной порции, коэффициент объекта (одна кухня на школу и Сокулук,
+    # у каждого объекта садика — свой процент, живой расчёт вместо снимка,
+    # тот же урок, что и с legacy_tariff в billing.py). Штучная выпечка
+    # (Dish.same_portion_for_sadik) — порция садику равна школьной, 100%.
+    org = db.get(Organization, org_id)
+    sadik_ratio_default = float(org.sadik_portion_percent) / 100 if org else 0.8
+    same_portion_by_dish = {
+        d.id: d.same_portion_for_sadik
+        for d in db.query(Dish).filter(Dish.id.in_(dish_ids_with_recipe)).all()
+    } if dish_ids_with_recipe else {}
+
     # агрегируем граммы по товару (None = сырьё ещё не привязано к Product)
     agg: dict = {}
     for ing in ing_rows:
+        shkola_g = float(ing.qty_shkola_g or 0)
+        sadik_ratio = 1.0 if same_portion_by_dish.get(ing.dish_id) else sadik_ratio_default
         total_g = (
-            float(ing.qty_sadik_g or 0) * headcount.get("kindergarten_group", 0)
-            + float(ing.qty_shkola_g or 0) * headcount.get("class", 0)
+            shkola_g * sadik_ratio * headcount.get("kindergarten_group", 0)
+            + shkola_g * headcount.get("class", 0)
         )
         if total_g <= 0:
             continue

@@ -115,6 +115,33 @@
     </form>
     {% endif %}
   </div>
+
+  <div style="border-top:1px solid var(--border);margin-top:16px;padding-top:14px">
+    <div style="font-size:13px;color:var(--text-muted);margin-bottom:8px">
+      Порция садика — % от школьной. Кухня общая, рецепт хранит только
+      граммовку школы, садик считается от неё на лету при списании
+    </div>
+    <div id="price-view-sadik-pct" style="display:flex;align-items:center;gap:8px">
+      <span>{{ "{:g}".format(current_org.sadik_portion_percent) }}%</span>
+      {% if can_edit_price %}
+      <button type="button" class="btn btn-secondary" style="padding:3px 8px;font-size:11px"
+              onclick="toggleBlock('sadik-pct', true)">Изменить</button>
+      {% endif %}
+    </div>
+    {% if can_edit_price %}
+    <form method="post" action="/services/sadik-portion-percent" id="price-form-sadik-pct"
+          style="display:none;align-items:center;gap:6px;margin-top:8px"
+          onsubmit="return confirm('Сохранить новый процент для «{{ current_org.name }}»?')">
+      <input type="hidden" name="org_id" value="{{ current_org_id or '' }}">
+      <input type="number" step="0.01" min="0" max="100" name="percent"
+             value="{{ current_org.sadik_portion_percent|float }}" class="form-control"
+             style="width:100px;padding:4px 8px;font-size:13px">
+      <button type="submit" class="btn btn-primary" style="padding:4px 10px;font-size:12px">Сохранить</button>
+      <button type="button" class="btn btn-secondary" style="padding:4px 10px;font-size:12px"
+              onclick="toggleBlock('sadik-pct', false)">Отмена</button>
+    </form>
+    {% endif %}
+  </div>
   {% endif %}
 
   {% if current_org.legacy_tariff_until %}
