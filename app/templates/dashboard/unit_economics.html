@@ -1,0 +1,65 @@
+{% extends "base.html" %}
+{% set active_page = "dashboard" %}
+
+{% block title %}Юнит-экономика — Жемчужина{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <h1>Юнит-экономика</h1>
+</div>
+
+<div class="card" style="max-width:720px;margin-bottom:20px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
+  <div style="font-size:14px;color:var(--text-muted)">Итого расходов за {{ month_label }} (только посчитанные блоки ниже)</div>
+  <div style="font-size:22px;font-weight:700">{{ "{:,.0f}".format(total_cost) }} сом</div>
+</div>
+
+<div class="card" style="max-width:720px;margin-bottom:20px">
+  <h3 style="font-size:15px;margin-bottom:14px">Расходы по блокам</h3>
+  <table class="table">
+    <thead>
+      <tr>
+        <th>Блок</th>
+        <th style="text-align:right">За {{ month_label }}</th>
+        <th>Статус</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for b in blocks %}
+      <tr>
+        <td data-label="Блок" style="font-weight:500">{{ b.title }}</td>
+        <td data-label="Сумма" style="text-align:right;font-weight:600">{{ "{:,.0f}".format(b.value) }} с</td>
+        <td data-label="Статус">
+          {% if b.ready %}
+          <span class="badge badge-confirmed">✅ посчитано</span>
+          {% else %}
+          <span class="badge badge-pending" title="{{ b.note }}">⚠️ не хватает данных</span>
+          {% endif %}
+        </td>
+      </tr>
+      {% if b.note %}
+      <tr>
+        <td colspan="3" style="color:var(--text-muted);font-size:13px;padding-top:0">{{ b.note }}</td>
+      </tr>
+      {% endif %}
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+<div class="card" style="max-width:720px">
+  <h3 style="font-size:15px;margin-bottom:14px">Оплаты за {{ month_label }}</h3>
+  <div style="font-size:13px;color:var(--text-muted);margin-bottom:10px">
+    Механизм начисления и фиксации оплаты полностью работает — цифры ниже отражают факт, не готовность системы.
+  </div>
+  <div class="split-row">
+    <div>
+      <div style="font-size:13px;color:var(--text-muted)">Начислено</div>
+      <div style="font-size:18px;font-weight:600">{{ "{:,.0f}".format(billing.charged) }} с</div>
+    </div>
+    <div>
+      <div style="font-size:13px;color:var(--text-muted)">Оплачено</div>
+      <div style="font-size:18px;font-weight:600">{{ "{:,.0f}".format(billing.paid) }} с</div>
+    </div>
+  </div>
+</div>
+{% endblock %}
