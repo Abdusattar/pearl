@@ -374,6 +374,22 @@ document.querySelector('.org-select')?.addEventListener('change', function() {
   window.location = url.toString();
 });
 
+// Однократный сабмит — блокирует кнопку сразу по клику, чтобы повторный/
+// нетерпеливый клик на медленной странице не отправил форму несколько раз
+// (найдено 05.08 — так задвоились/затроились карточки детей). Сброс не
+// нужен: любой POST здесь либо редиректит, либо перерисовывает страницу с
+// нуля — оба случая дают свежий DOM с разблокированной кнопкой. Не покрывает
+// формы, отправляемые через fetch() (у них уже есть свои защиты). Через
+// e.submitter — не первая попавшаяся кнопка формы (бывают несколько, напр.
+// «Провести»/«Отклонить» на confirm.html).
+document.addEventListener('submit', function(e) {
+  if (e.submitter) {
+    e.submitter.disabled = true;
+  } else {
+    e.target.querySelectorAll('button[type="submit"], input[type="submit"]').forEach(b => { b.disabled = true; });
+  }
+});
+
 // MODAL — общий паттерн для всего проекта: <div class="modal-overlay" id="..." hidden>
 // с кнопкой-триггером onclick="openModal('id')" и закрытием onclick="closeModal('id')".
 // Esc и клик по оверлею (не по самой модалке) тоже закрывают.

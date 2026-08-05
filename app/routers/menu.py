@@ -13,6 +13,7 @@ from app.dependencies import get_current_user, get_accessible_orgs, resolve_org
 from app.models import Dish, DishIngredient, DishMergeDismissed, ExpenseCategory, MenuEntry, WriteOff
 from app.services.dishes import get_or_create_dish, find_duplicate_candidates
 from app.services.products import UNITS, CATEGORIES, UNITS_NEED_GRAMS_PER_UNIT
+from app.services.dedup_guard import acquire_submission_lock
 
 router = APIRouter(prefix="/menu", tags=["menu"])
 templates = Jinja2Templates(directory=str(Path(__file__).parent.parent / "templates"))
@@ -287,6 +288,11 @@ def dishes_new(request: Request, org_id: str | None = Form(None), name: str = Fo
     ctx = _base_ctx(request, db, org_id)
     if ctx is None:
         return RedirectResponse("/login", status_code=302)
+    # Защита от повторного клика (05.08, тот же приём, что и в students.add_student):
+    # каталог блюд глобальный, не org-scoped — лочим просто по имени. Внутри лока
+    # get_or_create_dish() сам находит только что закоммиченное блюдо вместо
+    # создания дубля, так что отдельная проверка "недавнего дубля" здесь не нужна.
+    acquire_submission_lock(db, "dish_new", name.strip().lower())
     dish = get_or_create_dish(db, name)
     db.commit()
     return RedirectResponse(f"/menu/dishes/{dish.id}?org_id={ctx['current_org_id'] or ''}", status_code=302)

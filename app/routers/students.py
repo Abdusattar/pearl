@@ -4,6 +4,7 @@ from pathlib import Path
 from fastapi import APIRouter, Depends, Form, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
+from sqlalchemy import func, text
 from sqlalchemy.orm import Session
 
 from app.database import get_db
@@ -12,6 +13,7 @@ from app.services.students import (
     get_next_free_pin, update_student, compose_name, archive_stale_students,
     set_first_enrollment_start,
 )
+from app.services.dedup_guard import acquire_submission_lock
 from app.services.billing import (
     generate_monthly_charges, get_balance, get_ledger, set_student_services, get_tuition_service,
     continuous_since_from_enrollments, tuition_base_price,
@@ -376,6 +378,27 @@ def add_student(
             "active_page": "students",
             "error": "Заполните фамилию и имя ребёнка",
         })
+
+    # Защита от повторного клика «Добавить» (найдено 05.08 — Бопоева
+    # Акмаанай задвоилась/затроилась тремя отдельными сабмитами за 3
+    # секунды, реальный платёж банка ушёл на PIN дубля). Лок сериализует
+    # конкурентные попытки с тем же ФИО в этом объекте; внутри лока —
+    # проверка «не заводили ли уже такого ребёнка за последние 10 секунд».
+    fingerprint = f"{first_name.lower()}|{last_name.lower()}"
+    acquire_submission_lock(db, "student_add", f"{org_id_selected}:{fingerprint}")
+    recent_dup = (
+        db.query(Student)
+        .filter(
+            Student.organization_id == org_id_selected,
+            func.lower(Student.first_name) == first_name.lower(),
+            func.lower(Student.last_name) == last_name.lower(),
+            Student.created_at > func.now() - text("interval '10 seconds'"),
+        )
+        .order_by(Student.created_at)
+        .first()
+    )
+    if recent_dup:
+        return RedirectResponse(f"/students/{recent_dup.id}/edit", status_code=303)
 
     pin = get_next_free_pin(db)
 
