@@ -128,6 +128,7 @@ def menu_form(request: Request, org_id: str | None = None, start: str | None = N
         for mon in strip_mondays
     ]
 
+    copied = request.query_params.get("copied")
     ctx.update({
         "day_cards": day_cards, "meal_types": MEAL_TYPES,
         "start_date": start_date.isoformat(),
@@ -138,8 +139,75 @@ def menu_form(request: Request, org_id: str | None = None, start: str | None = N
             f"{WEEKDAY_NAMES[warning_date.weekday()]}, {warning_date.strftime('%d.%m')}"
         ) if warning_date else None,
         "pending_duplicates": pending_duplicates,
+        "copied": int(copied) if copied and copied.isdigit() else None,
     })
     return templates.TemplateResponse("menu/form.html", ctx)
+
+
+@router.post("/copy-week", response_class=HTMLResponse)
+def copy_week(request: Request, org_id: str | None = Form(None), start: str = Form(...),
+              db: Session = Depends(get_db)):
+    """Копирует блюда с предыдущей недели в текущую — только в дни, где на
+    этой неделе меню ещё пусто (05.08, по прямому запросу — Махабат каждую
+    неделю вручную вбивает почти то же самое заново). Уже заполненные дни
+    текущей недели не трогает — дозаполнение, не перезапись. Копируются
+    только dish_id, у которых и так уже был рецепт на момент ввода в
+    прошлую неделю — та же гарантия, что и в menu_day_save, ничего
+    дополнительно проверять не нужно."""
+    ctx = _base_ctx(request, db, org_id)
+    if ctx is None or ctx["current_org"] is None:
+        return RedirectResponse("/login", status_code=302)
+
+    org_id_val = ctx["current_org"].id
+    target_start = date_type.fromisoformat(start)
+    source_start = target_start - timedelta(days=7)
+    target_days = [target_start + timedelta(days=i) for i in range(5)]
+    source_days = [source_start + timedelta(days=i) for i in range(5)]
+
+    # Один лок на всю операцию (по объекту + понедельнику целевой недели) —
+    # сериализует повторный клик так же, как pg_advisory_xact_lock в
+    # menu_day_save сериализует правку одного дня.
+    week_key = int(target_start.strftime("%Y%m%d"))
+    db.execute(
+        text("SELECT pg_advisory_xact_lock(:org_id, :week_key)"),
+        {"org_id": org_id_val, "week_key": week_key},
+    )
+
+    filled_target = {
+        row[0] for row in db.query(MenuEntry.date).filter(
+            MenuEntry.organization_id == org_id_val, MenuEntry.date.in_(target_days),
+        ).distinct()
+    }
+    days_to_fill = [d for d in target_days if d not in filled_target]
+
+    copied = 0
+    if days_to_fill:
+        source_entries = (
+            db.query(MenuEntry)
+            .filter(MenuEntry.organization_id == org_id_val, MenuEntry.date.in_(source_days))
+            .all()
+        )
+        by_source_date: dict = {}
+        for e in source_entries:
+            by_source_date.setdefault(e.date, []).append(e)
+
+        for target_date in days_to_fill:
+            offset = (target_date - target_start).days
+            source_date = source_start + timedelta(days=offset)
+            rows = by_source_date.get(source_date, [])
+            if not rows:
+                continue
+            for e in rows:
+                db.add(MenuEntry(
+                    organization_id=org_id_val, date=target_date, meal_type=e.meal_type,
+                    dish_id=e.dish_id, created_by=ctx["current_user"].id,
+                ))
+            copied += 1
+        db.commit()
+
+    return RedirectResponse(
+        f"/menu/?org_id={org_id_val}&start={start}&copied={copied}", status_code=303
+    )
 
 
 @router.post("/day", response_class=HTMLResponse)

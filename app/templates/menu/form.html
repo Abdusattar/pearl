@@ -26,6 +26,16 @@
 </div>
 {% endif %}
 
+{% if copied is not none %}
+<div class="alert {{ 'alert-warning' if copied == 0 else 'alert-success' }}">
+  {% if copied == 0 %}
+  Копировать нечего — прошлая неделя пуста или в этой уже везде что-то стоит.
+  {% else %}
+  Скопировано {{ copied }} {{ 'день' if copied == 1 else 'дня' if copied < 5 else 'дней' }} с прошлой недели — проверь и поправь, что нужно.
+  {% endif %}
+</div>
+{% endif %}
+
 <style>
   .week-nav { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
   .week-nav .btn { min-height: 40px; padding: 8px 14px; }
@@ -53,6 +63,12 @@
   <div class="period">{{ day_cards[0].label }} — {{ day_cards[-1].label }}</div>
   <a href="/menu/?org_id={{ current_org_id }}&start={{ next_start }}" class="btn btn-secondary">След →</a>
 </div>
+
+<form method="post" action="/menu/copy-week" style="margin-bottom:16px">
+  <input type="hidden" name="org_id" value="{{ current_org_id }}">
+  <input type="hidden" name="start" value="{{ start_date }}">
+  <button type="submit" class="btn btn-secondary" style="font-size:12px">↻ Повторить неделю</button>
+</form>
 
 <div class="week-strip">
   {% for w in week_strip %}
