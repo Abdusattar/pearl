@@ -46,6 +46,11 @@
       <label>Описание</label>
       <div>{{ tx.description or "—" }}</div>
     </div>
+    {% if tx.paid_directly %}
+    <div class="form-group" style="margin-top:10px;margin-bottom:0">
+      <span class="badge badge-pending">оплачено напрямую, не из подотчёта</span>
+    </div>
+    {% endif %}
 
     {% if items %}
     <div class="form-group" style="margin-top:14px;margin-bottom:0">
@@ -145,6 +150,16 @@
     <div class="form-group">
       <label>Описание</label>
       <input type="text" name="description" class="form-control" value="{{ tx.description }}">
+    </div>
+
+    <div class="form-group" style="border:1.5px dashed var(--primary);border-radius:10px;padding:12px 14px;background:#eef2ff">
+      <label style="display:flex;align-items:center;gap:8px;cursor:pointer;margin-bottom:0">
+        <input type="checkbox" name="paid_directly" value="1" {% if tx.paid_directly %}checked{% endif %} style="width:16px;height:16px">
+        <span>Оплачено напрямую со счёта (без снятия)</span>
+      </label>
+      <div style="font-size:11px;color:var(--text-muted);margin-top:6px">
+        По умолчанию не отмечена — расход сам спишется с подотчёта.
+      </div>
     </div>
 
     {% if items %}

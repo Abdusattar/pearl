@@ -1,0 +1,266 @@
+{% extends "base.html" %}
+{% set active_page = "podotchet" %}
+
+{% block title %}Подотчёт — Жемчужина{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <h1>Подотчёт</h1>
+  <div style="display:flex;gap:8px">
+    <button class="btn btn-secondary" onclick="document.getElementById('reconcile-card').scrollIntoView({behavior:'smooth'})">Сверить остаток</button>
+    <button class="btn btn-primary" onclick="openModal('fund-modal')">+ Пополнить подотчёт</button>
+  </div>
+</div>
+
+{% if request.query_params.get('error') %}
+<div class="alert alert-error">{{ request.query_params.get('error') }}</div>
+{% endif %}
+
+<div class="stat-grid">
+  <div class="stat-box">
+    <div class="stat-label">Расчётный остаток сейчас</div>
+    <div class="stat-value">{{ "{:,.2f}".format(expected.expected) }} с</div>
+  </div>
+  <div class="stat-box">
+    <div class="stat-label">Последняя сверка</div>
+    {% if expected.since %}
+    <div class="stat-value">{{ "{:,.2f}".format(expected.base) }} с</div>
+    <div class="form-hint" style="margin-top:2px">на {{ expected.since.strftime("%d.%m.%Y") }}</div>
+    {% else %}
+    <div class="stat-value" style="color:var(--text-muted)">—</div>
+    <div class="form-hint" style="margin-top:2px">ещё не вводилась</div>
+    {% endif %}
+  </div>
+  <div class="stat-box">
+    <div class="stat-label">На руках всего</div>
+    <div class="stat-value">{{ "{:,.2f}".format(person_cards|sum(attribute='amount') if person_cards else 0) }} с</div>
+  </div>
+  <div class="stat-box">
+    <div class="stat-label">Статус сверки</div>
+    {% if days_since_snapshot is none %}
+    <span class="badge badge-pending">ещё ни разу не сверяли</span>
+    {% elif days_since_snapshot > 14 %}
+    <span class="badge badge-pending">давно не сверяли — {{ days_since_snapshot }} дн.</span>
+    {% else %}
+    <span class="badge badge-confirmed">сверено недавно</span>
+    {% endif %}
+  </div>
+</div>
+
+<div class="flow-line">
+  <span>Последняя сверка <strong>{{ "{:,.0f}".format(expected.base) }}</strong></span>
+  <span class="flow-op">+</span>
+  <span>приход <strong style="color:var(--success)">{{ "{:,.0f}".format(expected.income) }}</strong></span>
+  <span class="flow-op">−</span>
+  <span>снятия <strong style="color:var(--danger)">{{ "{:,.0f}".format(expected.withdrawals) }}</strong></span>
+  <span class="flow-op">−</span>
+  <span>прямые расходы <strong style="color:var(--danger)">{{ "{:,.0f}".format(expected.direct) }}</strong></span>
+  <span class="flow-op">=</span>
+  <span>остаток <strong>{{ "{:,.0f}".format(expected.expected) }}</strong></span>
+</div>
+<div class="form-hint" style="margin-bottom:22px">Считается само за период с даты последней сверки. Прямые расходы — отмеченные галочкой «оплачено напрямую» на форме расхода. Наличные, собранные мимо счёта, в этот расчёт не входят.</div>
+
+{% if person_cards %}
+<div class="person-cards">
+  {% for p in person_cards %}
+  <div class="person-card">
+    <div class="name">{{ p.name }}</div>
+    <div class="amount">{{ "{:,.2f}".format(p.amount) }} с</div>
+    <span class="badge badge-pending">на руках, не отчитано</span>
+  </div>
+  {% endfor %}
+</div>
+{% else %}
+<div class="form-hint" style="margin-bottom:22px">Сейчас ни у кого на руках ничего не числится.</div>
+{% endif %}
+
+<div class="split-row" style="align-items:start;margin-bottom:22px">
+  <div class="card" style="padding:18px">
+    <div style="font-size:13px;color:var(--text-muted);margin-bottom:10px">Куда ушло{% if expected.since %} — с {{ expected.since.strftime("%d.%m.%Y") }} по сегодня{% endif %}</div>
+    {% if category_spend %}
+    <table class="table">
+      <tbody>
+        {% for c in category_spend %}
+        <tr><td>{{ c.category }}</td><td style="text-align:right" class="num">{{ "{:,.2f}".format(c.amount) }} с</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+    <div class="form-hint">Расходов за период ещё не было</div>
+    {% endif %}
+  </div>
+  <div class="card" style="background:#eef2ff;border-color:#c7d2fe;padding:14px 18px">
+    <div style="font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--primary-dark);margin-bottom:6px">Перетоки между бизнесами{% if expected.since %} — с {{ expected.since.strftime("%d.%m") }}{% endif %}</div>
+    {% if flow_rows %}
+      {% for f in flow_rows %}
+      <div style="font-size:14px;color:var(--text)">{{ f.from }} → {{ f.to }}: <strong>{{ "{:,.2f}".format(f.amount) }} с</strong></div>
+      {% endfor %}
+    {% else %}
+    <div class="form-hint" style="margin-top:0">Не было — все деньги остались внутри одного бизнеса</div>
+    {% endif %}
+    <div class="form-hint" style="margin-top:6px">Справочно — расходы одного бизнеса, оплаченные из подотчёта другого. Без формального долга/погашения.</div>
+  </div>
+</div>
+
+<div class="card" id="reconcile-card" style="max-width:640px">
+  <div style="font-size:13px;color:var(--text-muted);margin-bottom:12px">Новая сверка — ввести реальный остаток по счёту</div>
+  <form method="post" action="/podotchet/reconcile" style="display:grid;grid-template-columns:1fr 1fr auto;gap:16px;align-items:end">
+    <input type="hidden" name="organization_id" value="{{ current_org_id }}">
+    <input type="hidden" name="org_id" value="{{ current_org_id }}">
+    <div class="form-group" style="margin-bottom:0">
+      <label>Реальный остаток *</label>
+      <input class="form-control" type="text" name="balance" placeholder="0" required>
+    </div>
+    <div class="form-group" style="margin-bottom:0">
+      <label>Дата *</label>
+      <input class="form-control" type="date" name="date" value="{{ today }}" required>
+    </div>
+    <button type="submit" class="btn btn-primary" style="height:44px">Сохранить</button>
+  </form>
+  {% if snapshots %}
+  <div class="table-wrap" style="margin-top:18px">
+    <table class="table">
+      <thead><tr><th>Дата</th><th>Введено</th><th>Кто ввёл</th></tr></thead>
+      <tbody>
+        {% for s in snapshots[:5] %}
+        <tr>
+          <td data-label="Дата">{{ s.date.strftime("%d.%m.%Y") }}</td>
+          <td data-label="Введено" class="num">{{ "{:,.2f}".format(s.balance) }} с</td>
+          <td data-label="Кто ввёл">{{ users_lookup.get(s.created_by, "?") }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% endif %}
+</div>
+
+<div class="table-wrap" style="margin-top:22px">
+  <table class="table">
+    <thead>
+      <tr><th>Дата</th><th>Сумма</th><th>Источник</th><th>Кто внёс</th><th>Отчитывается</th><th>Комментарий</th><th>Статус</th></tr>
+    </thead>
+    <tbody>
+      {% for r in ledger_rows %}
+      <tr>
+        <td data-label="Дата">{{ r.date.strftime("%d.%m.%Y") }}</td>
+        <td data-label="Сумма" class="num">{{ "{:,.2f}".format(r.amount) }} с</td>
+        <td data-label="Источник">
+          {% if r.source_type == "withdrawal" %}Снятие{% else %}Наличными собрано{% endif %}
+          {% if r.source_org_name %}<div class="form-hint" style="margin-top:2px">физически из: {{ r.source_org_name }}</div>{% endif %}
+        </td>
+        <td data-label="Кто внёс">{{ r.taken_by_name }}</td>
+        <td data-label="Отчитывается">{{ r.accountable_name }}</td>
+        <td data-label="Комментарий" style="color:var(--text-muted)">{{ r.comment or "—" }}</td>
+        <td data-label="Статус">
+          {% if r.fully_reported %}
+          <span class="badge badge-confirmed">отчитано полностью</span>
+          {% else %}
+          <span class="badge badge-pending">{{ "{:,.0f}".format(r.reported) }} с отчитано из {{ "{:,.0f}".format(r.amount) }}</span>
+          {% endif %}
+        </td>
+      </tr>
+      {% else %}
+      <tr><td colspan="7" style="text-align:center;color:var(--text-muted)">Пополнений ещё не было</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+<div class="modal-overlay" id="fund-modal" hidden>
+  <div class="modal">
+    <div class="modal-header">
+      <h3>Пополнить подотчёт</h3>
+      <button type="button" class="modal-close" onclick="closeModal('fund-modal')">✕</button>
+    </div>
+    <form method="post" action="/podotchet/fund">
+      <input type="hidden" name="org_id" value="{{ current_org_id }}">
+
+      <div class="form-group">
+        <label>Источник</label>
+        <div style="display:flex;gap:8px">
+          <button type="button" class="btn btn-primary" style="flex:1;justify-content:center" id="src-withdraw-btn" onclick="setSource('withdrawal')">Снятие со счёта</button>
+          <button type="button" class="btn btn-secondary" style="flex:1;justify-content:center" id="src-cash-btn" onclick="setSource('direct_cash')">Наличными собрано</button>
+        </div>
+        <input type="hidden" name="source_type" id="source_type" value="withdrawal">
+      </div>
+
+      <div class="split-row">
+        <div class="form-group">
+          <label>Сумма *</label>
+          <input class="form-control" type="text" name="amount" placeholder="0" required data-autofocus>
+        </div>
+        <div class="form-group">
+          <label>Дата *</label>
+          <input class="form-control" type="date" name="date" value="{{ today }}" required>
+        </div>
+      </div>
+
+      <div class="form-group">
+        <label>Для какого бизнеса *</label>
+        <select class="form-control" name="organization_id" required>
+          {% for o in business_orgs %}
+          <option value="{{ o.id }}" {% if o.id == current_org_id %}selected{% endif %}>{{ o.name }}</option>
+          {% endfor %}
+        </select>
+        <div class="form-hint">Чей это подотчёт — расходы этого бизнеса будут сами списываться отсюда.</div>
+      </div>
+
+      <div class="check-row" style="padding:0 0 12px">
+        <input type="checkbox" id="cross-org" onclick="document.getElementById('cross-org-fields').style.display = this.checked ? '' : 'none'">
+        <label for="cross-org">Деньги физически из кассы другого бизнеса</label>
+      </div>
+      <div id="cross-org-fields" style="display:none" class="form-group">
+        <label>Реальный источник</label>
+        <select class="form-control" name="source_organization_id">
+          <option value="">— выбрать —</option>
+          {% for o in business_orgs %}
+          <option value="{{ o.id }}">{{ o.name }}</option>
+          {% endfor %}
+        </select>
+        <div class="form-hint">Например, зарплату Сокулука частично покрыли наличными из кассы Кожомкула. Появится в блоке «Перетоки».</div>
+      </div>
+
+      <div class="split-row">
+        <div class="form-group">
+          <label>Снял / внёс *</label>
+          <select class="form-control" name="taken_by" required>
+            {% for u in users %}
+            <option value="{{ u.id }}" {% if u.id == current_user.id %}selected{% endif %}>{{ u.name }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="form-group">
+          <label>Отчитывается *</label>
+          <select class="form-control" name="accountable_user_id" required>
+            {% for u in users %}
+            <option value="{{ u.id }}" {% if u.id == current_user.id %}selected{% endif %}>{{ u.name }}</option>
+            {% endfor %}
+          </select>
+        </div>
+      </div>
+
+      <div class="form-group" style="margin-bottom:20px">
+        <label>Комментарий</label>
+        <input class="form-control" type="text" name="comment" placeholder="Например: на продукты, часть — канцелярские товары">
+        <div class="form-hint">Необязательно — снятая сумма не обязана идти на одну статью.</div>
+      </div>
+
+      <div style="display:flex;gap:8px">
+        <button type="submit" class="btn btn-primary">Сохранить</button>
+        <button type="button" class="btn btn-secondary" onclick="closeModal('fund-modal')">Отмена</button>
+      </div>
+    </form>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+function setSource(kind) {
+  document.getElementById('source_type').value = kind;
+  document.getElementById('src-withdraw-btn').className = 'btn ' + (kind === 'withdrawal' ? 'btn-primary' : 'btn-secondary');
+  document.getElementById('src-cash-btn').className = 'btn ' + (kind === 'direct_cash' ? 'btn-primary' : 'btn-secondary');
+}
+</script>
+{% endblock %}

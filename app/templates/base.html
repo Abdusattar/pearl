@@ -157,6 +157,22 @@
   .total-item { font-size: 14px; }
   .total-item strong { font-size: 16px; }
 
+  /* STAT GRID + FLOW LINE — сводные числа и авто-раскладка формулы (Подотчёт, 25.08) */
+  .stat-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 14px; margin-bottom: 18px; }
+  .stat-box { border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px; background: var(--surface); }
+  .stat-label { font-size: 12px; color: var(--text-muted); margin-bottom: 6px; }
+  .stat-value { font-size: 22px; font-weight: var(--fw-bold); font-variant-numeric: tabular-nums; }
+  .flow-line { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; font-size: 13px; color: var(--text);
+               background: var(--bg); border: 1px solid var(--border); border-radius: 8px; padding: 10px 14px; margin-bottom: 6px; }
+  .flow-line strong { font-weight: var(--fw-semi); }
+  .flow-op { color: var(--text-muted); font-weight: var(--fw-semi); }
+
+  /* PERSON CARDS — сколько у кого на руках (Подотчёт, 25.08) */
+  .person-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 14px; margin-bottom: 22px; }
+  .person-card { border: 1px solid var(--border); border-radius: 10px; padding: 16px; background: var(--bg); }
+  .person-card .name { font-size: 13px; color: var(--text-muted); margin-bottom: 6px; }
+  .person-card .amount { font-size: 21px; font-weight: var(--fw-bold); font-variant-numeric: tabular-nums; margin-bottom: 8px; }
+
   /* SPLIT */
   .split-row { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
 
@@ -323,6 +339,7 @@
   <a href="/expenses/" class="{% if active_page == 'expenses' or active_page == 'recurring' %}active{% endif %}">Расходы</a>
   <a href="/income/" class="{% if active_page == 'income' %}active{% endif %}">Оплаты</a>
   <a href="/suppliers/" class="{% if active_page == 'suppliers' %}active{% endif %}">Поставщики</a>
+  <a href="/podotchet/" class="{% if active_page == 'podotchet' %}active{% endif %}">Подотчёт</a>
   <div class="section">Учёт</div>
   <a href="/students/" class="{% if active_page == 'students' or active_page == 'attendance' %}active{% endif %}">Дети</a>
   <a href="/services/" class="{% if active_page == 'services' %}active{% endif %}">Услуги</a>

@@ -224,6 +224,12 @@ class Transaction(Base):
     date            = Column(Date, nullable=False)
     external_txn_id = Column(String(50), unique=True)  # Optima txn_id — идемпотентность
     recurring_template_id = Column(Integer, ForeignKey("recurring_expense_templates.id"), nullable=True)
+    # Расход по умолчанию (False) списывается сам с открытого подотчёта того
+    # бизнеса (organization_id), под которым проведён — FIFO по дате, считается
+    # на лету (app/services/podotchet.py), деньги уже вычлись со счёта в момент
+    # снятия. True — оплата прошла напрямую со счёта (перевод/карта), минуя
+    # наличные подотчёта — тогда вычитается из остатка счёта отдельно (25.08).
+    paid_directly = Column(Boolean, nullable=False, default=False, server_default='false')
     # За какой месяц расход (первое число месяца) — НЕ дата фактической оплаты
     # (`date`). Нужно отдельно: расход за июль иногда проводят в начале августа
     # (решено 12.07). Заполняется только для recurring_template_id — обычные
@@ -519,6 +525,50 @@ class AuditLog(Base):
     old_data    = Column(JSONB)
     new_data    = Column(JSONB)
     created_at  = Column(DateTime, server_default=func.now())
+
+
+class CashFunding(Base):
+    """Пополнение подотчёта — деньги попадают в руки человека, из банковского счёта
+    (снятие) либо наличными напрямую (например, канцелярский сбор с детей, мимо
+    банка). Расходы автоматически списываются с открытого подотчёта того бизнеса
+    (organization_id), под которым проведены — FIFO по дате, считается на лету
+    (app/services/podotchet.py), тот же приём, что supplier_ledger.py, только пул
+    растёт пополнениями, а не платежами (25.08). organization_id = чей это
+    подотчёт (чьи расходы отсюда спишутся); source_organization_id — реальный
+    физический источник денег, только если он ДРУГОЙ бизнес (Кожомкул одолжил
+    на зарплату Сокулука и т.п.) — используется для витрины "Перетоки между
+    бизнесами", не влияет на списание."""
+    __tablename__ = "cash_fundings"
+    id                      = Column(Integer, primary_key=True)
+    organization_id         = Column(Integer, ForeignKey("organizations.id"), nullable=False)
+    source_type             = Column(String(20), nullable=False)  # withdrawal|direct_cash
+    amount                  = Column(Numeric(12, 2), nullable=False)
+    date                    = Column(Date, nullable=False)
+    taken_by                = Column(Integer, ForeignKey("users.id"), nullable=False)
+    accountable_user_id     = Column(Integer, ForeignKey("users.id"), nullable=False)
+    source_organization_id  = Column(Integer, ForeignKey("organizations.id"), nullable=True)
+    comment                 = Column(Text)
+    created_by              = Column(Integer, ForeignKey("users.id"))
+    created_at              = Column(DateTime, server_default=func.now())
+    deleted_at              = Column(DateTime)
+
+    organization        = relationship("Organization", foreign_keys=[organization_id])
+    source_organization  = relationship("Organization", foreign_keys=[source_organization_id])
+
+
+class AccountBalanceSnapshot(Base):
+    """Точка сверки — реальный остаток по банковскому счёту на дату, введён вручную
+    (25.08). Расчётный остаток на любую дату = ближайшая точка сверки ДО неё +
+    приход − снятия − прямые расходы после неё (app/services/podotchet.py). Не
+    пытается восстановить историю до первой введённой точки."""
+    __tablename__ = "account_balance_snapshots"
+    id              = Column(Integer, primary_key=True)
+    organization_id = Column(Integer, ForeignKey("organizations.id"), nullable=False)
+    date            = Column(Date, nullable=False)
+    balance         = Column(Numeric(12, 2), nullable=False)
+    comment         = Column(Text)
+    created_by      = Column(Integer, ForeignKey("users.id"))
+    created_at      = Column(DateTime, server_default=func.now())
 
 
 class OptimaLog(Base):

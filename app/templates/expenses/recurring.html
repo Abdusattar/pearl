@@ -79,6 +79,10 @@
         <span class="recur-field-label">Дата оплаты</span>
         <input type="date" name="date" value="{{ today }}" class="form-control" style="width:auto;font-size:16px">
       </div>
+      <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--text-muted);cursor:pointer;white-space:nowrap">
+        <input type="checkbox" name="paid_directly" value="1" style="width:15px;height:15px">
+        Напрямую со счёта (без снятия)
+      </label>
       <button type="submit" class="btn btn-primary">Подтвердить</button>
     </form>
     {% endif %}

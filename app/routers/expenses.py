@@ -129,7 +129,7 @@ def resolve_supplier(db: Session, supplier_id_raw: str, new_name: str, new_phone
 def create_split_transactions(
     db: Session, resolved_items: list[dict], amount: float, amount_paid_val: float | None,
     due_date_val, organization_id: int, supplier_id: int | None, description: str | None,
-    tx_date, user_id: int, receipt_id: int | None = None,
+    tx_date, user_id: int, receipt_id: int | None = None, paid_directly: bool = False,
 ) -> dict[int | None, int]:
     """Группирует позиции по expense_category_id их товара, создаёт по Transaction на
     каждую получившуюся категорию с пропорциональным делением суммы/оплаты/долга (последней
@@ -176,7 +176,7 @@ def create_split_transactions(
             organization_id=organization_id, type="expense", amount=cat_amount,
             amount_paid=cat_amount_paid, due_date=due_date_val if cat_amount_paid is not None else None,
             category_id=cat_id, supplier_id=supplier_id, description=description, date=tx_date,
-            created_by=user_id,
+            created_by=user_id, paid_directly=paid_directly,
         )
         db.add(tx)
         db.flush()
@@ -887,6 +887,7 @@ def confirm_form(
                 "amount_paid": amount_paid_for_edit,
                 "debt": ledger_debt if ledger_debt > 0 else None,
                 "due_date": due_date_val.isoformat() if due_date_val else "",
+                "paid_directly": txs[0].paid_directly,
             }
 
     creator = db.get(User, receipt.created_by) if receipt.created_by else None
@@ -942,11 +943,13 @@ def handle_confirm(
     supplier_id: str = Form(default=""),
     new_supplier_name: str = Form(default=""),
     new_supplier_phone: str = Form(default=""),
+    paid_directly: str = Form(default=None),
     db: Session = Depends(get_db),
 ):
     user = get_current_user(request, db)
     if not user:
         return RedirectResponse("/login", status_code=302)
+    paid_directly_val = bool(paid_directly)
     receipt = db.query(Receipt).get(receipt_id)
     if not receipt:
         return HTMLResponse("Квитанция не найдена", status_code=404)
@@ -1081,7 +1084,7 @@ def handle_confirm(
     tx_by_cat = create_split_transactions(
         db, resolved_items, amount, amount_paid_val, due_date_val,
         receipt.organization_id, sid, description, tx_date, user.id,
-        receipt_id=receipt.id,
+        receipt_id=receipt.id, paid_directly=paid_directly_val,
     )
     main_tx_id = next(iter(tx_by_cat.values()), None)
 
@@ -1174,6 +1177,7 @@ def handle_add(
     supplier_id: str = Form(default=""),
     new_supplier_name: str = Form(default=""),
     new_supplier_phone: str = Form(default=""),
+    paid_directly: str = Form(default=None),
     db: Session = Depends(get_db),
 ):
     user = get_current_user(request, db)
@@ -1182,6 +1186,7 @@ def handle_add(
     accessible = get_accessible_orgs(user, db)
     current_org = resolve_org(org_id, user, db)
     category_id = int(category_id) if category_id and str(category_id).isdigit() else None
+    paid_directly_val = bool(paid_directly)
     service_category_id = get_service_category_id(db)
     is_service_mode = bool(category_id) and category_id == service_category_id
 
@@ -1234,7 +1239,7 @@ def handle_add(
             organization_id=org_id, type="expense", amount=amount,
             amount_paid=amount_paid_val, due_date=due_date_val,
             category_id=category_id, supplier_id=None, description=description, date=tx_date,
-            created_by=user.id,
+            created_by=user.id, paid_directly=paid_directly_val,
         )
         db.add(tx)
         db.flush()
@@ -1268,6 +1273,7 @@ def handle_add(
     tx_by_cat = create_split_transactions(
         db, resolved_items, amount, amount_paid_val, due_date_val,
         org_id, sid, description, tx_date, user.id, receipt_id=receipt_id,
+        paid_directly=paid_directly_val,
     )
     # Пока принудительно включено, чекбокс на форме нельзя снять (решено 15.07) —
     # как только появится реальный выбор, читать add_to_warehouse из Form.
@@ -1326,6 +1332,7 @@ def recurring_post(
     date_: str = Form(None, alias="date"),
     description: str = Form(None),
     month: str = Form(...),
+    paid_directly: str = Form(default=None),
     db: Session = Depends(get_db),
 ):
     user = get_current_user(request, db)
@@ -1352,6 +1359,7 @@ def recurring_post(
         organization_id=tmpl.organization_id, type="expense", amount=amount,
         category_id=tmpl.category_id, description=description or tmpl.name,
         date=tx_date, period=date.fromisoformat(month), recurring_template_id=tmpl.id, created_by=user.id,
+        paid_directly=bool(paid_directly),
     )
     db.add(tx)
     db.flush()
@@ -1437,6 +1445,7 @@ def edit_tx_form(tx_id: int, request: Request, org_id: int | None = None, db: Se
             "description": tx.description or "",
             "org_id": tx.organization_id,
             "org_name": db.query(Organization).get(tx.organization_id).name,
+            "paid_directly": tx.paid_directly,
         },
         "items": items,
         "categories": get_categories(db),
@@ -1456,6 +1465,7 @@ def handle_edit_tx(
     category_id: str | None = Form(None),
     description: str = Form(None),
     date_: str = Form(None, alias="date"),
+    paid_directly: str = Form(default=None),
     db: Session = Depends(get_db),
 ):
     user = get_current_user(request, db)
@@ -1492,6 +1502,7 @@ def handle_edit_tx(
     tx.category_id = int(category_id) if category_id and str(category_id).isdigit() else None
     tx.description = description
     tx.date = date.fromisoformat(date_) if date_ else tx.date
+    tx.paid_directly = bool(paid_directly)
     audit(db, "transaction", tx.id, "update", user.id, {"amount": amount})
     db.commit()
     return RedirectResponse(f"/expenses/?org_id={org_id or tx.organization_id}", status_code=303)
@@ -1575,6 +1586,7 @@ def edit_manual_form(receipt_id: int, request: Request, org_id: int | None = Non
         "edit_due_date": due_date_val.isoformat() if due_date_val else "",
         "edit_date": first_tx.date.isoformat() if first_tx.date else date.today().isoformat(),
         "edit_items": items,
+        "edit_paid_directly": first_tx.paid_directly,
     })
 
 
@@ -1597,11 +1609,13 @@ def handle_edit_manual(
     supplier_id: str = Form(default=""),
     new_supplier_name: str = Form(default=""),
     new_supplier_phone: str = Form(default=""),
+    paid_directly: str = Form(default=None),
     db: Session = Depends(get_db),
 ):
     user = get_current_user(request, db)
     if not user:
         return RedirectResponse("/login", status_code=302)
+    paid_directly_val = bool(paid_directly)
     receipt = db.query(Receipt).get(receipt_id)
     if not receipt or receipt.file_path != "manual":
         return HTMLResponse("Запись не найдена", status_code=404)
@@ -1642,6 +1656,7 @@ def handle_edit_manual(
             "edit_due_date": due_date or "",
             "edit_date": date_ or date.today().isoformat(),
             "edit_items": items,
+            "edit_paid_directly": paid_directly_val,
         })
 
     tx_date = date.fromisoformat(date_) if date_ else date.today()
@@ -1694,6 +1709,7 @@ def handle_edit_manual(
     tx_by_cat = create_split_transactions(
         db, resolved_items, amount, amount_paid_val, due_date_val,
         org_id, sid, description, tx_date, user.id, receipt_id=receipt_id,
+        paid_directly=paid_directly_val,
     )
     create_warehouse_receipts(db, resolved_items, tx_by_cat, org_id, tx_date, user.id)
     for it in resolved_items:
