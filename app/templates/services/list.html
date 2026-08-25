@@ -13,7 +13,8 @@
 {% endif %}
 
 {% set tuition = services | selectattr('is_tuition') | first %}
-{% set addons = services | rejectattr('is_tuition') | list %}
+{% set addons = services | rejectattr('is_tuition') | selectattr('is_recurring') | list %}
+{% set razovye = services | rejectattr('is_tuition') | rejectattr('is_recurring') | list %}
 
 {% if tuition %}
 <div class="card" style="max-width:560px;margin-bottom:20px">
@@ -238,6 +239,107 @@
   {% endif %}
 </div>
 
+{% if current_org %}
+<div class="card" style="max-width:680px">
+  <h3 style="font-size:15px;margin-bottom:4px">Разовые услуги</h3>
+  <div class="form-hint" style="margin-bottom:18px">Оплата не привязана к месяцу — родитель платит раз, когда удобно, в отличие от доп.услуг выше</div>
+
+  {% for s in razovye %}
+  {% set st = razovye_status.get(s.id, {}) %}
+  <div style="display:flex;align-items:center;justify-content:space-between;gap:16px;padding:14px 0;border-bottom:1px solid var(--border);flex-wrap:wrap">
+    <div>
+      <div style="font-weight:600;font-size:15px">{{ s.name }}</div>
+      <div style="color:var(--text-muted);font-size:13px;margin-top:2px">
+        {{ "{:,.0f}".format(s.price) }} с
+        {% if can_edit_price %}
+        <button type="button" class="btn btn-secondary" style="padding:3px 8px;font-size:11px;margin-left:6px" onclick="toggleBlock({{ s.id }}, true)">Изменить</button>
+        {% endif %}
+      </div>
+      {% if can_edit_price %}
+      <form method="post" action="/services/{{ s.id }}/price" id="price-form-{{ s.id }}"
+            style="display:none;flex-direction:column;gap:8px;margin-top:8px;max-width:200px"
+            onsubmit="return confirm('Сохранить новую цену для «{{ s.name }}»?')">
+        <input type="hidden" name="org_id" value="{{ current_org_id }}">
+        <input type="number" name="price" value="{{ s.price|int }}" class="form-control" style="padding:4px 8px;font-size:13px">
+        <input type="hidden" name="effective_date" value="{{ today }}">
+        <div style="display:flex;gap:6px">
+          <button type="submit" class="btn btn-primary" style="padding:4px 10px;font-size:12px">Сохранить</button>
+          <button type="button" class="btn btn-secondary" style="padding:4px 10px;font-size:12px" onclick="toggleBlock({{ s.id }}, false)">Отмена</button>
+        </div>
+      </form>
+      {% endif %}
+    </div>
+    <div style="display:flex;align-items:center;gap:18px">
+      <div style="min-width:150px">
+        <div style="font-size:13px;display:flex;justify-content:space-between;gap:8px;margin-bottom:4px">
+          <span>Оплатили за {{ st.year_label }}</span><strong>{{ st.paid_count }} из {{ st.denominator }}</strong>
+        </div>
+        <div style="height:7px;background:var(--border);border-radius:4px;overflow:hidden">
+          <div style="height:100%;background:var(--success);width:{{ (st.paid_count / st.denominator * 100) if st.denominator else 0 }}%"></div>
+        </div>
+      </div>
+      <button type="button" class="btn btn-primary" style="padding:6px 14px;font-size:13px" onclick="openPayModal({{ s.id }}, '{{ s.name }}', {{ s.price|int }})">Отметить оплату</button>
+    </div>
+  </div>
+  {% else %}
+  <div style="text-align:center;padding:24px;color:var(--text-muted)">Разовых услуг пока нет</div>
+  {% endfor %}
+
+  <form method="post" action="/services/" style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;margin-top:18px;padding-top:16px;border-top:1px dashed var(--border)">
+    <input type="hidden" name="org_id" value="{{ current_org_id }}">
+    <input type="hidden" name="is_recurring" value="false">
+    <div class="form-group" style="margin-bottom:0">
+      <label>Название *</label>
+      <input type="text" name="name" class="form-control" required placeholder="Например: Учебники">
+    </div>
+    <div class="form-group" style="margin-bottom:0">
+      <label>Сумма с ребёнка *</label>
+      <input type="number" name="price" class="form-control" required placeholder="0">
+    </div>
+    <button type="submit" class="btn btn-secondary">+ Добавить разовую услугу</button>
+  </form>
+</div>
+
+<div class="modal-overlay" id="pay-modal" hidden>
+  <div class="modal">
+    <div class="modal-header">
+      <h3 id="pay-modal-title">Отметить оплату</h3>
+      <button type="button" class="modal-close" onclick="closeModal('pay-modal')">✕</button>
+    </div>
+    <form method="post" id="pay-modal-form">
+      <input type="hidden" name="org_id" value="{{ current_org_id }}">
+      <div class="form-group">
+        <label>Ребёнок *</label>
+        <select class="form-control" name="student_id" required>
+          <option value="">— выбрать —</option>
+          {% for st in active_students %}
+          <option value="{{ st.id }}">{{ st.name }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="split-row">
+        <div class="form-group">
+          <label>Сумма *</label>
+          <input class="form-control" type="text" name="amount" id="pay-modal-amount" required>
+        </div>
+        <div class="form-group">
+          <label>Дата *</label>
+          <input class="form-control" type="date" name="date" value="{{ today }}" min="{{ podotchet_start_date }}" required>
+        </div>
+      </div>
+      <div class="form-group" style="margin-bottom:20px">
+        <label>Комментарий</label>
+        <input class="form-control" type="text" name="comment" placeholder="Необязательно">
+      </div>
+      <div style="display:flex;gap:8px">
+        <button type="submit" class="btn btn-primary">✓ Оплачено наличными</button>
+        <button type="button" class="btn btn-secondary" onclick="closeModal('pay-modal')">Отмена</button>
+      </div>
+    </form>
+  </div>
+</div>
+{% endif %}
+
 <div class="modal-overlay" id="price-history-modal-overlay" hidden>
   <div class="modal" role="dialog" aria-modal="true" aria-labelledby="price-history-title">
     <div class="modal-header">
@@ -286,6 +388,13 @@ document.querySelectorAll('.price-history-btn').forEach(btn => {
 function toggleBlock(id, editing) {
   document.getElementById('price-view-' + id).style.display = editing ? 'none' : 'flex';
   document.getElementById('price-form-' + id).style.display = editing ? 'flex' : 'none';
+}
+
+function openPayModal(serviceId, serviceName, price) {
+  document.getElementById('pay-modal-title').textContent = 'Отметить оплату — ' + serviceName;
+  document.getElementById('pay-modal-form').action = '/services/' + serviceId + '/pay';
+  document.getElementById('pay-modal-amount').value = price;
+  openModal('pay-modal');
 }
 
 document.querySelectorAll('form[data-is-tuition="true"]').forEach(form => {

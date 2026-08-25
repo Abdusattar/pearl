@@ -360,6 +360,10 @@
   <div class="section">Интеграции</div>
   <a href="/optima/log" class="{% if active_page == 'optima_log' %}active{% endif %}">Optima — лог</a>
   {% endif %}
+  {% if current_user.role in ("owner", "founder", "staff", "manager") %}
+  <div class="section">Система</div>
+  <a href="/settings/" class="{% if active_page == 'settings' %}active{% endif %}">Настройки</a>
+  {% endif %}
 </aside>
 
 <main class="main">

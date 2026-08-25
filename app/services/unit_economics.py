@@ -180,7 +180,8 @@ def monthly_billing_summary(db: Session, organization_id: int, m_start: date_typ
     charged = (
         db.query(func.sum(Charge.amount))
         .join(Student, Student.id == Charge.student_id)
-        .filter(Student.organization_id == organization_id, Charge.date >= m_start, Charge.date <= m_end)
+        .filter(Student.organization_id == organization_id, Charge.date >= m_start, Charge.date <= m_end,
+                Charge.deleted_at.is_(None))
         .scalar()
     ) or Decimal(0)
     paid = (

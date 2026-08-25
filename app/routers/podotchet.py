@@ -1,5 +1,6 @@
 from datetime import date, datetime
 from pathlib import Path
+from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, Form, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
@@ -251,8 +252,15 @@ def delete_funding(
     if redirect:
         return redirect
     redirect_url = f"/podotchet/?org_id={org_id}" if org_id else "/podotchet/"
+    err_sep = "&" if org_id else "?"
 
     funding = db.query(CashFunding).filter(CashFunding.id == funding_id, CashFunding.deleted_at.is_(None)).first()
+    if funding and funding.source_transaction_id is not None:
+        # Создана автоматически оплатой разовой услуги (25.08) — удалить
+        # только отсюда нельзя, доход в балансе ребёнка останется висеть.
+        # Откат — на странице «Услуги», там же, где отмечали оплату.
+        msg = "Эта запись создана оплатой услуги — удалите её на странице «Услуги»"
+        return RedirectResponse(f"{redirect_url}{err_sep}error={quote(msg)}", status_code=303)
     if funding:
         funding.deleted_at = func.now()
         db.commit()

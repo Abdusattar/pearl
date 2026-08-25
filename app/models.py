@@ -37,6 +37,15 @@ class Organization(Base):
     # что и с legacy_tariff выше — снимок дрейфует, живой расчёт нет). У каждого
     # объекта садика — своя настройка (Кожомкул может отличаться от Сокулука).
     sadik_portion_percent = Column(Numeric(5, 2), nullable=False, default=80, server_default='80')
+    # Кто физически принимает наличные за разовые услуги (канцелярия и т.п.) —
+    # настройка объекта, не роль в коде и не текущий залогиненный пользователь
+    # (25.08): в жизни деньги всегда попадают одному конкретному человеку
+    # (кассиру), даже если отметку в системе делает кто-то другой (например,
+    # директор). NULL — получателем становится тот, кто нажал кнопку (новый
+    # объект без назначенного кассира работает из коробки, без миграции данных).
+    # См. app/services/podotchet.py — тот же человек становится подотчётным
+    # за эту сумму (CashFunding.accountable_user_id).
+    cash_recipient_user_id = Column(Integer, ForeignKey("users.id"))
     created_at = Column(DateTime, server_default=func.now())
 
     children  = relationship("Organization", foreign_keys=[parent_id],
@@ -235,6 +244,13 @@ class Transaction(Base):
     # (решено 12.07). Заполняется только для recurring_template_id — обычные
     # транзакции NULL, месяц для них не отслеживается отдельно от date.
     period = Column(Date, nullable=True)
+    # Только для оплат разовых услуг (25.08, Service.is_recurring=False) — какая
+    # услуга оплачена (нужно отдельно от description для живого счётчика "N из
+    # M оплатили") и какое начисление эта оплата гасит (для связанного удаления
+    # — см. POST /services/payments/{id}/delete). NULL для тюнинга через Optima
+    # и всех обычных ручных доходов — их этот механизм не касается.
+    service_id      = Column(Integer, ForeignKey("services.id"), nullable=True)
+    charge_id       = Column(Integer, ForeignKey("charges.id"), nullable=True)
     created_by      = Column(Integer, ForeignKey("users.id"))
     created_at      = Column(DateTime, server_default=func.now())
     updated_at      = Column(DateTime, server_default=func.now(), onupdate=func.now())
@@ -470,6 +486,12 @@ class Service(Base):
     name            = Column(String(100), nullable=False)
     price           = Column(Numeric(10, 2), nullable=False)
     is_tuition      = Column(Boolean, nullable=False, default=False, server_default='false')
+    # False — разовая услуга (канцелярия и т.п., 25.08): НЕ подключается через
+    # StudentService/чекбокс, НЕ начисляется generate_monthly_charges каждый
+    # месяц — оплата отмечается вручную (POST /services/{id}/pay), сразу
+    # начислением и оплатой в одном действии. price для такой услуги — не
+    # "в месяц", а разовая сумма с ребёнка.
+    is_recurring    = Column(Boolean, nullable=False, default=True, server_default='true')
     created_at      = Column(DateTime, server_default=func.now())
     deleted_at      = Column(DateTime)
 
@@ -513,6 +535,10 @@ class Charge(Base):
     description = Column(Text)
     date        = Column(Date, nullable=False)
     created_at  = Column(DateTime, server_default=func.now())
+    # Только для разовых услуг (25.08) — начисление и оплата создаются одним
+    # действием (POST /services/{id}/pay), см. Transaction.charge_id. NULL для
+    # всех обычных начислений (generate_monthly_charges), не трогаем их.
+    deleted_at  = Column(DateTime)
 
 
 class AuditLog(Base):
@@ -547,6 +573,12 @@ class CashFunding(Base):
     taken_by                = Column(Integer, ForeignKey("users.id"), nullable=False)
     accountable_user_id     = Column(Integer, ForeignKey("users.id"), nullable=False)
     source_organization_id  = Column(Integer, ForeignKey("organizations.id"), nullable=True)
+    # Заполнено только когда запись создана автоматически оплатой разовой
+    # услуги (25.08, POST /services/{id}/pay), не человеком через /podotchet/.
+    # Отмечает эту запись как несамостоятельную: удалить её можно только вместе
+    # с оплатой на странице «Услуги» (иначе доход останется, а деньги из
+    # подотчёта исчезнут) — см. защиту в POST /podotchet/fund/{id}/delete.
+    source_transaction_id   = Column(Integer, ForeignKey("transactions.id"), nullable=True)
     comment                 = Column(Text)
     created_by              = Column(Integer, ForeignKey("users.id"))
     created_at              = Column(DateTime, server_default=func.now())

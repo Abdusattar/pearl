@@ -165,7 +165,7 @@ def generate_monthly_charges(db: Session) -> int:
 def get_balance(db: Session, student_id: int) -> float:
     """Долг (>0) или переплата (<0) ребёнка: начисления минус оплаты."""
     charged = db.query(func.coalesce(func.sum(Charge.amount), 0)).filter(
-        Charge.student_id == student_id
+        Charge.student_id == student_id, Charge.deleted_at.is_(None),
     ).scalar()
     paid = db.query(func.coalesce(func.sum(Transaction.amount), 0)).filter(
         Transaction.student_id == student_id, Transaction.type == "income",
@@ -180,7 +180,7 @@ def get_ledger(db: Session, student_id: int) -> list[dict]:
     и то, и то вместе, а не только итоговую цифру баланса."""
     charges = (
         db.query(Charge)
-        .filter(Charge.student_id == student_id)
+        .filter(Charge.student_id == student_id, Charge.deleted_at.is_(None))
         .all()
     )
     payments = (
@@ -214,7 +214,7 @@ def get_balances(db: Session, student_ids: list[int]) -> dict[int, float]:
         return {}
     charges = dict(
         db.query(Charge.student_id, func.coalesce(func.sum(Charge.amount), 0))
-        .filter(Charge.student_id.in_(student_ids))
+        .filter(Charge.student_id.in_(student_ids), Charge.deleted_at.is_(None))
         .group_by(Charge.student_id)
         .all()
     )

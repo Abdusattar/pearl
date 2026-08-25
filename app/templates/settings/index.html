@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+{% set active_page = "settings" %}
+
+{% block title %}Настройки — Жемчужина{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <h1>Настройки</h1>
+</div>
+
+<div class="card" style="max-width:480px">
+  <h3 style="font-size:15px;margin-bottom:4px">Приём наличных</h3>
+  <div class="form-hint" style="margin-bottom:16px">Кто физически принимает наличные за разовые услуги (канцелярия и т.п.) — эта же настройка определяет, кто становится подотчётным за эти деньги.</div>
+
+  <form method="post" action="/settings/cash-recipient">
+    <input type="hidden" name="org_id" value="{{ current_org_id }}">
+    <div class="form-group" style="margin-bottom:12px">
+      <label>Принимает наличные</label>
+      <select class="form-control" name="cash_recipient_user_id">
+        <option value="">— не назначено (получатель — тот, кто отмечает оплату) —</option>
+        {% for u in org_users %}
+        <option value="{{ u.id }}" {% if current_org.cash_recipient_user_id == u.id %}selected{% endif %}>{{ u.name }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <button type="submit" class="btn btn-primary">Сохранить</button>
+  </form>
+</div>
+{% endblock %}
