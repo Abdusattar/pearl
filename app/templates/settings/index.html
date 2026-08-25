@@ -8,22 +8,39 @@
   <h1>Настройки</h1>
 </div>
 
+{% set recipient = org_users | selectattr('id', 'equalto', current_org.cash_recipient_user_id) | first %}
+
 <div class="card" style="max-width:480px">
   <h3 style="font-size:15px;margin-bottom:4px">Приём наличных</h3>
   <div class="form-hint" style="margin-bottom:16px">Кто физически принимает наличные за разовые услуги (канцелярия и т.п.) — эта же настройка определяет, кто становится подотчётным за эти деньги.</div>
 
-  <form method="post" action="/settings/cash-recipient">
+  <div id="cash-recipient-view" style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+    <span style="color:var(--text-muted)">Принимает наличные:</span>
+    <span style="font-weight:600">{{ recipient.name if recipient else "не назначено — получатель тот, кто отмечает оплату" }}</span>
+    <button type="button" class="btn btn-secondary" style="padding:3px 8px;font-size:11px" onclick="toggleCashRecipientForm(true)">Изменить</button>
+  </div>
+
+  <form method="post" action="/settings/cash-recipient" id="cash-recipient-form" style="display:none;flex-direction:column;gap:10px;margin-top:8px;max-width:300px">
     <input type="hidden" name="org_id" value="{{ current_org_id }}">
-    <div class="form-group" style="margin-bottom:12px">
-      <label>Принимает наличные</label>
-      <select class="form-control" name="cash_recipient_user_id">
-        <option value="">— не назначено (получатель — тот, кто отмечает оплату) —</option>
-        {% for u in org_users %}
-        <option value="{{ u.id }}" {% if current_org.cash_recipient_user_id == u.id %}selected{% endif %}>{{ u.name }}</option>
-        {% endfor %}
-      </select>
+    <select class="form-control" name="cash_recipient_user_id">
+      <option value="">— не назначено —</option>
+      {% for u in org_users %}
+      <option value="{{ u.id }}" {% if current_org.cash_recipient_user_id == u.id %}selected{% endif %}>{{ u.name }}</option>
+      {% endfor %}
+    </select>
+    <div style="display:flex;gap:6px">
+      <button type="submit" class="btn btn-primary" style="padding:6px 14px;font-size:13px">Сохранить</button>
+      <button type="button" class="btn btn-secondary" style="padding:6px 14px;font-size:13px" onclick="toggleCashRecipientForm(false)">Отмена</button>
     </div>
-    <button type="submit" class="btn btn-primary">Сохранить</button>
   </form>
 </div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+function toggleCashRecipientForm(editing) {
+  document.getElementById('cash-recipient-view').style.display = editing ? 'none' : 'flex';
+  document.getElementById('cash-recipient-form').style.display = editing ? 'flex' : 'none';
+}
+</script>
 {% endblock %}
