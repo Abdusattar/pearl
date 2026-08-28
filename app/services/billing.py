@@ -1,7 +1,7 @@
 from calendar import monthrange
 from datetime import date
 
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import func, text
 
 from app.models import Student, StudentService, Service, Charge, Transaction, Enrollment, Organization
@@ -54,6 +54,21 @@ def continuous_enrollment_since(db: Session, student_id: int) -> date | None:
     return continuous_since_from_enrollments(enrollments)
 
 
+def _tuition_base(
+    org: Organization | None, tuition_service: Service | None, enrollments: list[Enrollment]
+) -> float:
+    """Общая формула базового тарифа — используется и по одному ребёнку
+    (tuition_base_price), и батчем (generate_monthly_charges), чтобы не
+    разойтись в двух копиях одной и той же денежной логики."""
+    base = float(tuition_service.price) if tuition_service else 0.0
+    if org and org.legacy_tariff_until and org.legacy_tariff_cutoff and org.legacy_tariff_price is not None:
+        if date.today() <= org.legacy_tariff_until:
+            since = continuous_since_from_enrollments(enrollments)
+            if since and since < org.legacy_tariff_cutoff:
+                base = float(org.legacy_tariff_price)
+    return base
+
+
 def tuition_base_price(db: Session, student: Student) -> float:
     """Тариф за учёбу ДО скидки — текущая цена услуги, либо цена переходного
     периода, если ребёнок непрерывно зачислен раньше границы (22.07). Вынесена
@@ -62,14 +77,16 @@ def tuition_base_price(db: Session, student: Student) -> float:
     вообще не зная о переходном тарифе — реальное начисление считало верно,
     а витрина ребёнку показывала не ту сумму)."""
     tuition_service = get_tuition_service(db, student.organization_id)
-    base = float(tuition_service.price) if tuition_service else 0.0
     org = db.query(Organization).get(student.organization_id)
+    enrollments = []
     if org and org.legacy_tariff_until and org.legacy_tariff_cutoff and org.legacy_tariff_price is not None:
-        if date.today() <= org.legacy_tariff_until:
-            since = continuous_enrollment_since(db, student.id)
-            if since and since < org.legacy_tariff_cutoff:
-                base = float(org.legacy_tariff_price)
-    return base
+        enrollments = (
+            db.query(Enrollment)
+            .filter(Enrollment.student_id == student.id)
+            .order_by(Enrollment.start_date.asc(), Enrollment.id.asc())
+            .all()
+        )
+    return _tuition_base(org, tuition_service, enrollments)
 
 
 def _tuition_fee(db: Session, student: Student) -> float:
@@ -78,14 +95,24 @@ def _tuition_fee(db: Session, student: Student) -> float:
     return max(0.0, base - discount)
 
 
-def _proration_factor(db: Session, student_id: int, period: date) -> float:
+_UNSET = object()
+
+
+def _proration_factor(
+    db: Session, student_id: int, period: date, first_start: date | None = _UNSET
+) -> float:
     """1.0 обычно. Меньше — если ребёнок впервые зачислен в этом же месяце (Enrollment
     ещё не было до начала периода): начисляем только за дни с даты старта до конца
     месяца, а не за весь месяц. Первое зачисление ищем по всем группам ребёнка —
-    перевод между группами без разрыва не считается новым стартом."""
-    first_start = db.query(func.min(Enrollment.start_date)).filter(
-        Enrollment.student_id == student_id
-    ).scalar()
+    перевод между группами без разрыва не считается новым стартом.
+
+    first_start — если уже известен (батч-загрузка в generate_monthly_charges),
+    передаётся готовым, без лишнего запроса на каждого ребёнка. Сентинел _UNSET
+    (не None!) отличает "не передали" от настоящего None (ребёнок без Enrollment)."""
+    if first_start is _UNSET:
+        first_start = db.query(func.min(Enrollment.start_date)).filter(
+            Enrollment.student_id == student_id
+        ).scalar()
     if not first_start or first_start <= period:
         return 1.0
     if first_start.year != period.year or first_start.month != period.month:
@@ -124,23 +151,64 @@ def generate_monthly_charges(db: Session) -> int:
         .distinct()
     }
 
-    org_frozen_percent = dict(db.query(Organization.id, Organization.frozen_discount_percent).all())
+    # Батч-загрузка вместо запроса на каждого ребёнка (было — N+1: с ростом
+    # числа активных детей по всем объектам сразу этот проход внутри
+    # advisory-лока становился на порядок медленнее — при онбординге Школы
+    # 28.08, +332 ребёнка разом, один заход на /students/ стал занимать
+    # несколько минут, держа лок и блокируя всех остальных пользователей
+    # системы на этой же функции. Формула расчёта не менялась ни на йоту —
+    # только источник данных (батч вместо построчных запросов).
+    orgs = db.query(Organization).all()
+    org_by_id = {o.id: o for o in orgs}
+    org_frozen_percent = {o.id: o.frozen_discount_percent for o in orgs}
+
+    tuition_service_by_org: dict[int, Service] = {}
+    for svc in db.query(Service).filter(Service.is_tuition.is_(True), Service.deleted_at.is_(None)).all():
+        tuition_service_by_org.setdefault(svc.organization_id, svc)
 
     students = db.query(Student).filter(Student.status.in_(("active", "frozen"))).all()
+    student_ids = [s.id for s in students]
+
+    enrollments_by_student: dict[int, list[Enrollment]] = {}
+    if student_ids:
+        rows = (
+            db.query(Enrollment)
+            .filter(Enrollment.student_id.in_(student_ids))
+            .order_by(Enrollment.start_date.asc(), Enrollment.id.asc())
+            .all()
+        )
+        for e in rows:
+            enrollments_by_student.setdefault(e.student_id, []).append(e)
+
+    services_by_student: dict[int, list[StudentService]] = {}
+    if student_ids:
+        rows = (
+            db.query(StudentService)
+            .options(joinedload(StudentService.service))
+            .filter(StudentService.student_id.in_(student_ids), StudentService.end_date.is_(None))
+            .all()
+        )
+        for ss in rows:
+            services_by_student.setdefault(ss.student_id, []).append(ss)
+
     created = 0
     for student in students:
         if student.id in already_charged:
             continue
 
-        tuition = _tuition_fee(db, student)  # уже с учётом скидки на тариф (Student.discount_amount)
+        org = org_by_id.get(student.organization_id)
+        enrollments = enrollments_by_student.get(student.id, [])
+        base = _tuition_base(org, tuition_service_by_org.get(student.organization_id), enrollments)
+        tuition = max(0.0, base - float(student.discount_amount or 0))  # уже с учётом скидки на тариф
 
         if student.status == "frozen":
             percent = float(org_frozen_percent.get(student.organization_id) or 0)
             total = round(tuition * percent / 100, 2)
         else:
-            services = _active_services(db, student.id)
+            services = services_by_student.get(student.id, [])
             services_total = sum(float(ss.service.price) for ss in services)
-            factor = _proration_factor(db, student.id, period)
+            first_start = enrollments[0].start_date if enrollments else None
+            factor = _proration_factor(db, student.id, period, first_start=first_start)
             total = round((tuition + services_total) * factor, 2)
         if total <= 0:
             continue
