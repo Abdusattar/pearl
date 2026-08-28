@@ -336,25 +336,25 @@
 
 <aside class="sidebar">
   <div class="section">Финансы</div>
-  <a href="/expenses/" class="{% if active_page == 'expenses' or active_page == 'recurring' %}active{% endif %}">Расходы</a>
-  <a href="/income/" class="{% if active_page == 'income' %}active{% endif %}">Оплаты</a>
-  <a href="/suppliers/" class="{% if active_page == 'suppliers' %}active{% endif %}">Поставщики</a>
-  <a href="/podotchet/" class="{% if active_page == 'podotchet' %}active{% endif %}">Подотчёт</a>
+  <a href="/expenses/{% if current_org_id %}?org_id={{ current_org_id }}{% endif %}" class="{% if active_page == 'expenses' or active_page == 'recurring' %}active{% endif %}">Расходы</a>
+  <a href="/income/{% if current_org_id %}?org_id={{ current_org_id }}{% endif %}" class="{% if active_page == 'income' %}active{% endif %}">Оплаты</a>
+  <a href="/suppliers/{% if current_org_id %}?org_id={{ current_org_id }}{% endif %}" class="{% if active_page == 'suppliers' %}active{% endif %}">Поставщики</a>
+  <a href="/podotchet/{% if current_org_id %}?org_id={{ current_org_id }}{% endif %}" class="{% if active_page == 'podotchet' %}active{% endif %}">Подотчёт</a>
   <div class="section">Учёт</div>
-  <a href="/students/" class="{% if active_page == 'students' or active_page == 'attendance' %}active{% endif %}">Дети</a>
-  <a href="/services/" class="{% if active_page == 'services' %}active{% endif %}">Услуги</a>
-  <a href="/warehouse/" class="{% if active_page == 'warehouse' %}active{% endif %}">Склад</a>
-  <a href="/menu/" class="{% if active_page == 'menu' %}active{% endif %}">Меню</a>
+  <a href="/students/{% if current_org_id %}?org_id={{ current_org_id }}{% endif %}" class="{% if active_page == 'students' or active_page == 'attendance' %}active{% endif %}">Дети</a>
+  <a href="/services/{% if current_org_id %}?org_id={{ current_org_id }}{% endif %}" class="{% if active_page == 'services' %}active{% endif %}">Услуги</a>
+  <a href="/warehouse/{% if current_org_id %}?org_id={{ current_org_id }}{% endif %}" class="{% if active_page == 'warehouse' %}active{% endif %}">Склад</a>
+  <a href="/menu/{% if current_org_id %}?org_id={{ current_org_id }}{% endif %}" class="{% if active_page == 'menu' %}active{% endif %}">Меню</a>
   {% if current_user.role != "staff" %}
-  <a href="/assets/" class="{% if active_page == 'assets' %}active{% endif %}">Основные средства</a>
+  <a href="/assets/{% if current_org_id %}?org_id={{ current_org_id }}{% endif %}" class="{% if active_page == 'assets' %}active{% endif %}">Основные средства</a>
   {% endif %}
   {% if current_user.role in ("owner", "founder", "staff") %}
-  <a href="/employees/" class="{% if active_page == 'employees' %}active{% endif %}">Сотрудники</a>
+  <a href="/employees/{% if current_org_id %}?org_id={{ current_org_id }}{% endif %}" class="{% if active_page == 'employees' %}active{% endif %}">Сотрудники</a>
   {% endif %}
   <div class="section">Аналитика</div>
-  <a href="/reports/" class="{% if active_page == 'reports' %}active{% endif %}">Отчёты</a>
+  <a href="/reports/{% if current_org_id %}?org_id={{ current_org_id }}{% endif %}" class="{% if active_page == 'reports' %}active{% endif %}">Отчёты</a>
   {% if current_user.role in ("owner", "founder", "staff") %}
-  <a href="/dashboard/unit-economics" class="{% if active_page == 'dashboard' %}active{% endif %}">Юнит-экономика</a>
+  <a href="/dashboard/unit-economics{% if current_org_id %}?org_id={{ current_org_id }}{% endif %}" class="{% if active_page == 'dashboard' %}active{% endif %}">Юнит-экономика</a>
   {% endif %}
   {% if current_user.id == 1 %}
   <div class="section">Интеграции</div>
@@ -362,7 +362,7 @@
   {% endif %}
   {% if current_user.role in ("owner", "founder", "staff", "manager") %}
   <div class="section">Система</div>
-  <a href="/settings/" class="{% if active_page == 'settings' %}active{% endif %}">Настройки</a>
+  <a href="/settings/{% if current_org_id %}?org_id={{ current_org_id }}{% endif %}" class="{% if active_page == 'settings' %}active{% endif %}">Настройки</a>
   {% endif %}
 </aside>
 
@@ -372,19 +372,19 @@
 
 <nav class="bottom-nav">
   <ul>
-    <li><a href="/expenses/" class="{% if active_page == 'expenses' or active_page == 'recurring' %}active{% endif %}">
+    <li><a href="/expenses/{% if current_org_id %}?org_id={{ current_org_id }}{% endif %}" class="{% if active_page == 'expenses' or active_page == 'recurring' %}active{% endif %}">
       <span class="nav-icon">💸</span>Расходы
     </a></li>
-    <li><a href="/income/" class="{% if active_page == 'income' %}active{% endif %}">
+    <li><a href="/income/{% if current_org_id %}?org_id={{ current_org_id }}{% endif %}" class="{% if active_page == 'income' %}active{% endif %}">
       <span class="nav-icon">💰</span>Оплаты
     </a></li>
-    <li><a href="/students/" class="{% if active_page == 'students' or active_page == 'attendance' %}active{% endif %}">
+    <li><a href="/students/{% if current_org_id %}?org_id={{ current_org_id }}{% endif %}" class="{% if active_page == 'students' or active_page == 'attendance' %}active{% endif %}">
       <span class="nav-icon">👦</span>Дети
     </a></li>
-    <li><a href="/warehouse/" class="{% if active_page == 'warehouse' %}active{% endif %}">
+    <li><a href="/warehouse/{% if current_org_id %}?org_id={{ current_org_id }}{% endif %}" class="{% if active_page == 'warehouse' %}active{% endif %}">
       <span class="nav-icon">📦</span>Склад
     </a></li>
-    <li><a href="/reports/" class="{% if active_page == 'reports' %}active{% endif %}">
+    <li><a href="/reports/{% if current_org_id %}?org_id={{ current_org_id }}{% endif %}" class="{% if active_page == 'reports' %}active{% endif %}">
       <span class="nav-icon">📊</span>Отчёты
     </a></li>
   </ul>
