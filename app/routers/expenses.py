@@ -24,7 +24,7 @@ from app.services.normalize import normalize_items
 from app.services import recurring_expenses
 from app.services import supplier_ledger
 from app.services.writeoff_calc import auto_apply_if_pending
-from app.dependencies import get_current_user
+from app.dependencies import get_current_user, get_accessible_orgs, resolve_org
 
 router = APIRouter(prefix="/expenses", tags=["expenses"])
 templates = Jinja2Templates(directory=str(Path(__file__).parent.parent / "templates"))
@@ -33,27 +33,6 @@ MEDIA_DIR = Path(__file__).parent.parent.parent / "media" / "receipts"
 MEDIA_DIR.mkdir(parents=True, exist_ok=True)
 
 ORG_KINDERGARTENS = 3
-# см. app/dependencies.py:PILOT_ORG_IDS/PILOT_USER_IDS — тот же смысл,
-# продублировано, т.к. этот файл держит свою копию get_accessible_orgs/
-# resolve_org (известный техдолг, стоило бы удалить дубликат и импортировать
-# из dependencies.py, не сегодня). Ограничение по конкретным user_id, не по
-# роли целиком — иначе реальный владелец терял бы доступ к Школе/Кожомкулу
-# на проде (13.07)
-PILOT_ORG_IDS = {4}
-PILOT_USER_IDS = {1, 3, 61, 64}  # Абдусаттар, Мунара, Айдай, Талас
-
-
-def get_accessible_orgs(user: User, db: Session, all_orgs: list[Organization] | None = None) -> list[Organization]:
-    """Орги доступные пользователю по роли."""
-    if all_orgs is None:
-        all_orgs = db.query(Organization).all()
-    if user.role == "director":
-        return [o for o in all_orgs if o.id == user.organization_id]
-    if user.id in PILOT_USER_IDS:
-        return [o for o in all_orgs if o.id in PILOT_ORG_IDS]
-    if user.role in ("owner", "founder", "manager"):
-        return all_orgs
-    return [o for o in all_orgs if o.id == user.organization_id]
 
 
 def get_upload_orgs(user: User, db: Session, all_orgs: list[Organization] | None = None) -> list[Organization]:
@@ -63,19 +42,6 @@ def get_upload_orgs(user: User, db: Session, all_orgs: list[Organization] | None
     has_children = {o.parent_id for o in all_orgs if o.parent_id is not None}
     orgs = get_accessible_orgs(user, db, all_orgs)
     return [o for o in orgs if o.id not in has_children]
-
-
-def resolve_org(org_id: int | None, user: User, db: Session, all_orgs: list[Organization] | None = None) -> Organization:
-    accessible = get_accessible_orgs(user, db, all_orgs)
-    if org_id:
-        org = next((o for o in accessible if o.id == org_id), None)
-        if org:
-            return org
-    # см. комментарий в app/dependencies.py:resolve_org — тот же баг, та же правка (12.07)
-    own = next((o for o in accessible if o.id == user.organization_id), None)
-    if own:
-        return own
-    return accessible[0] if accessible else None
 
 
 def get_categories(db: Session) -> list[ExpenseCategory]:

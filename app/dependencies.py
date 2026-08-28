@@ -21,31 +21,42 @@ def require_user(request: Request, db: Session) -> User | RedirectResponse:
 
 # Пилот только на Садике Сокулук (решено 08.07, реально закреплено в коде 12.07 —
 # до этого owner/founder технически видели все объекты, дыра в решении).
-# Ограничены конкретные тестировщики по user_id, не роль целиком — иначе
-# реальный владелец (Талас/Абдусаттар после снятия пилота) тоже терял бы
-# доступ к Школе/Кожомкулу на проде. Убрать запись из PILOT_USER_IDS, когда
-# конкретный человек больше не участвует в пилоте (13.07).
+# Доступ по конкретным user_id, не роль целиком — иначе реальный владелец
+# (Талас/Абдусаттар после снятия пилота) тоже терял бы доступ к Школе/
+# Кожомкулу на проде. Убрать запись, когда конкретный человек больше не
+# участвует в пилоте (13.07).
 # id проверены напрямую по прод-БД 13.07 (изначально были указаны 61/64 —
 # несуществующие id, из-за чего Айдай/Талас реально видели ВСЕ объекты,
 # а не только Садик Сокулук — пилот-ограничение на них не действовало).
-PILOT_ORG_IDS = {4}
-PILOT_USER_IDS = {1, 3, 5, 6}  # Абдусаттар, Мунара, Айдай, Талас
+# 27.08: Школа (org_id=2) добавлена Сатару/Айдаю/Талас — начат онбординг.
+# Мунара (управляющая садиками) в Школу не входит, её зона не меняется.
+PILOT_USER_ORG_IDS: dict[int, set[int]] = {
+    1: {2, 4},  # Сатар (разработчик)
+    3: {4},     # Мунара (управляющая садиками)
+    5: {2, 4},  # Айдай (совладелец)
+    6: {2, 4},  # Талас (совладелец)
+}
 
 
-def get_accessible_orgs(user: User, db: Session) -> list[Organization]:
-    all_orgs = db.query(Organization).all()
+def get_accessible_orgs(
+    user: User, db: Session, all_orgs: list[Organization] | None = None
+) -> list[Organization]:
+    if all_orgs is None:
+        all_orgs = db.query(Organization).all()
     if user.role == "director":
         # Айжан — директор школы, видит только свой объект (Школа), не садики
         return [o for o in all_orgs if o.id == user.organization_id]
-    if user.id in PILOT_USER_IDS:
-        return [o for o in all_orgs if o.id in PILOT_ORG_IDS]
+    if user.id in PILOT_USER_ORG_IDS:
+        return [o for o in all_orgs if o.id in PILOT_USER_ORG_IDS[user.id]]
     if user.role in ("owner", "founder", "manager"):
         return all_orgs
     return [o for o in all_orgs if o.id == user.organization_id]
 
 
-def resolve_org(org_id: int | None, user: User, db: Session) -> Organization:
-    accessible = get_accessible_orgs(user, db)
+def resolve_org(
+    org_id: int | None, user: User, db: Session, all_orgs: list[Organization] | None = None
+) -> Organization:
+    accessible = get_accessible_orgs(user, db, all_orgs)
     if org_id:
         org = next((o for o in accessible if o.id == org_id), None)
         if org:
