@@ -32,21 +32,31 @@ def compute_day_draft(db: Session, org_id: int, target_date: date_type) -> dict:
         Attendance.organization_id == org_id, Attendance.date == target_date,
     ).first() is not None
 
+    # Один запрос на все группы разом (вместо запроса на каждую) — при 19
+    # классах Школы (онбординг 28.08) цикл давал заметный N+1 на странице,
+    # которая и так открывается каждый день (03.09, тормозило /expenses/,
+    # /warehouse/ — до 10с на группу с большим числом классов).
     headcount = {"kindergarten_group": 0, "class": 0}
-    for g in groups:
-        student_ids = [
-            sid for (sid,) in db.query(Student.id)
-            .join(Enrollment, Enrollment.student_id == Student.id)
+    group_type_by_id = {g.id: g.type for g in groups}
+    group_ids = list(group_type_by_id)
+    if group_ids:
+        enrolled_rows = (
+            db.query(Enrollment.group_id, Student.id)
+            .join(Student, Student.id == Enrollment.student_id)
             .filter(
-                Enrollment.group_id == g.id,
+                Enrollment.group_id.in_(group_ids),
                 Enrollment.end_date.is_(None),
                 Enrollment.start_date <= target_date,
                 Student.status == "active",
                 Student.deleted_at.is_(None),
             )
-        ]
-        present = sum(1 for sid in student_ids if sid not in absent_ids)
-        headcount[g.type] = headcount.get(g.type, 0) + present
+            .all()
+        )
+        for group_id, student_id in enrolled_rows:
+            if student_id in absent_ids:
+                continue
+            g_type = group_type_by_id[group_id]
+            headcount[g_type] = headcount.get(g_type, 0) + 1
 
     entries = (
         db.query(MenuEntry)
