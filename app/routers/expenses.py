@@ -333,17 +333,16 @@ def list_expenses(
         auto_apply_if_pending(db, current_org_id, date.today() - timedelta(days=1), user.id)
 
     # Остаток долга с учётом платежей из ленты (не просто amount - amount_paid — тот факт
-    # не знает про погашения, сделанные позже через /suppliers). Кэш на запрос, т.к. один
-    # поставщик встречается в нескольких строках списка.
-    _debt_cache: dict[int, dict[int, float]] = {}
+    # не знает про погашения, сделанные позже через /suppliers). Раньше считался по одному
+    # поставщику за раз лениво по ходу строк — с ~7+ поставщиками в списке это была
+    # заметная N+1 (03.09, страница /expenses/ до 10с). Теперь собираем все нужные пары
+    # (строка, транзакция) за первый проход и досчитываем долг одним батч-вызовом в конце.
+    pending_debt: list[tuple[dict, object]] = []
 
-    def tx_remaining_debt(tx) -> float | None:
-        if not tx or not tx.supplier_id:
-            return None
-        if tx.supplier_id not in _debt_cache:
-            _debt_cache[tx.supplier_id] = supplier_ledger.get_transaction_remaining_debt(db, tx.supplier_id)
-        remaining = _debt_cache[tx.supplier_id].get(tx.id)
-        return float(remaining) if remaining else None
+    def mark_for_debt(row: dict, tx) -> None:
+        row["debt"] = None
+        if tx and tx.supplier_id:
+            pending_debt.append((row, tx))
 
     # Доступные org_id для фильтрации
     if user.role == "manager":
@@ -443,7 +442,6 @@ def list_expenses(
         tx_cat = _cat_name(tx.category_id) if tx else None
         tx_id = tx.id if tx else None
         tx_supplier = supplier_map.get(tx.supplier_id) if tx else None
-        tx_debt = tx_remaining_debt(tx)
         if r.ocr_status == "manual":
             # Позиции определяют разбивку по категориям — редактируется как целый чек
             # (та же форма ввода), не как одна отдельная Transaction (edit_tx.html).
@@ -467,8 +465,8 @@ def list_expenses(
             "amount_detected": r.amount_detected,
             "amount_confirmed": r.amount_confirmed,
             "ocr_status": r.ocr_status,
-            "debt": tx_debt,
         })
+        mark_for_debt(receipts[-1], tx)
 
     # --- Ручные транзакции (без квитанции) ---
     if not status:  # ручные не имеют OCR-статуса, скрываем если фильтр по статусу
@@ -512,9 +510,17 @@ def list_expenses(
                 "amount_detected": None,
                 "amount_confirmed": tx.amount,
                 "ocr_status": "manual",
-                "debt": tx_remaining_debt(tx),
             })
+            mark_for_debt(receipts[-1], tx)
         receipts.sort(key=lambda r: r["sort_date"] or date.min, reverse=True)
+
+    if pending_debt:
+        bulk_debt = supplier_ledger.get_transaction_remaining_debt_bulk(
+            db, [tx.supplier_id for _, tx in pending_debt]
+        )
+        for row, tx in pending_debt:
+            remaining = bulk_debt.get(tx.supplier_id, {}).get(tx.id)
+            row["debt"] = float(remaining) if remaining else None
 
     # Totals by org — одним groupby-запросом вместо цикла с 2 запросами на каждую орг
     totals_by_org = dict(
@@ -541,7 +547,7 @@ def list_expenses(
         ).distinct().all()
     }
     total_debt = sum(
-        (supplier_ledger.get_supplier_balance(db, sid) for sid in visible_supplier_ids),
+        supplier_ledger.get_supplier_balances_bulk(db, list(visible_supplier_ids)).values(),
         supplier_ledger.ZERO,
     )
     totals = [
