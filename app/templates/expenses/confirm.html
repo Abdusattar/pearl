@@ -590,8 +590,11 @@ function markUnreadable() {
 document.querySelector('form')?.addEventListener('submit', function(e) {
   const btn = document.getElementById('btn-confirm');
   if (!btn || e.submitter?.value !== 'confirm') return;
-  btn.disabled = true;
+  // disabled ставим не сразу: если кнопку-сабмиттер отключить синхронно в
+  // обработчике submit, браузер не включит её name=value ("action=confirm")
+  // в тело запроса — сервер получал 422 "action field required".
   btn.textContent = '⏳ Обработка...';
+  setTimeout(() => { btn.disabled = true; }, 0);
 });
 </script>
 {% endblock %}

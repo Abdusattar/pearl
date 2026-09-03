@@ -406,11 +406,14 @@ document.querySelector('.org-select')?.addEventListener('change', function() {
 // формы, отправляемые через fetch() (у них уже есть свои защиты). Через
 // e.submitter — не первая попавшаяся кнопка формы (бывают несколько, напр.
 // «Провести»/«Отклонить» на confirm.html).
+// setTimeout(0): если кнопку-сабмиттер отключить синхронно в обработчике submit,
+// браузер не включит её name=value (напр. action=confirm) в тело запроса — форма
+// уходит без этого поля (поймано 03.09 на confirm.html: action терялся, 422).
 document.addEventListener('submit', function(e) {
   if (e.submitter) {
-    e.submitter.disabled = true;
+    setTimeout(() => { e.submitter.disabled = true; }, 0);
   } else {
-    e.target.querySelectorAll('button[type="submit"], input[type="submit"]').forEach(b => { b.disabled = true; });
+    e.target.querySelectorAll('button[type="submit"], input[type="submit"]').forEach(b => { setTimeout(() => { b.disabled = true; }, 0); });
   }
 });
 
