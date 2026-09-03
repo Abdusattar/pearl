@@ -377,10 +377,27 @@ def list_expenses(
 
     if month:
         try:
-            y, m = month.split("-")
+            y, m = int(month.split("-")[0]), int(month.split("-")[1])
+            # Месяц квитанции определяет дата транзакции (та, что выбрана в форме
+            # подтверждения), не дата загрузки фото — иначе чек, датированный
+            # прошлым месяцем, но подтверждённый позже, попадал бы не в свою
+            # вкладку. У неподтверждённых квитанций транзакции ещё нет — для них
+            # остаётся дата загрузки.
+            tx_date_subq = (
+                db.query(
+                    ReceiptTransaction.receipt_id.label("receipt_id"),
+                    Transaction.date.label("tx_date"),
+                )
+                .join(Transaction, Transaction.id == ReceiptTransaction.transaction_id)
+                .order_by(ReceiptTransaction.receipt_id, Transaction.id)
+                .distinct(ReceiptTransaction.receipt_id)
+                .subquery()
+            )
+            q = q.outerjoin(tx_date_subq, tx_date_subq.c.receipt_id == Receipt.id)
+            effective_date = func.coalesce(tx_date_subq.c.tx_date, Receipt.created_at)
             q = q.filter(
-                func.extract("year", Receipt.created_at) == int(y),
-                func.extract("month", Receipt.created_at) == int(m),
+                func.extract("year", effective_date) == y,
+                func.extract("month", effective_date) == m,
             )
         except Exception:
             pass
@@ -439,8 +456,11 @@ def list_expenses(
             "tx_id": tx_id,
             "href": href,
             "is_recurring": False,
-            "sort_date": r.created_at.date() if hasattr(r.created_at, 'date') else r.created_at,
-            "date_display": r.created_at.strftime('%d.%m.%Y'),
+            # Дата транзакции (та, что выбрана в форме подтверждения) — не дата
+            # загрузки фото чека. У неподтверждённых квитанций tx ещё нет, для
+            # них показываем дату загрузки как единственный ориентир.
+            "sort_date": tx.date if tx and tx.date else (r.created_at.date() if hasattr(r.created_at, 'date') else r.created_at),
+            "date_display": tx.date.strftime('%d.%m.%Y') if tx and tx.date else r.created_at.strftime('%d.%m.%Y'),
             "org_name": org_map.get(r.organization_id, "—"),
             "category_name": tx_cat,
             "supplier_name": tx_supplier,
