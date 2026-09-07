@@ -20,7 +20,7 @@ from decimal import Decimal
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
-from app.models import AccountBalanceSnapshot, CapitalWithdrawal, CashFunding, Transaction
+from app.models import CapitalWithdrawal, CashFunding, Reconciliation, Transaction
 
 ZERO = Decimal("0")
 # Копейки в обороте не считаются реальным остатком "на руках" — тот же порог,
@@ -116,11 +116,22 @@ def get_balances_by_person(db: Session, organization_id: int) -> dict[int, Decim
     return result
 
 
-def get_latest_snapshot(db: Session, organization_id: int, as_of: date_cls) -> AccountBalanceSnapshot | None:
+def get_latest_snapshot(db: Session, organization_id: int, as_of: date_cls) -> Reconciliation | None:
+    """Последняя действующая сверка счёта до указанной даты.
+
+    С 07.09 источник — таблица `reconciliations` (kind='account'), а не
+    account_balance_snapshots: та хранила только заявленную цифру, без
+    ожидаемой, и расхождение нигде не оставалось. Отменённые сверки в базу
+    расчёта не берём — отмена и нужна, чтобы исправить ошибку ввода."""
     return (
-        db.query(AccountBalanceSnapshot)
-        .filter(AccountBalanceSnapshot.organization_id == organization_id, AccountBalanceSnapshot.date <= as_of)
-        .order_by(AccountBalanceSnapshot.date.desc(), AccountBalanceSnapshot.id.desc())
+        db.query(Reconciliation)
+        .filter(
+            Reconciliation.organization_id == organization_id,
+            Reconciliation.kind == "account",
+            Reconciliation.date <= as_of,
+            Reconciliation.cancelled_at.is_(None),
+        )
+        .order_by(Reconciliation.date.desc(), Reconciliation.id.desc())
         .first()
     )
 
@@ -130,7 +141,7 @@ def get_expected_balance(db: Session, organization_id: int, as_of: date_cls) -> 
     Только withdrawal-снятия и прямые расходы трогают счёт — наличные напрямую
     (direct_cash) в расчёт не входят: этих денег на счету никогда не было."""
     snapshot = get_latest_snapshot(db, organization_id, as_of)
-    base = Decimal(snapshot.balance) if snapshot else ZERO
+    base = Decimal(snapshot.actual_amount) if snapshot else ZERO
     since = snapshot.date if snapshot else date_cls.min
 
     # Доход, собранный наличными мимо счёта (оплата разовой услуги наличными,

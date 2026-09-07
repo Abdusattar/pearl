@@ -213,6 +213,7 @@
   <form method="post" action="/podotchet/reconcile" style="display:grid;grid-template-columns:1fr 1fr auto;gap:16px;align-items:end">
     <input type="hidden" name="organization_id" value="{{ current_org_id }}">
     <input type="hidden" name="org_id" value="{{ current_org_id }}">
+    <input type="hidden" name="kind" value="account">
     <div class="form-group" style="margin-bottom:0">
       <label>Сколько осталось на счету *</label>
       <input class="form-control" type="text" name="balance" placeholder="0" required>
@@ -228,24 +229,126 @@
              placeholder="Например: 3 000 отдала на ремонт котла, чек занесу завтра">
     </div>
   </form>
-  {% if snapshots %}
-  <div class="table-wrap" style="margin-top:18px">
+</div>
+
+{# ── Касса объекта ───────────────────────────────────────────────────────────
+   Именно кассы садика, не «наличных у человека»: деньги принадлежат объекту,
+   кто ей заведует — настройка, а не часть учёта (уточнено заказчиком 07.09).
+   До этого дня точки факта по наличным не было вообще — только расчёт. #}
+<div class="card" id="cash-card" style="max-width:640px;margin-top:22px">
+  <div style="display:flex;align-items:baseline;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:4px">
+    <h3 style="font-size:15px;margin:0">Сверка кассы</h3>
+    {% if holder %}<span class="form-hint">заведует {{ holder.name }}</span>{% endif %}
+  </div>
+  <div class="form-hint" style="margin-bottom:12px">
+    Пересчитайте наличные в кассе и впишите, сколько получилось. Не подгоняйте под
+    расчёт — расхождение как раз и нужно увидеть.
+  </div>
+  <div class="alert" style="background:#eef2ff;border:1px solid #c7d2fe;color:#3730a3;padding:10px 12px;border-radius:8px;font-size:13px;margin-bottom:14px">
+    По расчёту в кассе должно быть <strong>{{ "{:,.2f}".format(expected_cash) }} с</strong>.
+    {% if expected_cash < 0 %}
+    Минус означает, что тратили из денег, которых в системе нет.
+    {% endif %}
+    {% if last_cash %}
+    <div style="margin-top:4px">Прошлая сверка кассы — {{ last_cash.date.strftime("%d.%m.%Y") }}.</div>
+    {% else %}
+    <div style="margin-top:4px">Кассу ещё ни разу не сверяли.</div>
+    {% endif %}
+  </div>
+  <form method="post" action="/podotchet/reconcile" style="display:grid;grid-template-columns:1fr 1fr auto;gap:16px;align-items:end">
+    <input type="hidden" name="organization_id" value="{{ current_org_id }}">
+    <input type="hidden" name="org_id" value="{{ current_org_id }}">
+    <input type="hidden" name="kind" value="cash">
+    <div class="form-group" style="margin-bottom:0">
+      <label>Сколько в кассе на самом деле *</label>
+      <input class="form-control" type="text" name="balance" placeholder="0" required>
+    </div>
+    <div class="form-group" style="margin-bottom:0">
+      <label>Дата *</label>
+      <input class="form-control" type="date" name="date" value="{{ today }}" required>
+    </div>
+    <button type="submit" class="btn btn-primary" style="height:44px">Сохранить</button>
+    <div class="form-group" style="margin-bottom:0;grid-column:1/-1">
+      <label>Пояснение, если не сошлось</label>
+      <input class="form-control" type="text" name="comment"
+             placeholder="Например: в конце августа снимали 35 000, в систему не занесли">
+    </div>
+  </form>
+</div>
+
+{# ── Долги поставщикам ───────────────────────────────────────────────────── #}
+{% if supplier_rows %}
+<div class="card" style="max-width:640px;margin-top:22px">
+  <h3 style="font-size:15px;margin:0 0 4px">Сверка долгов поставщикам</h3>
+  <div class="form-hint" style="margin-bottom:12px">
+    Впишите, сколько реально должны на сегодня. Раньше долг правился прямо в
+    карточке поставщика и прошлое значение затиралось без следа — теперь каждая
+    правка остаётся в истории.
+  </div>
+  {% for s in supplier_rows %}
+  <form method="post" action="/podotchet/reconcile"
+        style="display:grid;grid-template-columns:1fr 130px auto;gap:12px;align-items:end;padding:10px 0;border-top:1px solid var(--border)">
+    <input type="hidden" name="organization_id" value="{{ current_org_id }}">
+    <input type="hidden" name="org_id" value="{{ current_org_id }}">
+    <input type="hidden" name="kind" value="supplier_debt">
+    <input type="hidden" name="subject_id" value="{{ s.id }}">
+    <input type="hidden" name="date" value="{{ today }}">
+    <div>
+      <div style="font-weight:600">{{ s.name }}</div>
+      <div class="form-hint">в системе {{ "{:,.2f}".format(s.debt) }} с</div>
+    </div>
+    <input class="form-control" type="text" name="balance" placeholder="{{ "{:,.0f}".format(s.debt) }}" required>
+    <button type="submit" class="btn btn-secondary" style="height:42px">Записать</button>
+    <div style="grid-column:1/-1">
+      <input class="form-control" type="text" name="comment" placeholder="Откуда сумма — например: сверились по тетради">
+    </div>
+  </form>
+  {% endfor %}
+</div>
+{% endif %}
+
+{# ── История всех сверок ─────────────────────────────────────────────────── #}
+{% if snapshots %}
+<div class="card" style="max-width:900px;margin-top:22px">
+  <h3 style="font-size:15px;margin:0 0 4px">История сверок</h3>
+  <div class="form-hint" style="margin-bottom:10px">
+    Записи не удаляются. Ошибку исправляют новой сверкой или отменой — старая
+    строка остаётся видна с причиной.
+  </div>
+  <div class="table-wrap">
     <table class="table">
-      <thead><tr><th>Дата</th><th>Введено</th><th>Кто ввёл</th><th>Пояснение</th></tr></thead>
-      <tbody>
-        {% for s in snapshots[:5] %}
+      <thead>
         <tr>
+          <th>Дата</th><th>Что</th><th class="num">Ожидалось</th><th class="num">По факту</th>
+          <th class="num">Разница</th><th>Кто</th><th>Пояснение</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for s in snapshots %}
+        <tr {% if s.cancelled_at %}style="opacity:.55"{% endif %}>
           <td data-label="Дата">{{ s.date.strftime("%d.%m.%Y") }}</td>
-          <td data-label="Введено" class="num">{{ "{:,.2f}".format(s.balance) }} с</td>
-          <td data-label="Кто ввёл">{{ users_lookup.get(s.created_by, "?") }}</td>
-          <td data-label="Пояснение" style="color:var(--text-muted);font-size:13px">{{ s.comment or "—" }}</td>
+          <td data-label="Что">
+            {{ kind_labels.get(s.kind, s.kind) }}
+            {% if s.cancelled_at %}<span class="badge badge-rejected">отменена</span>{% endif %}
+          </td>
+          <td data-label="Ожидалось" class="num">{{ "{:,.2f}".format(s.expected_amount) }}</td>
+          <td data-label="По факту" class="num">{{ "{:,.2f}".format(s.actual_amount) }}</td>
+          <td data-label="Разница" class="num"
+              style="color:{% if s.delta > 0 %}var(--success){% elif s.delta < 0 %}var(--danger){% else %}var(--text-muted){% endif %}">
+            {% if s.delta %}{{ "{:+,.2f}".format(s.delta) }}{% else %}—{% endif %}
+          </td>
+          <td data-label="Кто">{{ users_lookup.get(s.created_by, "?") }}</td>
+          <td data-label="Пояснение" style="color:var(--text-muted);font-size:13px">
+            {{ s.reason or "—" }}
+            {% if s.cancelled_at %}<div>Отменена: {{ s.cancel_reason or "без причины" }}</div>{% endif %}
+          </td>
         </tr>
         {% endfor %}
       </tbody>
     </table>
   </div>
-  {% endif %}
 </div>
+{% endif %}
 
 <div class="table-wrap" style="margin-top:22px">
   <table class="table">

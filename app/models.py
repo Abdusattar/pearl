@@ -633,6 +633,42 @@ class AccountBalanceSnapshot(Base):
     created_at      = Column(DateTime, server_default=func.now())
 
 
+class Reconciliation(Base):
+    """Сверка остатка — одна запись на «что система ожидала / что оказалось по факту»
+    (07.09). Приходит на смену AccountBalanceSnapshot, который хранил только
+    заявленную цифру: расхождение нигде не сохранялось, новая сверка молча
+    становилась новой базой, и недостача растворялась. Отсюда и главный смысл
+    таблицы — `expected_amount` и `delta` пишутся в момент сверки и потом
+    неизменны, то есть расхождение становится фактом, а не выводом задним числом.
+
+    `kind` — что сверяли:
+      account       — остаток на банковском счёте
+      cash          — наличные в кассе объекта (не «у человека»: касса принадлежит
+                      садику, кто ей заведует — настройка объекта)
+      supplier_debt — долг конкретному поставщику, тогда subject_id = suppliers.id
+
+    Склад сюда не входит намеренно: там не одна цифра, а список продуктов, и
+    пересчёт уже пишет настоящие приход/списание (см. /warehouse/actualize).
+
+    Записи не удаляются. Ошибку исправляют новой сверкой либо отменой
+    (`cancelled_at` + причина) — чтобы нельзя было стереть неудобную цифру."""
+    __tablename__ = "reconciliations"
+    id              = Column(Integer, primary_key=True)
+    organization_id = Column(Integer, ForeignKey("organizations.id"), nullable=False)
+    kind            = Column(String(20), nullable=False)
+    subject_id      = Column(Integer)  # supplier_id для kind='supplier_debt', иначе NULL
+    date            = Column(Date, nullable=False)
+    expected_amount = Column(Numeric(12, 2), nullable=False)
+    actual_amount   = Column(Numeric(12, 2), nullable=False)
+    delta           = Column(Numeric(12, 2), nullable=False)  # actual - expected, хранится, не считается
+    reason          = Column(Text)
+    created_by      = Column(Integer, ForeignKey("users.id"))
+    created_at      = Column(DateTime, server_default=func.now())
+    cancelled_at    = Column(DateTime)
+    cancelled_by    = Column(Integer, ForeignKey("users.id"))
+    cancel_reason   = Column(Text)
+
+
 class OptimaLog(Base):
     """Каждый входящий запрос от Optima (check/pay), включая отклонённые —
     неверный PIN, ребёнок выбыл, дубликат и т.п. Отдельно от Transaction,

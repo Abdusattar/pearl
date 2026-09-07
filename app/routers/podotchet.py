@@ -10,8 +10,8 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.dependencies import get_accessible_orgs, get_current_user, resolve_org
-from app.models import AccountBalanceSnapshot, CapitalWithdrawal, CashFunding, Organization, User
-from app.services import podotchet
+from app.models import CapitalWithdrawal, CashFunding, Organization, Supplier, User
+from app.services import podotchet, reconciliation, supplier_ledger
 from app.services.warehouse import get_inventory_summary
 
 router = APIRouter(prefix="/podotchet", tags=["podotchet"])
@@ -134,12 +134,20 @@ def podotchet_page(request: Request, org_id: str | None = None, db: Session = De
         for f in flows
     ]
 
-    snapshots = (
-        db.query(AccountBalanceSnapshot)
-        .filter(AccountBalanceSnapshot.organization_id == current_org.id)
-        .order_by(AccountBalanceSnapshot.date.desc(), AccountBalanceSnapshot.id.desc())
-        .all()
-    )
+    snapshots = reconciliation.history(db, current_org.id)
+    # Долги поставщиков — общие для организации, не привязаны к объекту
+    # (Supplier без organization_id), поэтому показываем весь список: сверка
+    # долга нужна как раз чтобы завести суммы, которых в системе ещё нет.
+    supplier_rows = [
+        {
+            "id": s.id,
+            "name": s.name,
+            "debt": supplier_ledger.get_supplier_balance(db, s.id),
+        }
+        for s in db.query(Supplier).order_by(Supplier.name).all()
+    ]
+    expected_cash = reconciliation.expected_cash(db, current_org.id)
+    last_cash = reconciliation.latest(db, current_org.id, reconciliation.CASH)
     days_since_snapshot = (today - expected["since"]).days if expected["since"] else None
 
     ledger_rows = []
@@ -180,6 +188,10 @@ def podotchet_page(request: Request, org_id: str | None = None, db: Session = De
         "category_spend": category_spend,
         "flow_rows": flow_rows,
         "snapshots": snapshots,
+        "supplier_rows": supplier_rows,
+        "expected_cash": expected_cash,
+        "last_cash": last_cash,
+        "kind_labels": reconciliation.KIND_LABELS,
         "uncovered": podotchet.get_uncovered_expenses(db, current_org.id),
         "ledger_rows": ledger_rows,
         "founders": founders,
@@ -446,20 +458,28 @@ def delete_funding(
 
 
 @router.post("/reconcile")
-def add_snapshot(
+def add_reconciliation(
     request: Request,
     balance: str = Form(...),
     date_str: str = Form(..., alias="date"),
     organization_id: str = Form(...),
+    kind: str = Form(default=reconciliation.ACCOUNT),
+    subject_id: str = Form(default=""),
     comment: str = Form(default=""),
     org_id: str = Form(default=""),
     db: Session = Depends(get_db),
 ):
+    """Сверка счёта, кассы или долга поставщику — одна форма на все три вида.
+    Ожидаемая сумма считается здесь и сохраняется вместе с разницей: если её
+    не записать сейчас, восстановить потом будет нельзя (07.09)."""
     user, redirect = _guard(request, db)
     if redirect:
         return redirect
     redirect_url = f"/podotchet/?org_id={org_id}" if org_id else "/podotchet/"
     error_sep = "&" if org_id else "?"
+
+    if kind not in reconciliation.KIND_LABELS:
+        return RedirectResponse(f"{redirect_url}{error_sep}error=Неизвестный вид сверки", status_code=303)
 
     try:
         balance_val = _parse_amount(balance)
@@ -467,9 +487,48 @@ def add_snapshot(
     except ValueError:
         return RedirectResponse(f"{redirect_url}{error_sep}error=Неверная сумма или дата", status_code=303)
 
-    db.add(AccountBalanceSnapshot(
-        organization_id=int(organization_id), date=date_val,
-        balance=balance_val, comment=comment.strip() or None, created_by=user.id,
-    ))
+    subject = int(subject_id) if subject_id.isdigit() else None
+    if kind == reconciliation.SUPPLIER_DEBT and subject is None:
+        return RedirectResponse(f"{redirect_url}{error_sep}error=Не выбран поставщик", status_code=303)
+
+    rec = reconciliation.create(
+        db, organization_id=int(organization_id), kind=kind, actual=balance_val,
+        user_id=user.id, on_date=date_val, subject_id=subject, reason=comment,
+    )
+    # Расхождение без объяснения — это ровно та дыра, ради которой всё
+    # затевалось: цифра меняется, причина неизвестна. Мелкие расхождения
+    # (сдача, округление) пропускаем без пояснения, заметные — нет.
+    if reconciliation.severity(rec.expected_amount, rec.delta) == "big" and not rec.reason:
+        db.rollback()
+        msg = quote("Разница заметная — напишите, что произошло, без этого сверка не сохранится")
+        return RedirectResponse(f"{redirect_url}{error_sep}error={msg}", status_code=303)
+
+    db.commit()
+    return RedirectResponse(redirect_url, status_code=303)
+
+
+@router.post("/reconcile/{rec_id}/cancel")
+def cancel_reconciliation(
+    rec_id: int,
+    request: Request,
+    reason: str = Form(default=""),
+    org_id: str = Form(default=""),
+    db: Session = Depends(get_db),
+):
+    """Отмена сверки вместо удаления — строка остаётся видна с причиной.
+    Иначе исправление опечатки ничем не отличалось бы от заметания следов."""
+    user, redirect = _guard(request, db)
+    if redirect:
+        return redirect
+    redirect_url = f"/podotchet/?org_id={org_id}" if org_id else "/podotchet/"
+    error_sep = "&" if org_id else "?"
+
+    if not reason.strip():
+        msg = quote("Напишите, почему отменяете сверку")
+        return RedirectResponse(f"{redirect_url}{error_sep}error={msg}", status_code=303)
+
+    if reconciliation.cancel(db, rec_id, user.id, reason) is None:
+        msg = quote("Сверка не найдена или уже отменена")
+        return RedirectResponse(f"{redirect_url}{error_sep}error={msg}", status_code=303)
     db.commit()
     return RedirectResponse(redirect_url, status_code=303)
