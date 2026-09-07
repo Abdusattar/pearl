@@ -1,4 +1,7 @@
+from datetime import date as date_cls
+from decimal import Decimal, InvalidOperation
 from pathlib import Path
+from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, Form, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
@@ -8,6 +11,7 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.dependencies import get_current_user, get_accessible_orgs, resolve_org
 from app.models import Employee
+from app.services import payroll as payroll_service, podotchet
 from app.services.unit_economics import monthly_payroll
 
 router = APIRouter(prefix="/employees", tags=["employees"])
@@ -57,6 +61,105 @@ def employee_list(request: Request, org_id: str | None = None, db: Session = Dep
         "active_count": active_count,
         "active_page": "employees",
     })
+
+
+@router.get("/payroll", response_class=HTMLResponse)
+def payroll_sheet(request: Request, org_id: str | None = None, month: str | None = None,
+                  db: Session = Depends(get_db)):
+    """Ведомость выдачи за месяц — по строке на сотрудника.
+
+    Заменяет проводку «ФОТ» одной суммой на всех: по ней не видно, кто сколько
+    получил и кому ещё должны, а выдают по факту (аванс, часть, неполный месяц)."""
+    user, redirect = _guard(request, db)
+    if redirect:
+        return redirect
+
+    accessible = get_accessible_orgs(user, db)
+    current_org = resolve_org(int(org_id) if org_id and org_id.isdigit() else None, user, db)
+    if not current_org:
+        return RedirectResponse("/employees/", status_code=302)
+
+    try:
+        period = date_cls.fromisoformat(month) if month else payroll_service.month_start()
+    except ValueError:
+        period = payroll_service.month_start()
+    period = period.replace(day=1)
+
+    sheet = payroll_service.month_sheet(db, current_org.id, period)
+    return templates.TemplateResponse("employees/payroll.html", {
+        "request": request,
+        "current_user": user,
+        "accessible_orgs": accessible,
+        "current_org_id": current_org.id,
+        "current_org_name": current_org.name,
+        "sheet": sheet,
+        "totals": payroll_service.totals(sheet),
+        "period": period,
+        "today": date_cls.today().isoformat(),
+        # Выдавать можно только те деньги, что реально есть в кассе объекта —
+        # иначе касса уходит в минус молча, как это уже случилось (07.09).
+        "cash": podotchet.get_org_balance(db, current_org.id),
+        "active_page": "employees",
+    })
+
+
+@router.post("/payroll")
+def pay_salaries(
+    request: Request,
+    org_id: str = Form(...),
+    month: str = Form(...),
+    pay_date: str = Form(default=""),
+    employee_id: list[str] = Form(default=[]),
+    amount: list[str] = Form(default=[]),
+    db: Session = Depends(get_db),
+):
+    """Провести выдачу: по одному расходу на каждого, кому вписали сумму."""
+    user, redirect = _guard(request, db)
+    if redirect:
+        return redirect
+
+    back = f"/employees/payroll?org_id={org_id}&month={month}"
+    try:
+        period = date_cls.fromisoformat(month).replace(day=1)
+        on_date = date_cls.fromisoformat(pay_date) if pay_date else date_cls.today()
+    except ValueError:
+        return RedirectResponse(f"{back}&error={quote('Неверная дата')}", status_code=303)
+
+    org_id_int = int(org_id)
+    employees = {
+        e.id: e for e in db.query(Employee).filter(
+            Employee.organization_id == org_id_int, Employee.status == "active"
+        ).all()
+    }
+
+    to_pay: list[tuple[Employee, Decimal]] = []
+    for i, emp_str in enumerate(employee_id):
+        if not emp_str.isdigit() or int(emp_str) not in employees:
+            continue
+        raw = (amount[i] if i < len(amount) else "").strip().replace(" ", "").replace(",", ".")
+        if not raw:
+            continue
+        try:
+            value = Decimal(raw)
+        except InvalidOperation:
+            continue
+        if value > 0:
+            to_pay.append((employees[int(emp_str)], value))
+
+    if not to_pay:
+        return RedirectResponse(f"{back}&error={quote('Не указано ни одной суммы')}", status_code=303)
+
+    total = sum((v for _, v in to_pay), Decimal(0))
+    cash = podotchet.get_org_balance(db, org_id_int)
+    if total > cash:
+        msg = f"В кассе {cash:,.2f} с, а выдаёте {total:,.2f} с — сначала заведите снятие со счёта"
+        return RedirectResponse(f"{back}&error={quote(msg)}", status_code=303)
+
+    for employee, value in to_pay:
+        payroll_service.pay(db, organization_id=org_id_int, employee=employee,
+                            amount=value, period=period, on_date=on_date, user_id=user.id)
+    db.commit()
+    return RedirectResponse(back, status_code=303)
 
 
 @router.post("/", response_class=HTMLResponse)

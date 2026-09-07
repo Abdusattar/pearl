@@ -43,7 +43,16 @@
     <div class="recur-name">{{ row.template.name }}</div>
 
     {% set is_payroll = row.template.amount_source == "employees_sum" %}
-    {% if row.postings %}
+    {# Зарплата с 07.09 проводится по каждому сотруднику отдельно, на
+       /employees/payroll — по общей сумме не видно, кто сколько получил и кому
+       ещё должны. Оставлять оба способа нельзя: рано или поздно проведут
+       дважды. Старые проводки, если они есть, показываем как были. #}
+    {% if is_payroll and not row.postings %}
+    <div class="recur-posted">
+      <span class="form-hint">Зарплата теперь проводится по каждому сотруднику</span>
+      <a href="/employees/payroll?org_id={{ current_org_id }}" class="btn btn-primary">Выдать зарплату →</a>
+    </div>
+    {% elif row.postings %}
       {% for p in row.postings %}
       <div class="recur-posted">
         <span class="badge badge-confirmed">Проведено {{ "{:,.0f}".format(p.amount) }} с, {{ p.date.strftime("%d.%m") }}</span>

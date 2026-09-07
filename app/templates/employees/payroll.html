@@ -1,0 +1,117 @@
+{% extends "base.html" %}
+{% set active_page = "employees" %}
+
+{% block title %}Выдача зарплаты — Жемчужина{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <h1>Выдача зарплаты</h1>
+  <a href="/employees/?org_id={{ current_org_id }}" class="btn btn-secondary">Сотрудники</a>
+</div>
+
+<div class="form-hint" style="margin-bottom:16px">
+  {{ current_org_name }} · {{ period.strftime("%m.%Y") }}
+</div>
+
+{% if request.query_params.get('error') %}
+<div class="alert alert-error" style="margin-bottom:18px">{{ request.query_params.get('error') }}</div>
+{% endif %}
+
+<div class="stat-grid" style="grid-template-columns:repeat(3,1fr);margin-bottom:18px">
+  <div class="stat-box">
+    <div class="stat-label">Начислено по окладам</div>
+    <div class="stat-value">{{ "{:,.2f}".format(totals.accrued) }} с</div>
+  </div>
+  <div class="stat-box">
+    <div class="stat-label">Выдано за месяц</div>
+    <div class="stat-value">{{ "{:,.2f}".format(totals.issued) }} с</div>
+  </div>
+  <div class="stat-box">
+    <div class="stat-label">Осталось выдать</div>
+    <div class="stat-value">{{ "{:,.2f}".format(totals.left) }} с</div>
+  </div>
+</div>
+
+{% if not sheet %}
+<div class="alert alert-error">
+  У «{{ current_org_name }}» нет активных сотрудников.
+  <a href="/employees/?org_id={{ current_org_id }}" style="color:inherit;text-decoration:underline">Завести →</a>
+</div>
+{% else %}
+
+<form method="post" action="/employees/payroll">
+  <input type="hidden" name="org_id" value="{{ current_org_id }}">
+  <input type="hidden" name="month" value="{{ period.isoformat() }}">
+
+  <div class="card" style="margin-bottom:18px">
+    <div class="form-hint" style="margin-bottom:12px">
+      Впишите, сколько человек получил на руки. Не обязательно оклад — если выдали
+      часть или аванс, так и пишите: остаток можно выдать позже отдельной строкой.
+    </div>
+
+    <div class="table-wrap">
+      <table class="table">
+        <thead>
+          <tr>
+            <th>Сотрудник</th>
+            <th class="num">Оклад</th>
+            <th class="num">Уже выдано</th>
+            <th class="num">Выдать сейчас</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in sheet %}
+          <tr>
+            <td data-label="Сотрудник">
+              <div style="font-weight:600">{{ row.employee.full_name }}</div>
+              {% if row.employee.role %}<div class="form-hint">{{ row.employee.role }}</div>{% endif %}
+            </td>
+            <td data-label="Оклад" class="num">{{ "{:,.0f}".format(row.salary) }}</td>
+            <td data-label="Уже выдано" class="num">{{ "{:,.0f}".format(row.issued) }}</td>
+            <td data-label="Выдать сейчас" class="num">
+              <input type="hidden" name="employee_id" value="{{ row.employee.id }}">
+              <input class="form-control" type="text" name="amount" inputmode="decimal"
+                     style="max-width:130px;text-align:right"
+                     placeholder="{{ "{:,.0f}".format(row.left) }}">
+            </td>
+            <td data-label="Статус">
+              {% if row.issued <= 0 %}
+                <span class="badge badge-pending">не выдано</span>
+              {% elif row.left > 0 %}
+                <span class="badge badge-pending">должны {{ "{:,.0f}".format(row.left) }}</span>
+              {% else %}
+                <span class="badge badge-confirmed">полностью</span>
+              {% endif %}
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+
+    {# Выдать больше, чем есть в кассе, нельзя — иначе касса молча уходит в
+       минус, как это уже случалось до появления сверки (07.09). #}
+    <div class="alert" style="margin-top:16px;padding:11px 13px;border-radius:9px;font-size:13px;
+         background:{% if cash > 0 %}#f0fdf4;border:1px solid #bbf7d0;color:#14532d
+                    {% else %}#fffbeb;border:1px solid #fde68a;color:#78350f{% endif %}">
+      В кассе сейчас <strong>{{ "{:,.2f}".format(cash) }} с</strong>.
+      {% if cash <= 0 %}
+      Выдавать нечего — сначала заведите снятие со счёта на
+      <a href="/podotchet/?org_id={{ current_org_id }}" style="color:inherit;text-decoration:underline">Подотчёте</a>.
+      {% endif %}
+    </div>
+
+    <div class="split-row" style="margin-top:16px">
+      <div class="form-group" style="margin-bottom:0">
+        <label>Дата выдачи</label>
+        <input class="form-control" type="date" name="pay_date" value="{{ today }}">
+      </div>
+      <div class="form-group" style="margin-bottom:0;display:flex;align-items:end">
+        <button type="submit" class="btn btn-primary" style="width:100%;height:46px">Провести выдачу</button>
+      </div>
+    </div>
+  </div>
+</form>
+{% endif %}
+{% endblock %}

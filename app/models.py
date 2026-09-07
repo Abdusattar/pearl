@@ -251,6 +251,12 @@ class Transaction(Base):
     # и всех обычных ручных доходов — их этот механизм не касается.
     service_id      = Column(Integer, ForeignKey("services.id"), nullable=True)
     charge_id       = Column(Integer, ForeignKey("charges.id"), nullable=True)
+    # Кому выдали зарплату (07.09). Раньше ФОТ проводился одной суммой на всех
+    # через RecurringExpenseTemplate — по такой проводке нельзя сказать, кто
+    # сколько получил и кому ещё должны, а выдают по факту, и факт не равен
+    # окладу (аванс, часть, неполный месяц). Вместе с `period` — месяц, за
+    # который выдано, — даёт полную картину по каждому человеку.
+    employee_id     = Column(Integer, ForeignKey("employees.id"), nullable=True)
     created_by      = Column(Integer, ForeignKey("users.id"))
     created_at      = Column(DateTime, server_default=func.now())
     updated_at      = Column(DateTime, server_default=func.now(), onupdate=func.now())
