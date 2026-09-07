@@ -58,6 +58,10 @@
       <label>ИНН</label>
       <input type="text" name="inn" class="form-control" value="{{ supplier.inn or '' }}">
     </div>
+    {# Начальное сальдо меняет сумму долга поставщику напрямую, минуя закупы и
+       платежи — поэтому оператору (staff) поле не показываем и роутер его
+       правку игнорирует. Форму видит, долг менять не может (07.09). #}
+    {% if current_user.role != "staff" %}
     <div class="split-row">
       <div class="form-group" style="margin-bottom:0">
         <label>Начальное сальдо (долг на начало учёта)</label>
@@ -70,6 +74,7 @@
                value="{{ supplier.opening_balance_date.isoformat() if supplier.opening_balance_date else '' }}">
       </div>
     </div>
+    {% endif %}
     <div style="display:flex;gap:8px">
       <button type="submit" class="btn btn-primary">Сохранить</button>
       <button type="button" class="btn btn-secondary" onclick="toggleBlock('supplier', false)">Отмена</button>

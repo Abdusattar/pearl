@@ -30,6 +30,18 @@
 </div>
 {% endif %}
 
+{# Перерасход раньше был не виден: FIFO обнуляет остатки, «на руках» упирается
+   в 0, а разница пропадает. Найдено 07.09 — у Сокулука так набралось 11 326. #}
+{% if uncovered and uncovered > 1 %}
+<div class="alert" style="background:#fffbeb;border:1px solid #fde68a;color:#78350f;padding:12px 14px;border-radius:8px;margin-bottom:18px">
+  <strong>Расходов больше, чем выданных денег — на {{ "{:,.2f}".format(uncovered) }} с.</strong>
+  <div style="margin-top:4px;font-size:13px">
+    Значит какое-то снятие не занесено в систему, либо расход попал дважды.
+    Проверьте снятия за последние дни — деньги тратили из того, чего в системе нет.
+  </div>
+</div>
+{% endif %}
+
 <div class="stat-grid" style="grid-template-columns:repeat(3,1fr);margin-bottom:14px">
   <div class="stat-box">
     <div class="stat-label">Остаток на счету</div>
@@ -190,11 +202,19 @@
 
 <div class="card" id="reconcile-card" style="max-width:640px">
   <div style="font-size:13px;color:var(--text-muted);margin-bottom:12px">Новая сверка — ввести реальный остаток по счёту</div>
+  {# 07.09: снятые 60 000 попали в поле остатка — человек понял «сверку» как
+     «занести операцию». Отсюда явная подпись и показ расчётной цифры рядом:
+     видно, с чем сравниваешь, ещё до сохранения. #}
+  <div class="alert" style="background:#eef2ff;border:1px solid #c7d2fe;color:#3730a3;padding:10px 12px;border-radius:8px;font-size:13px;margin-bottom:14px">
+    Впишите, <strong>сколько денег осталось на счету</strong> — как показывает приложение банка.
+    Это не сумма снятия: снятие заводится отдельно, кнопкой «Снять деньги».
+    <div style="margin-top:6px">По расчёту сейчас должно быть <strong>{{ "{:,.2f}".format(expected.expected) }} с</strong>.</div>
+  </div>
   <form method="post" action="/podotchet/reconcile" style="display:grid;grid-template-columns:1fr 1fr auto;gap:16px;align-items:end">
     <input type="hidden" name="organization_id" value="{{ current_org_id }}">
     <input type="hidden" name="org_id" value="{{ current_org_id }}">
     <div class="form-group" style="margin-bottom:0">
-      <label>Реальный остаток *</label>
+      <label>Сколько осталось на счету *</label>
       <input class="form-control" type="text" name="balance" placeholder="0" required>
     </div>
     <div class="form-group" style="margin-bottom:0">
@@ -202,17 +222,23 @@
       <input class="form-control" type="date" name="date" value="{{ today }}" required>
     </div>
     <button type="submit" class="btn btn-primary" style="height:44px">Сохранить</button>
+    <div class="form-group" style="margin-bottom:0;grid-column:1/-1">
+      <label>Пояснение, если цифра не сошлась с расчётом</label>
+      <input class="form-control" type="text" name="comment"
+             placeholder="Например: 3 000 отдала на ремонт котла, чек занесу завтра">
+    </div>
   </form>
   {% if snapshots %}
   <div class="table-wrap" style="margin-top:18px">
     <table class="table">
-      <thead><tr><th>Дата</th><th>Введено</th><th>Кто ввёл</th></tr></thead>
+      <thead><tr><th>Дата</th><th>Введено</th><th>Кто ввёл</th><th>Пояснение</th></tr></thead>
       <tbody>
         {% for s in snapshots[:5] %}
         <tr>
           <td data-label="Дата">{{ s.date.strftime("%d.%m.%Y") }}</td>
           <td data-label="Введено" class="num">{{ "{:,.2f}".format(s.balance) }} с</td>
           <td data-label="Кто ввёл">{{ users_lookup.get(s.created_by, "?") }}</td>
+          <td data-label="Пояснение" style="color:var(--text-muted);font-size:13px">{{ s.comment or "—" }}</td>
         </tr>
         {% endfor %}
       </tbody>

@@ -19,11 +19,12 @@ def _guard(request: Request, db: Session):
     """Доступ owner/founder/staff — тот же круг, что у /employees/ (10.07,
     расширено 27.07 под Махабат): дашборд показывает ФОТ и вообще всю
     финансовую картину, секретность здесь не имеет смысла для тех, кто и так
-    вводит эти данные."""
+    вводит эти данные. Мунара (manager) добавлена 07.09 вместе с /employees/ —
+    круг держим одинаковым, иначе ФОТ виден в одном месте и скрыт в другом."""
     user = get_current_user(request, db)
     if not user:
         return None, RedirectResponse("/login", status_code=302)
-    if user.role not in ("owner", "founder", "staff"):
+    if user.role not in ("owner", "founder", "staff", "manager"):
         return None, RedirectResponse("/", status_code=302)
     return user, None
 

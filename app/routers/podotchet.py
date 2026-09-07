@@ -180,6 +180,7 @@ def podotchet_page(request: Request, org_id: str | None = None, db: Session = De
         "category_spend": category_spend,
         "flow_rows": flow_rows,
         "snapshots": snapshots,
+        "uncovered": podotchet.get_uncovered_expenses(db, current_org.id),
         "ledger_rows": ledger_rows,
         "founders": founders,
         "founder_capital": founder_capital,

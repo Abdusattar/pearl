@@ -96,13 +96,33 @@ def edit_supplier(
         supplier.name = name.strip()
         supplier.phone = phone.strip()
         supplier.inn = inn.strip() or None
-        try:
-            supplier.opening_balance = float((opening_balance or "0").replace(",", ".")) or 0
-        except ValueError:
-            pass
-        supplier.opening_balance_date = (
-            datetime.strptime(opening_balance_date, "%Y-%m-%d").date() if opening_balance_date else None
-        )
+        # «Долг на начало» — не обычное поле карточки, а прямая правка суммы,
+        # которую бизнес должен поставщику: она меняет баланс расчётов, минуя
+        # закупы и платежи. До 07.09 её мог поменять любой залогиненный, и след
+        # нигде не оставался. Теперь — не оператор (staff), и каждая правка
+        # пишется в журнал со старым и новым значением.
+        old_balance = float(supplier.opening_balance or 0)
+        old_date = supplier.opening_balance_date
+        new_balance, new_date = old_balance, old_date
+        if user.role != "staff":
+            try:
+                new_balance = float((opening_balance or "0").replace(",", ".")) or 0
+            except ValueError:
+                new_balance = old_balance
+            new_date = (
+                datetime.strptime(opening_balance_date, "%Y-%m-%d").date() if opening_balance_date else None
+            )
+            if new_balance != old_balance or new_date != old_date:
+                supplier.opening_balance = new_balance
+                supplier.opening_balance_date = new_date
+                db.add(AuditLog(
+                    entity_type="supplier_opening_balance", entity_id=supplier_id,
+                    action="update", user_id=user.id,
+                    old_data={"opening_balance": old_balance,
+                              "opening_balance_date": old_date.isoformat() if old_date else None},
+                    new_data={"opening_balance": new_balance,
+                              "opening_balance_date": new_date.isoformat() if new_date else None},
+                ))
         db.commit()
     redirect_url = f"/suppliers/{supplier_id}?org_id={org_id}" if org_id else f"/suppliers/{supplier_id}"
     return RedirectResponse(redirect_url, status_code=303)

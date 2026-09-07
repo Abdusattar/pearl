@@ -57,12 +57,8 @@ def _funding_buckets(db: Session, organization_id: int) -> list[dict]:
     ]
 
 
-def get_podotchet_ledger(db: Session, organization_id: int) -> list[dict]:
-    """Пополнения этого бизнеса с остатком (remaining) после списания расходов
-    FIFO — от самого старого пополнения к новому. Изъятия учредителей
-    (CapitalWithdrawal) уменьшают пул тем же образом, что расходы — деньги
-    физически ушли из кассы, но это не Transaction/расход бизнеса."""
-    buckets = _funding_buckets(db, organization_id)
+def _spent_pool(db: Session, organization_id: int) -> Decimal:
+    """Сколько денег ушло из кассы: расходы из подотчёта + изъятия учредителей."""
     consumed = db.query(func.coalesce(func.sum(
         func.coalesce(Transaction.amount_paid, Transaction.amount)
     ), 0)).filter(
@@ -77,12 +73,34 @@ def get_podotchet_ledger(db: Session, organization_id: int) -> list[dict]:
         CapitalWithdrawal.date >= PODOTCHET_START_DATE,
         CapitalWithdrawal.deleted_at.is_(None),
     ).scalar()
-    pool = Decimal(consumed) + Decimal(withdrawn_capital)
+    return Decimal(consumed) + Decimal(withdrawn_capital)
+
+
+def get_podotchet_ledger(db: Session, organization_id: int) -> list[dict]:
+    """Пополнения этого бизнеса с остатком (remaining) после списания расходов
+    FIFO — от самого старого пополнения к новому. Изъятия учредителей
+    (CapitalWithdrawal) уменьшают пул тем же образом, что расходы — деньги
+    физически ушли из кассы, но это не Transaction/расход бизнеса."""
+    buckets = _funding_buckets(db, organization_id)
+    pool = _spent_pool(db, organization_id)
     for b in buckets:
         applied = min(b["amount"], pool)
         b["remaining"] = b["amount"] - applied
         pool -= applied
     return buckets
+
+
+def get_uncovered_expenses(db: Session, organization_id: int) -> Decimal:
+    """Расходы, на которые не хватило выданных на руки денег (07.09).
+
+    FIFO обнуляет бакеты и остаток «на руках» упирается в 0 — сам перерасход
+    при этом нигде не виден. А он означает конкретную вещь: деньги тратили из
+    того, что в систему не занесено (не завели снятие, взяли из личных, или
+    расход задвоен). У Садика Сокулук так набралось 11 326 сом, и заметить это
+    можно было только запросом к базе."""
+    spent = _spent_pool(db, organization_id)
+    funded = sum((b["amount"] for b in _funding_buckets(db, organization_id)), ZERO)
+    return max(ZERO, spent - funded)
 
 
 def get_org_balance(db: Session, organization_id: int) -> Decimal:

@@ -18,11 +18,13 @@ def _guard(request: Request, db: Session):
     """Оклады — чувствительные данные, доступ только owner/founder/staff
     (не Мунаре/Айжан) — решено 10.07. Махабат (role=staff) добавлена 27.07:
     она главный учётчик Сокулука и уже знает зарплаты сотрудников на практике,
-    секретность от неё смысла не имеет — пусть ведёт ведомость сама."""
+    секретность от неё смысла не имеет — пусть ведёт ведомость сама.
+    Мунара (role=manager) добавлена 07.09: получалась инверсия — оператор видел
+    оклады, а управляющая садиками, у которой деньги на руках, нет."""
     user = get_current_user(request, db)
     if not user:
         return None, RedirectResponse("/login", status_code=302)
-    if user.role not in ("owner", "founder", "staff"):
+    if user.role not in ("owner", "founder", "staff", "manager"):
         return None, RedirectResponse("/", status_code=302)
     return user, None
 

@@ -339,7 +339,11 @@
   <a href="/expenses/{% if current_org_id %}?org_id={{ current_org_id }}{% endif %}" class="{% if active_page == 'expenses' or active_page == 'recurring' %}active{% endif %}">Расходы</a>
   <a href="/income/{% if current_org_id %}?org_id={{ current_org_id }}{% endif %}" class="{% if active_page == 'income' %}active{% endif %}">Оплаты</a>
   <a href="/suppliers/{% if current_org_id %}?org_id={{ current_org_id }}{% endif %}" class="{% if active_page == 'suppliers' %}active{% endif %}">Поставщики</a>
+  {# Круг тот же, что ALLOWED_ROLES в routers/podotchet.py — иначе Айжан (director)
+     видела пункт в меню, жала и её молча выбрасывало на главную (найдено 07.09). #}
+  {% if current_user.role in ("owner", "founder", "staff", "manager") %}
   <a href="/podotchet/{% if current_org_id %}?org_id={{ current_org_id }}{% endif %}" class="{% if active_page == 'podotchet' %}active{% endif %}">Подотчёт</a>
+  {% endif %}
   <div class="section">Учёт</div>
   <a href="/students/{% if current_org_id %}?org_id={{ current_org_id }}{% endif %}" class="{% if active_page == 'students' or active_page == 'attendance' %}active{% endif %}">Дети</a>
   <a href="/services/{% if current_org_id %}?org_id={{ current_org_id }}{% endif %}" class="{% if active_page == 'services' %}active{% endif %}">Услуги</a>
@@ -348,12 +352,12 @@
   {% if current_user.role != "staff" %}
   <a href="/assets/{% if current_org_id %}?org_id={{ current_org_id }}{% endif %}" class="{% if active_page == 'assets' %}active{% endif %}">Основные средства</a>
   {% endif %}
-  {% if current_user.role in ("owner", "founder", "staff") %}
+  {% if current_user.role in ("owner", "founder", "staff", "manager") %}
   <a href="/employees/{% if current_org_id %}?org_id={{ current_org_id }}{% endif %}" class="{% if active_page == 'employees' %}active{% endif %}">Сотрудники</a>
   {% endif %}
   <div class="section">Аналитика</div>
   <a href="/reports/{% if current_org_id %}?org_id={{ current_org_id }}{% endif %}" class="{% if active_page == 'reports' %}active{% endif %}">Отчёты</a>
-  {% if current_user.role in ("owner", "founder", "staff") %}
+  {% if current_user.role in ("owner", "founder", "staff", "manager") %}
   <a href="/dashboard/unit-economics{% if current_org_id %}?org_id={{ current_org_id }}{% endif %}" class="{% if active_page == 'dashboard' %}active{% endif %}">Юнит-экономика</a>
   {% endif %}
   {% if current_user.id == 1 %}
