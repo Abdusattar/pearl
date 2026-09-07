@@ -357,6 +357,9 @@
   {% endif %}
   <div class="section">Аналитика</div>
   <a href="/reports/{% if current_org_id %}?org_id={{ current_org_id }}{% endif %}" class="{% if active_page == 'reports' %}active{% endif %}">Отчёты</a>
+  {# Ручные правки остатков — отдельным пунктом и для всех, включая учредителей:
+     заказчик прямо просил, чтобы такие записи можно было проверить (07.09). #}
+  <a href="/podotchet/corrections{% if current_org_id %}?org_id={{ current_org_id }}{% endif %}" class="{% if active_page == 'corrections' %}active{% endif %}">Корректировки</a>
   {% if current_user.role in ("owner", "founder", "staff", "manager") %}
   <a href="/dashboard/unit-economics{% if current_org_id %}?org_id={{ current_org_id }}{% endif %}" class="{% if active_page == 'dashboard' %}active{% endif %}">Юнит-экономика</a>
   {% endif %}

@@ -491,6 +491,21 @@ def add_reconciliation(
     if kind == reconciliation.SUPPLIER_DEBT and subject is None:
         return RedirectResponse(f"{redirect_url}{error_sep}error=Не выбран поставщик", status_code=303)
 
+    # Долг поставщику правится один раз — по прямому требованию заказчика
+    # (07.09): корректировка нужна, чтобы завести долг «с прошлого года»,
+    # которого в системе нет, а не чтобы подгонять цифру каждый месяц. Дальше
+    # долг двигают закупы и платежи. Ошиблись — отмените запись с причиной,
+    # она останется видна в реестре корректировок.
+    if kind == reconciliation.SUPPLIER_DEBT:
+        existing = reconciliation.latest(db, int(organization_id),
+                                         reconciliation.SUPPLIER_DEBT, subject)
+        if existing is not None:
+            msg = quote(
+                f"Долг этому поставщику уже корректировали {existing.date.strftime('%d.%m.%Y')}. "
+                "Отмените ту запись, если она неверна."
+            )
+            return RedirectResponse(f"{redirect_url}{error_sep}error={msg}", status_code=303)
+
     rec = reconciliation.create(
         db, organization_id=int(organization_id), kind=kind, actual=balance_val,
         user_id=user.id, on_date=date_val, subject_id=subject, reason=comment,
@@ -505,6 +520,46 @@ def add_reconciliation(
 
     db.commit()
     return RedirectResponse(redirect_url, status_code=303)
+
+
+@router.get("/corrections", response_class=HTMLResponse)
+def corrections_registry(request: Request, org_id: str = "", db: Session = Depends(get_db)):
+    """Реестр всех корректировок остатков — касса, счёт, долги поставщикам.
+
+    Отдельная страница, потому что это не рутина, а события, которые собственник
+    должен иметь возможность проверить одним взглядом (требование заказчика
+    07.09). Доступ шире, чем у подотчёта: сюда должны попадать founder'ы, даже
+    если они не участвуют в операционке."""
+    user = get_current_user(request, db)
+    if not user:
+        return RedirectResponse("/login", status_code=302)
+
+    rows = reconciliation.all_corrections(db)
+    users_by_id = {u.id: u.name for u in db.query(User).all()}
+    orgs_by_id = {o.id: o.name for o in db.query(Organization).all()}
+    suppliers_by_id = {s.id: s.name for s in db.query(Supplier).all()}
+
+    items = [
+        {
+            "rec": r,
+            "org_name": orgs_by_id.get(r.organization_id, "?"),
+            "kind_label": reconciliation.KIND_LABELS.get(r.kind, r.kind),
+            "subject_name": suppliers_by_id.get(r.subject_id) if r.subject_id else None,
+            "author": users_by_id.get(r.created_by, "?"),
+            "canceller": users_by_id.get(r.cancelled_by) if r.cancelled_by else None,
+            "severity": reconciliation.severity(r.expected_amount, r.delta),
+        }
+        for r in rows
+    ]
+
+    return templates.TemplateResponse("podotchet/corrections.html", {
+        "request": request,
+        "current_user": user,
+        "accessible_orgs": get_accessible_orgs(user, db),
+        "current_org_id": int(org_id) if org_id.isdigit() else None,
+        "items": items,
+        "active_page": "corrections",
+    })
 
 
 @router.post("/reconcile/{rec_id}/cancel")

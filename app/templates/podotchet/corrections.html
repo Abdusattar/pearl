@@ -1,0 +1,70 @@
+{% extends "base.html" %}
+{% set active_page = "corrections" %}
+
+{% block title %}Корректировки — Жемчужина{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <h1>Корректировки остатков</h1>
+</div>
+
+<div class="form-hint" style="margin-bottom:18px;max-width:680px">
+  Здесь всё, что меняло остатки вручную — кассу, счёт и долги поставщикам. Каждая
+  строка показывает, сколько система ожидала и сколько человек указал по факту.
+  Записи не удаляются: ошибку исправляют отменой, и отменённая строка остаётся видна.
+</div>
+
+{% if not items %}
+<div class="card" style="max-width:680px">
+  <div style="font-weight:600;margin-bottom:4px">Корректировок пока не было</div>
+  <div class="form-hint">
+    Здесь появятся сверки кассы и счёта, а также подтверждённые долги поставщикам.
+  </div>
+</div>
+{% else %}
+
+<div class="table-wrap">
+  <table class="table">
+    <thead>
+      <tr>
+        <th>Дата</th>
+        <th>Что</th>
+        <th>Объект</th>
+        <th class="num">Ожидалось</th>
+        <th class="num">По факту</th>
+        <th class="num">Разница</th>
+        <th>Кто</th>
+        <th>Пояснение</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for it in items %}
+      <tr {% if it.rec.cancelled_at %}style="opacity:.55"{% endif %}>
+        <td data-label="Дата">{{ it.rec.date.strftime("%d.%m.%Y") }}</td>
+        <td data-label="Что">
+          {{ it.kind_label }}{% if it.subject_name %} — {{ it.subject_name }}{% endif %}
+          {% if it.rec.cancelled_at %}<span class="badge badge-rejected">отменена</span>{% endif %}
+        </td>
+        <td data-label="Объект">{{ it.org_name }}</td>
+        <td data-label="Ожидалось" class="num">{{ "{:,.2f}".format(it.rec.expected_amount) }}</td>
+        <td data-label="По факту" class="num">{{ "{:,.2f}".format(it.rec.actual_amount) }}</td>
+        <td data-label="Разница" class="num"
+            style="font-weight:600;color:{% if it.severity == 'big' %}var(--danger){% elif it.severity == 'small' %}#b45309{% else %}var(--text-muted){% endif %}">
+          {% if it.rec.delta %}{{ "{:+,.2f}".format(it.rec.delta) }}{% else %}сошлось{% endif %}
+        </td>
+        <td data-label="Кто">{{ it.author }}</td>
+        <td data-label="Пояснение" style="font-size:13px;color:var(--text-muted);max-width:280px">
+          {{ it.rec.reason or "—" }}
+          {% if it.rec.cancelled_at %}
+          <div style="margin-top:2px">
+            Отменил {{ it.canceller or "?" }}: {{ it.rec.cancel_reason or "без причины" }}
+          </div>
+          {% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endif %}
+{% endblock %}

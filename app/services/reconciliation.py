@@ -105,6 +105,21 @@ def severity(expected: Decimal, delta: Decimal) -> str:
     return "big"
 
 
+def all_corrections(db: Session, limit: int = 200) -> list[Reconciliation]:
+    """Реестр всех корректировок — касса, счёт, долги — по всем объектам.
+
+    Отдельный список по прямому требованию заказчика (07.09): «все
+    корректировки, что изменяют кассу, счёт, долги особенно» должны быть
+    собраны в одном месте, «чтобы учредители могли проверить». Каждая правка
+    остатка — событие, а не рутина, и оно должно быть на виду."""
+    return (
+        db.query(Reconciliation)
+        .order_by(Reconciliation.created_at.desc(), Reconciliation.id.desc())
+        .limit(limit)
+        .all()
+    )
+
+
 def create(db: Session, *, organization_id: int, kind: str, actual: Decimal,
            user_id: int, on_date: date_cls | None = None,
            subject_id: int | None = None, reason: str = "") -> Reconciliation:

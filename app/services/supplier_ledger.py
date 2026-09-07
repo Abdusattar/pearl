@@ -12,13 +12,50 @@ from decimal import Decimal
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
-from app.models import ReceiptTransaction, Supplier, SupplierPayment, Transaction
+from app.models import Reconciliation, ReceiptTransaction, Supplier, SupplierPayment, Transaction
 
 ZERO = Decimal("0")
 # Копейки (тыйын) в обороте фактически не участвуют — остаток долга меньше 1 сома
 # не является реальным долгом (округление/копеечный хвост от ручного ввода), а не
 # то, что кто-то реально должен вернуть.
 DUST = Decimal("1")
+
+
+def debt_reset(db: Session, supplier_id: int) -> Reconciliation | None:
+    """Действующая корректировка долга по поставщику, если она была (07.09).
+
+    Заводится один раз на поставщика — чтобы внести долг «с прошлого года»,
+    которого в системе нет (у Садика такие долги висят по нескольким
+    поставщикам, а в базе у всех ноль). После неё долг считается не с нуля, а
+    от заявленной суммы: закупы и платежи ДО даты корректировки уже учтены в
+    ней самой, иначе вышел бы двойной счёт."""
+    return (
+        db.query(Reconciliation)
+        .filter(
+            Reconciliation.kind == "supplier_debt",
+            Reconciliation.subject_id == supplier_id,
+            Reconciliation.cancelled_at.is_(None),
+        )
+        .order_by(Reconciliation.date.desc(), Reconciliation.id.desc())
+        .first()
+    )
+
+
+def _debt_resets(db: Session, supplier_ids: list[int]) -> dict[int, Reconciliation]:
+    """То же батчем — для _bulk_ledger_buckets."""
+    if not supplier_ids:
+        return {}
+    rows = (
+        db.query(Reconciliation)
+        .filter(
+            Reconciliation.kind == "supplier_debt",
+            Reconciliation.subject_id.in_(supplier_ids),
+            Reconciliation.cancelled_at.is_(None),
+        )
+        .order_by(Reconciliation.date.asc(), Reconciliation.id.asc())
+        .all()
+    )
+    return {r.subject_id: r for r in rows}  # последняя по порядку побеждает
 
 
 def _debt_buckets(db: Session, supplier_id: int) -> list[dict]:
@@ -28,7 +65,22 @@ def _debt_buckets(db: Session, supplier_id: int) -> list[dict]:
     чека в одну строку истории — иначе один визит к Айбеку выглядел бы как N закупов."""
     supplier = db.query(Supplier).get(supplier_id)
     buckets = []
-    if supplier and supplier.opening_balance and supplier.opening_balance > ZERO:
+    reset = debt_reset(db, supplier_id)
+
+    if reset is not None:
+        # Корректировка заменяет и начальное сальдо, и всё, что было до её даты:
+        # человек назвал долг «на сегодня», значит прошлые закупы в эту сумму
+        # уже вошли. Складывать одно с другим — двойной счёт.
+        if Decimal(reset.actual_amount) > ZERO:
+            buckets.append({
+                "kind": "reconciliation",
+                "date": reset.date,
+                "transaction_id": None,
+                "receipt_id": None,
+                "description": "Долг подтверждён сверкой",
+                "original": Decimal(reset.actual_amount),
+            })
+    elif supplier and supplier.opening_balance and supplier.opening_balance > ZERO:
         buckets.append({
             "kind": "opening",
             "date": supplier.opening_balance_date or (supplier.created_at.date() if supplier.created_at else None),
@@ -38,16 +90,17 @@ def _debt_buckets(db: Session, supplier_id: int) -> list[dict]:
             "original": Decimal(supplier.opening_balance),
         })
 
-    txs = (
+    tx_query = (
         db.query(Transaction)
         .filter(
             Transaction.supplier_id == supplier_id,
             Transaction.type == "expense",
             Transaction.deleted_at.is_(None),
         )
-        .order_by(Transaction.date.asc(), Transaction.id.asc())
-        .all()
     )
+    if reset is not None:
+        tx_query = tx_query.filter(Transaction.date > reset.date)
+    txs = tx_query.order_by(Transaction.date.asc(), Transaction.id.asc()).all()
     tx_ids = [t.id for t in txs]
     receipt_by_tx = {}
     if tx_ids:
@@ -70,19 +123,24 @@ def _debt_buckets(db: Session, supplier_id: int) -> list[dict]:
                 "original": original,
             })
 
-    buckets.sort(key=lambda b: (b["date"] or date_cls.min, b["kind"] != "opening"))
+    buckets.sort(key=lambda b: (b["date"] or date_cls.min, b["kind"] == "purchase"))
     return buckets
 
 
 def get_supplier_ledger(db: Session, supplier_id: int) -> list[dict]:
-    """Бакеты долга (opening + недоплаченные закупы), каждый с remaining после применения
-    всех платежей FIFO по дате (от самого старого долга к новому)."""
+    """Бакеты долга (сверка либо opening + недоплаченные закупы), каждый с remaining
+    после применения платежей FIFO по дате (от самого старого долга к новому)."""
     buckets = _debt_buckets(db, supplier_id)
-    total_payments = db.query(func.coalesce(func.sum(SupplierPayment.amount), 0)).filter(
+    reset = debt_reset(db, supplier_id)
+    payments_q = db.query(func.coalesce(func.sum(SupplierPayment.amount), 0)).filter(
         SupplierPayment.supplier_id == supplier_id,
         SupplierPayment.deleted_at.is_(None),
-    ).scalar()
-    pool = Decimal(total_payments)
+    )
+    # Платежи до сверки уже отражены в подтверждённой сумме долга — иначе
+    # погасили бы её второй раз.
+    if reset is not None:
+        payments_q = payments_q.filter(SupplierPayment.date > reset.date)
+    pool = Decimal(payments_q.scalar())
     for b in buckets:
         applied = min(b["original"], pool)
         b["remaining"] = b["original"] - applied
@@ -126,6 +184,12 @@ def _bulk_ledger_buckets(db: Session, supplier_ids: list[int]) -> dict[int, list
         s.id: s for s in db.query(Supplier).filter(Supplier.id.in_(supplier_ids)).all()
     }
 
+    # Корректировки долга — та же логика, что в _debt_buckets/get_supplier_ledger:
+    # сверка заменяет всё, что было до её даты. Держать эти два пути в согласии
+    # обязательно — иначе список расходов и карточка поставщика показали бы
+    # разный долг по одному и тому же поставщику.
+    resets = _debt_resets(db, supplier_ids)
+
     txs = (
         db.query(Transaction)
         .filter(
@@ -138,20 +202,37 @@ def _bulk_ledger_buckets(db: Session, supplier_ids: list[int]) -> dict[int, list
     )
     txs_by_supplier: dict[int, list] = {}
     for t in txs:
+        reset = resets.get(t.supplier_id)
+        if reset is not None and t.date <= reset.date:
+            continue
         txs_by_supplier.setdefault(t.supplier_id, []).append(t)
 
-    payments_by_supplier = dict(
-        db.query(SupplierPayment.supplier_id, func.coalesce(func.sum(SupplierPayment.amount), 0))
+    payment_rows = (
+        db.query(SupplierPayment.supplier_id, SupplierPayment.date, SupplierPayment.amount)
         .filter(SupplierPayment.supplier_id.in_(supplier_ids), SupplierPayment.deleted_at.is_(None))
-        .group_by(SupplierPayment.supplier_id)
         .all()
     )
+    payments_by_supplier: dict[int, Decimal] = {}
+    for sid_, pdate, amount in payment_rows:
+        reset = resets.get(sid_)
+        if reset is not None and pdate is not None and pdate <= reset.date:
+            continue
+        payments_by_supplier[sid_] = payments_by_supplier.get(sid_, ZERO) + Decimal(amount)
 
     result: dict[int, list[dict]] = {}
     for sid in supplier_ids:
         buckets = []
         supplier = suppliers.get(sid)
-        if supplier and supplier.opening_balance and supplier.opening_balance > ZERO:
+        reset = resets.get(sid)
+        if reset is not None:
+            if Decimal(reset.actual_amount) > ZERO:
+                buckets.append({
+                    "kind": "reconciliation",
+                    "date": reset.date,
+                    "transaction_id": None,
+                    "original": Decimal(reset.actual_amount),
+                })
+        elif supplier and supplier.opening_balance and supplier.opening_balance > ZERO:
             buckets.append({
                 "kind": "opening",
                 "date": supplier.opening_balance_date or (supplier.created_at.date() if supplier.created_at else None),
@@ -168,7 +249,7 @@ def _bulk_ledger_buckets(db: Session, supplier_ids: list[int]) -> dict[int, list
                     "transaction_id": t.id,
                     "original": original,
                 })
-        buckets.sort(key=lambda b: (b["date"] or date_cls.min, b["kind"] != "opening"))
+        buckets.sort(key=lambda b: (b["date"] or date_cls.min, b["kind"] == "purchase"))
 
         pool = Decimal(payments_by_supplier.get(sid, 0))
         for b in buckets:
