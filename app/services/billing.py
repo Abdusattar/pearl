@@ -5,6 +5,7 @@ from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import func, text
 
 from app.models import Student, StudentService, Service, Charge, Transaction, Enrollment, Organization
+from app.services.students import TEST_PIN_THRESHOLD
 
 
 def get_tuition_service(db: Session, organization_id: int) -> Service | None:
@@ -194,6 +195,14 @@ def generate_monthly_charges(db: Session) -> int:
     created = 0
     for student in students:
         if student.id in already_charged:
+            continue
+
+        # Фиктивные дети из зарезервированного диапазона PIN (9001, 9002, 9003 —
+        # аккаунты для приёмочных прогонов Optima, см. wiki/payments/optima.md)
+        # начислений не получают: они не учатся и не должны попадать в долги.
+        # Найдено 07.09 — 9001 успел накопить два начисления по 10 000 (01.08 и
+        # 01.09) и висел должником на 20 000 в отчётах Садика Сокулук.
+        if student.pin and student.pin.isdigit() and int(student.pin) >= TEST_PIN_THRESHOLD:
             continue
 
         org = org_by_id.get(student.organization_id)
