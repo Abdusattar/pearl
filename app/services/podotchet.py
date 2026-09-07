@@ -20,7 +20,7 @@ from decimal import Decimal
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
-from app.models import AccountBalanceSnapshot, CashFunding, Transaction
+from app.models import AccountBalanceSnapshot, CapitalWithdrawal, CashFunding, Transaction
 
 ZERO = Decimal("0")
 # Копейки в обороте не считаются реальным остатком "на руках" — тот же порог,
@@ -50,6 +50,7 @@ def _funding_buckets(db: Session, organization_id: int) -> list[dict]:
             "source_type": f.source_type, "taken_by": f.taken_by,
             "accountable_user_id": f.accountable_user_id,
             "source_organization_id": f.source_organization_id,
+            "source_founder_id": f.source_founder_id,
             "comment": f.comment,
         }
         for f in fundings
@@ -58,7 +59,9 @@ def _funding_buckets(db: Session, organization_id: int) -> list[dict]:
 
 def get_podotchet_ledger(db: Session, organization_id: int) -> list[dict]:
     """Пополнения этого бизнеса с остатком (remaining) после списания расходов
-    FIFO — от самого старого пополнения к новому."""
+    FIFO — от самого старого пополнения к новому. Изъятия учредителей
+    (CapitalWithdrawal) уменьшают пул тем же образом, что расходы — деньги
+    физически ушли из кассы, но это не Transaction/расход бизнеса."""
     buckets = _funding_buckets(db, organization_id)
     consumed = db.query(func.coalesce(func.sum(
         func.coalesce(Transaction.amount_paid, Transaction.amount)
@@ -69,7 +72,12 @@ def get_podotchet_ledger(db: Session, organization_id: int) -> list[dict]:
         Transaction.date >= PODOTCHET_START_DATE,
         Transaction.deleted_at.is_(None),
     ).scalar()
-    pool = Decimal(consumed)
+    withdrawn_capital = db.query(func.coalesce(func.sum(CapitalWithdrawal.amount), 0)).filter(
+        CapitalWithdrawal.organization_id == organization_id,
+        CapitalWithdrawal.date >= PODOTCHET_START_DATE,
+        CapitalWithdrawal.deleted_at.is_(None),
+    ).scalar()
+    pool = Decimal(consumed) + Decimal(withdrawn_capital)
     for b in buckets:
         applied = min(b["amount"], pool)
         b["remaining"] = b["amount"] - applied
@@ -107,9 +115,19 @@ def get_expected_balance(db: Session, organization_id: int, as_of: date_cls) -> 
     base = Decimal(snapshot.balance) if snapshot else ZERO
     since = snapshot.date if snapshot else date_cls.min
 
+    # Доход, собранный наличными мимо счёта (оплата разовой услуги наличными,
+    # app/services/service_payments.py), создаёт income-Transaction И
+    # CashFunding(direct_cash, source_transaction_id) на ту же сумму — деньги уже
+    # посчитаны в кассе, на счёт они не попадали. Без этого исключения счёт
+    # задваивал бы такой доход (пойман 04.09, проверяя новый экран остатков).
+    cash_income_txn_ids = db.query(CashFunding.source_transaction_id).filter(
+        CashFunding.source_transaction_id.isnot(None), CashFunding.deleted_at.is_(None),
+    ).scalar_subquery()
+
     income = db.query(func.coalesce(func.sum(Transaction.amount), 0)).filter(
         Transaction.organization_id == organization_id, Transaction.type == "income",
         Transaction.date > since, Transaction.date <= as_of, Transaction.deleted_at.is_(None),
+        Transaction.id.notin_(cash_income_txn_ids),
     ).scalar()
 
     withdrawals = db.query(func.coalesce(func.sum(CashFunding.amount), 0)).filter(
@@ -151,6 +169,65 @@ def get_cross_org_flows(db: Session, since: date_cls, until: date_cls) -> list[d
         key = (r.source_organization_id, r.organization_id)
         grouped[key] = grouped.get(key, ZERO) + Decimal(r.amount)
     return [{"from_org_id": k[0], "to_org_id": k[1], "amount": v} for k, v in grouped.items()]
+
+
+def get_founder_capital(db: Session, organization_id: int) -> list[dict]:
+    """Баланс капитала по каждому учредителю (внесено − изъято) для этого
+    бизнеса — по совету финэксперта различаются по конкретному человеку, не
+    общей строкой, иначе через время не свести, кто сколько реально вложил."""
+    contributed: dict[int, Decimal] = {}
+    rows = db.query(CashFunding).filter(
+        CashFunding.organization_id == organization_id,
+        CashFunding.source_founder_id.isnot(None),
+        CashFunding.deleted_at.is_(None),
+    ).all()
+    for r in rows:
+        contributed[r.source_founder_id] = contributed.get(r.source_founder_id, ZERO) + Decimal(r.amount)
+
+    withdrawn: dict[int, Decimal] = {}
+    rows = db.query(CapitalWithdrawal).filter(
+        CapitalWithdrawal.organization_id == organization_id,
+        CapitalWithdrawal.deleted_at.is_(None),
+    ).all()
+    for r in rows:
+        withdrawn[r.founder_user_id] = withdrawn.get(r.founder_user_id, ZERO) + Decimal(r.amount)
+
+    founder_ids = set(contributed) | set(withdrawn)
+    return [
+        {
+            "founder_user_id": fid,
+            "contributed": contributed.get(fid, ZERO),
+            "withdrawn": withdrawn.get(fid, ZERO),
+            "balance": contributed.get(fid, ZERO) - withdrawn.get(fid, ZERO),
+        }
+        for fid in founder_ids
+    ]
+
+
+def get_capital_movements(db: Session, organization_id: int) -> list[dict]:
+    """Взносы и изъятия учредителей вместе, по дате — для истории на экране."""
+    moves = []
+    rows = db.query(CashFunding).filter(
+        CashFunding.organization_id == organization_id,
+        CashFunding.source_founder_id.isnot(None),
+        CashFunding.deleted_at.is_(None),
+    ).all()
+    for r in rows:
+        moves.append({
+            "kind": "in", "id": r.id, "date": r.date, "amount": Decimal(r.amount),
+            "founder_user_id": r.source_founder_id, "comment": r.comment,
+        })
+    rows = db.query(CapitalWithdrawal).filter(
+        CapitalWithdrawal.organization_id == organization_id,
+        CapitalWithdrawal.deleted_at.is_(None),
+    ).all()
+    for r in rows:
+        moves.append({
+            "kind": "out", "id": r.id, "date": r.date, "amount": Decimal(r.amount),
+            "founder_user_id": r.founder_user_id, "comment": r.comment,
+        })
+    moves.sort(key=lambda m: (m["date"], m["id"]), reverse=True)
+    return moves
 
 
 def get_spend_by_category(db: Session, organization_id: int, since: date_cls, until: date_cls) -> list[dict]:

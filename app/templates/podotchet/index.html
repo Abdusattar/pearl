@@ -6,10 +6,16 @@
 {% block content %}
 <div class="page-header">
   <h1>Подотчёт</h1>
-  <div style="display:flex;gap:16px;align-items:center">
+  <div style="display:flex;gap:16px;align-items:center;flex-wrap:wrap">
+    {% if holder %}
     <a href="#" onclick="openModal('borrow-modal');return false" style="font-size:13px;color:var(--text-muted)">Одолжили у другого бизнеса?</a>
+    <a href="#" onclick="openModal('founder-fund-modal');return false" style="font-size:13px;color:var(--text-muted)">Учредитель дал наличные?</a>
+    {% endif %}
+    <a href="#" onclick="openModal('founder-withdraw-modal');return false" style="font-size:13px;color:var(--text-muted)">Учредитель забрал?</a>
     <button class="btn btn-secondary" onclick="document.getElementById('reconcile-card').scrollIntoView({behavior:'smooth'})">Сверить остаток</button>
+    {% if holder %}
     <button class="btn btn-primary" onclick="openModal('withdraw-modal')">+ Снять деньги</button>
+    {% endif %}
   </div>
 </div>
 
@@ -17,11 +23,36 @@
 <div class="alert alert-error">{{ request.query_params.get('error') }}</div>
 {% endif %}
 
-<div class="stat-grid">
+{% if not holder %}
+<div class="alert alert-error" style="margin-bottom:18px">
+  Для «{{ current_org_name }}» не задан держатель кассы — снятие и приём наличных недоступны.
+  <a href="/settings/?org_id={{ current_org_id }}" style="color:inherit;text-decoration:underline">Задать в Настройках →</a>
+</div>
+{% endif %}
+
+<div class="stat-grid" style="grid-template-columns:repeat(3,1fr);margin-bottom:14px">
   <div class="stat-box">
-    <div class="stat-label">Расчётный остаток сейчас</div>
+    <div class="stat-label">Остаток на счету</div>
     <div class="stat-value">{{ "{:,.2f}".format(expected.expected) }} с</div>
   </div>
+  <div class="stat-box">
+    <div class="stat-label">Касса на руках</div>
+    <div class="stat-value">{{ "{:,.2f}".format(person_cards|sum(attribute='amount') if person_cards else 0) }} с</div>
+    <div class="form-hint" style="margin-top:2px">
+      {% if person_cards|length == 1 %}у {{ person_cards[0].name }}
+      {% elif person_cards|length > 1 %}у нескольких — см. карточки ниже
+      {% elif holder %}у {{ holder.name }}, сейчас пусто
+      {% else %}держатель не назначен{% endif %}
+    </div>
+  </div>
+  <div class="stat-box">
+    <div class="stat-label">Товар на складе</div>
+    <div class="stat-value">{{ "{:,.2f}".format(inventory.value) }} с</div>
+    <div class="form-hint" style="margin-top:2px"><a href="/warehouse/?org_id={{ current_org_id }}" style="color:var(--primary)">{{ inventory.product_count }} позиций →</a></div>
+  </div>
+</div>
+
+<div class="stat-grid">
   <div class="stat-box">
     <div class="stat-label">Последняя сверка</div>
     {% if expected.since %}
@@ -33,10 +64,6 @@
     {% endif %}
   </div>
   <div class="stat-box">
-    <div class="stat-label">На руках всего</div>
-    <div class="stat-value">{{ "{:,.2f}".format(person_cards|sum(attribute='amount') if person_cards else 0) }} с</div>
-  </div>
-  <div class="stat-box">
     <div class="stat-label">Статус сверки</div>
     {% if days_since_snapshot is none %}
     <span class="badge badge-pending">ещё ни разу не сверяли</span>
@@ -44,6 +71,14 @@
     <span class="badge badge-pending">давно не сверяли — {{ days_since_snapshot }} дн.</span>
     {% else %}
     <span class="badge badge-confirmed">сверено недавно</span>
+    {% endif %}
+  </div>
+  <div class="stat-box">
+    <div class="stat-label">Товары с минусом</div>
+    {% if inventory.negative_count %}
+    <span class="badge badge-rejected">{{ inventory.negative_count }} — списано больше, чем пришло</span>
+    {% else %}
+    <span class="badge badge-confirmed">нет</span>
     {% endif %}
   </div>
 </div>
@@ -103,6 +138,56 @@
   </div>
 </div>
 
+<div class="card" style="background:#fef9e7;border-color:#fde68a;padding:14px 18px;margin-bottom:22px">
+  <div style="font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:#92702a;margin-bottom:10px">Капитал учредителей</div>
+  {% if founder_capital %}
+  <div class="person-cards">
+    {% for f in founder_capital %}
+    <div class="person-card">
+      <div class="name">{{ f.name }}</div>
+      <div class="amount">{{ "{:,.2f}".format(f.balance) }} с</div>
+      <div class="form-hint" style="margin-top:2px">внесено {{ "{:,.0f}".format(f.contributed) }} − изъято {{ "{:,.0f}".format(f.withdrawn) }}</div>
+    </div>
+    {% endfor %}
+  </div>
+  {% else %}
+  <div class="form-hint" style="margin-top:0">Взносов/изъятий ещё не было</div>
+  {% endif %}
+  <div class="form-hint" style="margin-top:8px">Не операционные деньги бизнеса — не входит в расходы/доходы и в юнит-экономику, только в кассу.</div>
+
+  {% if capital_movements %}
+  <div class="table-wrap" style="margin-top:14px">
+    <table class="table">
+      <thead><tr><th>Дата</th><th>Учредитель</th><th>Тип</th><th>Сумма</th><th>Комментарий</th><th></th></tr></thead>
+      <tbody>
+        {% for m in capital_movements %}
+        <tr>
+          <td data-label="Дата">{{ m.date.strftime("%d.%m.%Y") }}</td>
+          <td data-label="Учредитель">{{ m.founder_name }}</td>
+          <td data-label="Тип">{% if m.kind == "in" %}<span style="color:var(--success)">взнос</span>{% else %}<span style="color:var(--danger)">изъятие</span>{% endif %}</td>
+          <td data-label="Сумма" class="num">{{ "{:,.2f}".format(m.amount) }} с</td>
+          <td data-label="Комментарий" style="color:var(--text-muted)">{{ m.comment or "—" }}</td>
+          <td data-label="">
+            {% if m.kind == "in" %}
+            <form method="post" action="/podotchet/fund/{{ m.id }}/delete" onsubmit="return confirm('Удалить эту запись?')">
+              <input type="hidden" name="org_id" value="{{ current_org_id }}">
+              <button type="submit" style="background:none;border:none;color:#dc2626;cursor:pointer;font-size:16px;padding:4px 6px" title="Удалить">🗑</button>
+            </form>
+            {% else %}
+            <form method="post" action="/podotchet/capital-withdrawal/{{ m.id }}/delete" onsubmit="return confirm('Удалить эту запись?')">
+              <input type="hidden" name="org_id" value="{{ current_org_id }}">
+              <button type="submit" style="background:none;border:none;color:#dc2626;cursor:pointer;font-size:16px;padding:4px 6px" title="Удалить">🗑</button>
+            </form>
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% endif %}
+</div>
+
 <div class="card" id="reconcile-card" style="max-width:640px">
   <div style="font-size:13px;color:var(--text-muted);margin-bottom:12px">Новая сверка — ввести реальный остаток по счёту</div>
   <form method="post" action="/podotchet/reconcile" style="display:grid;grid-template-columns:1fr 1fr auto;gap:16px;align-items:end">
@@ -149,6 +234,8 @@
         <td data-label="Источник">
           {% if r.source_org_name %}
           Одолжили у {{ r.source_org_name }}
+          {% elif r.source_founder_name %}
+          Взнос учредителя ({{ r.source_founder_name }})
           {% elif r.source_type == "withdrawal" %}
           Снятие со счёта
           {% else %}
@@ -201,12 +288,8 @@
       </div>
 
       <div class="form-group">
-        <label>Отчитывается *</label>
-        <select class="form-control" name="accountable_user_id" required>
-          {% for u in users %}
-          <option value="{{ u.id }}" {% if u.id == current_user.id %}selected{% endif %}>{{ u.name }}{% if u.id == current_user.id %} (я){% endif %}</option>
-          {% endfor %}
-        </select>
+        <label>Отчитывается</label>
+        <div class="form-hint" style="font-size:15px;color:var(--text)">{{ holder.name if holder else "—" }} <span style="font-size:12px;color:var(--text-muted)">держатель кассы объекта</span></div>
       </div>
 
       <div class="form-group" style="margin-bottom:20px">
@@ -255,12 +338,8 @@
       </div>
 
       <div class="form-group">
-        <label>Отчитывается *</label>
-        <select class="form-control" name="accountable_user_id" required>
-          {% for u in users %}
-          <option value="{{ u.id }}" {% if u.id == current_user.id %}selected{% endif %}>{{ u.name }}{% if u.id == current_user.id %} (я){% endif %}</option>
-          {% endfor %}
-        </select>
+        <label>Отчитывается</label>
+        <div class="form-hint" style="font-size:15px;color:var(--text)">{{ holder.name if holder else "—" }} <span style="font-size:12px;color:var(--text-muted)">держатель кассы объекта</span></div>
       </div>
 
       <div class="form-group" style="margin-bottom:20px">
@@ -271,6 +350,101 @@
       <div style="display:flex;gap:8px">
         <button type="submit" class="btn btn-primary">Сохранить</button>
         <button type="button" class="btn btn-secondary" onclick="closeModal('borrow-modal')">Отмена</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<div class="modal-overlay" id="founder-fund-modal" hidden>
+  <div class="modal">
+    <div class="modal-header">
+      <h3>Учредитель дал наличные</h3>
+      <button type="button" class="modal-close" onclick="closeModal('founder-fund-modal')">✕</button>
+    </div>
+    <div class="form-hint" style="margin-bottom:16px">{{ current_org_name }} — как выбрано наверху</div>
+    <form method="post" action="/podotchet/founder-fund">
+      <input type="hidden" name="org_id" value="{{ current_org_id }}">
+
+      <div class="split-row">
+        <div class="form-group">
+          <label>Сумма *</label>
+          <input class="form-control" type="text" name="amount" placeholder="0" required>
+        </div>
+        <div class="form-group">
+          <label>Дата *</label>
+          <input class="form-control" type="date" name="date" value="{{ today }}" required>
+        </div>
+      </div>
+
+      <div class="form-group">
+        <label>Учредитель *</label>
+        <select class="form-control" name="founder_user_id" required>
+          <option value="">— выбрать —</option>
+          {% for f in founders %}
+          <option value="{{ f.id }}">{{ f.name }}</option>
+          {% endfor %}
+        </select>
+      </div>
+
+      <div class="form-group">
+        <label>Отчитывается</label>
+        <div class="form-hint" style="font-size:15px;color:var(--text)">{{ holder.name if holder else "—" }} <span style="font-size:12px;color:var(--text-muted)">держатель кассы объекта</span></div>
+      </div>
+
+      <div class="form-group" style="margin-bottom:20px">
+        <label>Комментарий</label>
+        <input class="form-control" type="text" name="comment" placeholder="Например: закрыть разрыв на коммуналку">
+        <div class="form-hint">Это капитал, не доход бизнеса — в юнит-экономику не попадёт.</div>
+      </div>
+
+      <div style="display:flex;gap:8px">
+        <button type="submit" class="btn btn-primary">Сохранить</button>
+        <button type="button" class="btn btn-secondary" onclick="closeModal('founder-fund-modal')">Отмена</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<div class="modal-overlay" id="founder-withdraw-modal" hidden>
+  <div class="modal">
+    <div class="modal-header">
+      <h3>Учредитель забрал наличные</h3>
+      <button type="button" class="modal-close" onclick="closeModal('founder-withdraw-modal')">✕</button>
+    </div>
+    <div class="form-hint" style="margin-bottom:16px">{{ current_org_name }} — как выбрано наверху. Деньги выходят из уже накопленной кассы, счёта не касается.</div>
+    <form method="post" action="/podotchet/founder-withdraw">
+      <input type="hidden" name="org_id" value="{{ current_org_id }}">
+
+      <div class="split-row">
+        <div class="form-group">
+          <label>Сумма *</label>
+          <input class="form-control" type="text" name="amount" placeholder="0" required>
+        </div>
+        <div class="form-group">
+          <label>Дата *</label>
+          <input class="form-control" type="date" name="date" value="{{ today }}" required>
+        </div>
+      </div>
+
+      <div class="form-group">
+        <label>Учредитель *</label>
+        <select class="form-control" name="founder_user_id" required>
+          <option value="">— выбрать —</option>
+          {% for f in founders %}
+          <option value="{{ f.id }}">{{ f.name }}</option>
+          {% endfor %}
+        </select>
+      </div>
+
+      <div class="form-group" style="margin-bottom:20px">
+        <label>Комментарий</label>
+        <input class="form-control" type="text" name="comment" placeholder="Необязательно">
+        <div class="form-hint">Личное изъятие — не операционный расход, в P&L/юнит-экономику не попадёт.</div>
+      </div>
+
+      <div style="display:flex;gap:8px">
+        <button type="submit" class="btn btn-primary">Сохранить</button>
+        <button type="button" class="btn btn-secondary" onclick="closeModal('founder-withdraw-modal')">Отмена</button>
       </div>
     </form>
   </div>

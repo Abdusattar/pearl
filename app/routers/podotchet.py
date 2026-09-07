@@ -10,8 +10,9 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.dependencies import get_accessible_orgs, get_current_user, resolve_org
-from app.models import AccountBalanceSnapshot, CashFunding, Organization, User
+from app.models import AccountBalanceSnapshot, CapitalWithdrawal, CashFunding, Organization, User
 from app.services import podotchet
+from app.services.warehouse import get_inventory_summary
 
 router = APIRouter(prefix="/podotchet", tags=["podotchet"])
 templates = Jinja2Templates(directory=str(Path(__file__).parent.parent / "templates"))
@@ -40,6 +41,19 @@ def _business_orgs(db: Session) -> list[Organization]:
     return [o for o in all_orgs if o.id not in has_children]
 
 
+def _founders(db: Session) -> list[User]:
+    return db.query(User).filter(User.role == "founder", User.deleted_at.is_(None)).order_by(User.name).all()
+
+
+def _resolve_founder(db: Session, founder_id_str: str) -> User | None:
+    if not founder_id_str or not founder_id_str.isdigit():
+        return None
+    founder_ids = {u.id for u in _founders(db)}
+    if int(founder_id_str) not in founder_ids:
+        return None
+    return db.query(User).filter(User.id == int(founder_id_str)).first()
+
+
 def _resolve_business_org(db: Session, org_id_str: str) -> Organization | None:
     """org_id страницы должен быть реальным бизнесом (лист дерева), не
     родительским узлом («Жемчужина», «Садики») — иначе снятие уходит в
@@ -51,6 +65,19 @@ def _resolve_business_org(db: Session, org_id_str: str) -> Organization | None:
     if int(org_id_str) not in business_ids:
         return None
     return db.query(Organization).filter(Organization.id == int(org_id_str)).first()
+
+
+def _resolve_holder(db: Session, org: Organization) -> User | None:
+    """Единственный держатель кассы объекта (Organization.cash_recipient_user_id,
+    настраивается на /settings/) — с 04.09 подотчёт больше не даёт выбрать
+    отчитывающегося свободно: ровно один держатель на бизнес убирает саму
+    возможность одновременно открытых бакетов у двух человек, из-за которой
+    FIFO по подотчёту не может точно понять, чьими деньгами оплачен расход."""
+    if not org.cash_recipient_user_id:
+        return None
+    return db.query(User).filter(
+        User.id == org.cash_recipient_user_id, User.deleted_at.is_(None)
+    ).first()
 
 
 def _parse_amount(raw: str) -> float:
@@ -87,6 +114,8 @@ def podotchet_page(request: Request, org_id: str | None = None, db: Session = De
     expected = podotchet.get_expected_balance(db, current_org.id, today)
     ledger = podotchet.get_podotchet_ledger(db, current_org.id)
     ledger.sort(key=lambda b: (b["date"], b["id"]), reverse=True)
+    holder = _resolve_holder(db, current_org)
+    inventory = get_inventory_summary(db, {current_org.id})
 
     users_by_id = {u.id: u.name for u in db.query(User).all()}
     orgs_by_id = {o.id: o.name for o in db.query(Organization).all()}
@@ -121,9 +150,20 @@ def podotchet_page(request: Request, org_id: str | None = None, db: Session = De
             "taken_by_name": users_by_id.get(b["taken_by"], "?"),
             "accountable_name": users_by_id.get(b["accountable_user_id"], "?"),
             "source_org_name": orgs_by_id.get(b["source_organization_id"]) if b["source_organization_id"] else None,
+            "source_founder_name": users_by_id.get(b["source_founder_id"]) if b.get("source_founder_id") else None,
             "reported": status_reported,
             "fully_reported": b["remaining"] <= podotchet.DUST,
         })
+
+    founders = _founders(db)
+    founder_capital = [
+        {**f, "name": users_by_id.get(f["founder_user_id"], "?")}
+        for f in podotchet.get_founder_capital(db, current_org.id)
+    ]
+    capital_movements = [
+        {**m, "founder_name": users_by_id.get(m["founder_user_id"], "?")}
+        for m in podotchet.get_capital_movements(db, current_org.id)
+    ]
 
     return templates.TemplateResponse("podotchet/index.html", {
         "request": request,
@@ -133,15 +173,17 @@ def podotchet_page(request: Request, org_id: str | None = None, db: Session = De
         "current_org_name": current_org.name,
         "active_page": "podotchet",
         "business_orgs": business_orgs,
-        # founder (Айдай/Талас) — собственники, не участвуют в операционке,
-        # деньги на руках не держат — не показываем в "снял/отчитывается" (25.08)
-        "users": db.query(User).filter(User.deleted_at.is_(None), User.role != "founder").order_by(User.name).all(),
+        "holder": holder,
+        "inventory": inventory,
         "expected": expected,
         "person_cards": person_cards,
         "category_spend": category_spend,
         "flow_rows": flow_rows,
         "snapshots": snapshots,
         "ledger_rows": ledger_rows,
+        "founders": founders,
+        "founder_capital": founder_capital,
+        "capital_movements": capital_movements,
         "today": today.isoformat(),
         "days_since_snapshot": days_since_snapshot,
         "users_lookup": users_by_id,
@@ -153,13 +195,16 @@ def create_withdrawal(
     request: Request,
     amount: str = Form(...),
     date_str: str = Form(..., alias="date"),
-    accountable_user_id: str = Form(...),
     comment: str = Form(default=""),
     org_id: str = Form(...),
     db: Session = Depends(get_db),
 ):
     """Снять деньги — всегда для объекта, выбранного наверху страницы; кто
-    физически снял не спрашивается отдельно — это тот, кто открыл форму."""
+    физически снял не спрашивается отдельно — это тот, кто открыл форму.
+    Отчитывается всегда единственный держатель кассы объекта (04.09,
+    Organization.cash_recipient_user_id) — свободный выбор убрали, чтобы не
+    получать одновременно двух держателей, для которых FIFO подотчёта не может
+    точно понять, чьими деньгами оплачен расход."""
     user, redirect = _guard(request, db)
     if redirect:
         return redirect
@@ -177,13 +222,18 @@ def create_withdrawal(
     if not org:
         return RedirectResponse(f"{redirect_url}&error=Выберите конкретный объект наверху страницы", status_code=303)
 
+    holder = _resolve_holder(db, org)
+    if not holder:
+        msg = "Для этого объекта не задан держатель кассы — задайте в Настройках"
+        return RedirectResponse(f"{redirect_url}&error={quote(msg)}", status_code=303)
+
     db.add(CashFunding(
         organization_id=org.id,
         source_type="withdrawal",
         amount=amount_val,
         date=date_val,
         taken_by=user.id,
-        accountable_user_id=int(accountable_user_id),
+        accountable_user_id=holder.id,
         comment=comment.strip() or None,
         created_by=user.id,
     ))
@@ -197,14 +247,14 @@ def create_borrow(
     amount: str = Form(...),
     date_str: str = Form(..., alias="date"),
     source_organization_id: str = Form(...),
-    accountable_user_id: str = Form(...),
     comment: str = Form(default=""),
     org_id: str = Form(...),
     db: Session = Depends(get_db),
 ):
     """Одолжили наличными у другого бизнеса — получатель всегда текущий
     объект страницы, «откуда» выбирается отдельно. Деньги никогда не были на
-    счету получателя — это всегда direct_cash, не withdrawal."""
+    счету получателя — это всегда direct_cash, не withdrawal. Отчитывается —
+    держатель кассы объекта-получателя (см. create_withdrawal)."""
     user, redirect = _guard(request, db)
     if redirect:
         return redirect
@@ -226,18 +276,145 @@ def create_borrow(
     if not src or src.id == org.id:
         return RedirectResponse(f"{redirect_url}&error=Укажите, у какого другого бизнеса одолжили", status_code=303)
 
+    holder = _resolve_holder(db, org)
+    if not holder:
+        msg = "Для этого объекта не задан держатель кассы — задайте в Настройках"
+        return RedirectResponse(f"{redirect_url}&error={quote(msg)}", status_code=303)
+
     db.add(CashFunding(
         organization_id=org.id,
         source_type="direct_cash",
         amount=amount_val,
         date=date_val,
         taken_by=user.id,
-        accountable_user_id=int(accountable_user_id),
+        accountable_user_id=holder.id,
         source_organization_id=src.id,
         comment=comment.strip() or None,
         created_by=user.id,
     ))
     db.commit()
+    return RedirectResponse(redirect_url, status_code=303)
+
+
+@router.post("/founder-fund")
+def create_founder_fund(
+    request: Request,
+    amount: str = Form(...),
+    date_str: str = Form(..., alias="date"),
+    founder_user_id: str = Form(...),
+    comment: str = Form(default=""),
+    org_id: str = Form(...),
+    db: Session = Depends(get_db),
+):
+    """Учредитель дал наличные в кассу — зеркало /borrow, только источник не
+    другой бизнес, а конкретный учредитель. Деньги никогда не были на счету —
+    всегда direct_cash, участвуют в обычном FIFO-пуле подотчёта. Отчитывается —
+    держатель кассы объекта (см. create_withdrawal)."""
+    user, redirect = _guard(request, db)
+    if redirect:
+        return redirect
+    redirect_url = f"/podotchet/?org_id={org_id}"
+
+    try:
+        amount_val = _parse_amount(amount)
+        date_val = _parse_date(date_str)
+    except ValueError:
+        return RedirectResponse(f"{redirect_url}&error=Неверная сумма или дата", status_code=303)
+    if amount_val <= 0:
+        return RedirectResponse(f"{redirect_url}&error=Сумма должна быть больше нуля", status_code=303)
+
+    org = _resolve_business_org(db, org_id)
+    if not org:
+        return RedirectResponse(f"{redirect_url}&error=Выберите конкретный объект наверху страницы", status_code=303)
+
+    founder = _resolve_founder(db, founder_user_id)
+    if not founder:
+        return RedirectResponse(f"{redirect_url}&error=Укажите, кто из учредителей внёс деньги", status_code=303)
+
+    holder = _resolve_holder(db, org)
+    if not holder:
+        msg = "Для этого объекта не задан держатель кассы — задайте в Настройках"
+        return RedirectResponse(f"{redirect_url}&error={quote(msg)}", status_code=303)
+
+    db.add(CashFunding(
+        organization_id=org.id,
+        source_type="direct_cash",
+        amount=amount_val,
+        date=date_val,
+        taken_by=user.id,
+        accountable_user_id=holder.id,
+        source_founder_id=founder.id,
+        comment=comment.strip() or None,
+        created_by=user.id,
+    ))
+    db.commit()
+    return RedirectResponse(redirect_url, status_code=303)
+
+
+@router.post("/founder-withdraw")
+def create_founder_withdraw(
+    request: Request,
+    amount: str = Form(...),
+    date_str: str = Form(..., alias="date"),
+    founder_user_id: str = Form(...),
+    comment: str = Form(default=""),
+    org_id: str = Form(...),
+    db: Session = Depends(get_db),
+):
+    """Учредитель забрал наличные из кассы себе — изъятие капитала, не
+    операционный расход. Уменьшает пул подотчёта (см. get_podotchet_ledger),
+    счёта не касается — деньги уже были в кассе, не сняты повторно с банка."""
+    user, redirect = _guard(request, db)
+    if redirect:
+        return redirect
+    redirect_url = f"/podotchet/?org_id={org_id}"
+
+    try:
+        amount_val = _parse_amount(amount)
+        date_val = _parse_date(date_str)
+    except ValueError:
+        return RedirectResponse(f"{redirect_url}&error=Неверная сумма или дата", status_code=303)
+    if amount_val <= 0:
+        return RedirectResponse(f"{redirect_url}&error=Сумма должна быть больше нуля", status_code=303)
+
+    org = _resolve_business_org(db, org_id)
+    if not org:
+        return RedirectResponse(f"{redirect_url}&error=Выберите конкретный объект наверху страницы", status_code=303)
+
+    founder = _resolve_founder(db, founder_user_id)
+    if not founder:
+        return RedirectResponse(f"{redirect_url}&error=Укажите, кто из учредителей забрал деньги", status_code=303)
+
+    db.add(CapitalWithdrawal(
+        organization_id=org.id,
+        founder_user_id=founder.id,
+        amount=amount_val,
+        date=date_val,
+        comment=comment.strip() or None,
+        created_by=user.id,
+    ))
+    db.commit()
+    return RedirectResponse(redirect_url, status_code=303)
+
+
+@router.post("/capital-withdrawal/{withdrawal_id}/delete")
+def delete_founder_withdraw(
+    request: Request,
+    withdrawal_id: int,
+    org_id: str = Form(default=""),
+    db: Session = Depends(get_db),
+):
+    user, redirect = _guard(request, db)
+    if redirect:
+        return redirect
+    redirect_url = f"/podotchet/?org_id={org_id}" if org_id else "/podotchet/"
+
+    withdrawal = db.query(CapitalWithdrawal).filter(
+        CapitalWithdrawal.id == withdrawal_id, CapitalWithdrawal.deleted_at.is_(None)
+    ).first()
+    if withdrawal:
+        withdrawal.deleted_at = func.now()
+        db.commit()
     return RedirectResponse(redirect_url, status_code=303)
 
 

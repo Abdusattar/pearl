@@ -11,12 +11,12 @@
 {% set recipient = org_users | selectattr('id', 'equalto', current_org.cash_recipient_user_id) | first %}
 
 <div class="card" style="max-width:480px">
-  <h3 style="font-size:15px;margin-bottom:4px">Приём наличных</h3>
-  <div class="form-hint" style="margin-bottom:16px">Кто физически принимает наличные за разовые услуги (канцелярия и т.п.) — эта же настройка определяет, кто становится подотчётным за эти деньги.</div>
+  <h3 style="font-size:15px;margin-bottom:4px">Держатель кассы объекта</h3>
+  <div class="form-hint" style="margin-bottom:16px">Один человек на бизнес, который физически держит наличные — оплату разовых услуг (канцелярия и т.п.) и снятия/приём наличных на «Подотчёте» (04.09). Для разовых услуг, если не назначено — получателем становится тот, кто отмечает оплату; для «Подотчёта» без назначенного держателя снятие и приём наличных недоступны вовсе — держатель там должен быть один и явный.</div>
 
   <div id="cash-recipient-view" style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
-    <span style="color:var(--text-muted)">Принимает наличные:</span>
-    <span style="font-weight:600">{{ recipient.name if recipient else "не назначено — получатель тот, кто отмечает оплату" }}</span>
+    <span style="color:var(--text-muted)">Держатель кассы:</span>
+    <span style="font-weight:600">{{ recipient.name if recipient else "не назначено" }}</span>
     <button type="button" class="btn btn-secondary" style="padding:3px 8px;font-size:11px" onclick="toggleCashRecipientForm(true)">Изменить</button>
   </div>
 

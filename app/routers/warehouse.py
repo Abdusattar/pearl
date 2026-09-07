@@ -12,6 +12,7 @@ from app.database import get_db
 from app.dependencies import get_current_user, get_accessible_orgs, resolve_org
 from app.models import ExpenseCategory, Organization, Product, WarehouseReceipt, WriteOff
 from app.services.products import get_or_create_product, UNITS, CATEGORIES
+from app.services.warehouse import get_product_balances as _get_balances
 from app.services.writeoff_calc import AUTO_REASON, auto_apply_if_pending, compute_day_draft
 
 router = APIRouter(prefix="/warehouse", tags=["warehouse"])
@@ -24,66 +25,6 @@ def _descendants(org_id: int, all_orgs: list) -> set:
         if o.parent_id == org_id:
             ids |= _descendants(o.id, all_orgs)
     return ids
-
-
-def _get_balances(db: Session, org_ids: set) -> list[dict]:
-    recv = (
-        db.query(
-            WarehouseReceipt.product_id.label("pid"),
-            func.sum(WarehouseReceipt.quantity).label("qty"),
-            func.sum(WarehouseReceipt.total_cost).label("cost"),
-        )
-        .filter(
-            WarehouseReceipt.organization_id.in_(org_ids),
-            WarehouseReceipt.deleted_at.is_(None),
-        )
-        .group_by(WarehouseReceipt.product_id)
-        .subquery()
-    )
-
-    woff = (
-        db.query(
-            WriteOff.product_id.label("pid"),
-            func.sum(WriteOff.quantity).label("qty"),
-        )
-        .filter(
-            WriteOff.organization_id.in_(org_ids),
-            WriteOff.deleted_at.is_(None),
-        )
-        .group_by(WriteOff.product_id)
-        .subquery()
-    )
-
-    rows = (
-        db.query(
-            Product,
-            func.coalesce(recv.c.qty, 0).label("received"),
-            func.coalesce(recv.c.cost, 0).label("total_cost"),
-            func.coalesce(woff.c.qty, 0).label("written"),
-        )
-        .outerjoin(recv, Product.id == recv.c.pid)
-        .outerjoin(woff, Product.id == woff.c.pid)
-        .filter(func.coalesce(recv.c.qty, 0) > 0)
-        .order_by(Product.category.nullslast(), Product.name)
-        .all()
-    )
-
-    result = []
-    for product, received, total_cost, written in rows:
-        received = float(received)
-        written = float(written)
-        total_cost = float(total_cost)
-        balance = received - written
-        avg_price = total_cost / received if received > 0 else 0
-        result.append({
-            "product": product,
-            "received": received,
-            "written": written,
-            "balance": balance,
-            "avg_price": avg_price,
-            "balance_value": balance * avg_price,
-        })
-    return result
 
 
 def _base_ctx(request: Request, db: Session, org_id_str: str | None) -> dict:

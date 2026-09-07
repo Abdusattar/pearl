@@ -573,6 +573,12 @@ class CashFunding(Base):
     taken_by                = Column(Integer, ForeignKey("users.id"), nullable=False)
     accountable_user_id     = Column(Integer, ForeignKey("users.id"), nullable=False)
     source_organization_id  = Column(Integer, ForeignKey("organizations.id"), nullable=True)
+    # Взнос учредителя наличными в кассу (02.09) — взаимоисключающе с
+    # source_organization_id, тот же приём (реальный физический источник денег,
+    # только не бизнес, а конкретный человек с role=founder). Участвует в
+    # FIFO-пуле подотчёта как обычное пополнение — управленчески это капитал,
+    # не доход, поэтому не попадает ни в Transaction, ни в P&L/юнит-экономику.
+    source_founder_id       = Column(Integer, ForeignKey("users.id"), nullable=True)
     # Заполнено только когда запись создана автоматически оплатой разовой
     # услуги (25.08, POST /services/{id}/pay), не человеком через /podotchet/.
     # Отмечает эту запись как несамостоятельную: удалить её можно только вместе
@@ -586,6 +592,30 @@ class CashFunding(Base):
 
     organization        = relationship("Organization", foreign_keys=[organization_id])
     source_organization  = relationship("Organization", foreign_keys=[source_organization_id])
+    source_founder       = relationship("User", foreign_keys=[source_founder_id])
+
+
+class CapitalWithdrawal(Base):
+    """Изъятие учредителя — наличные из кассы бизнеса уходят собственнику лично
+    (дивиденды/личное потребление), не на операционные расходы (02.09).
+    Зеркало CashFunding, но уменьшает пул подотчёта вместо того, чтобы его
+    пополнять — не Transaction/расход, не попадает в P&L/категории/юнит-
+    экономику (по совету финэксперта — изъятие капитала, не операционный
+    расход). Всегда выходит из уже накопленного пула кассы, счёта не
+    касается — см. get_expected_balance в podotchet.py, не тронут."""
+    __tablename__ = "capital_withdrawals"
+    id                = Column(Integer, primary_key=True)
+    organization_id   = Column(Integer, ForeignKey("organizations.id"), nullable=False)
+    founder_user_id   = Column(Integer, ForeignKey("users.id"), nullable=False)
+    amount            = Column(Numeric(12, 2), nullable=False)
+    date              = Column(Date, nullable=False)
+    comment           = Column(Text)
+    created_by        = Column(Integer, ForeignKey("users.id"))
+    created_at        = Column(DateTime, server_default=func.now())
+    deleted_at        = Column(DateTime)
+
+    organization  = relationship("Organization", foreign_keys=[organization_id])
+    founder       = relationship("User", foreign_keys=[founder_user_id])
 
 
 class AccountBalanceSnapshot(Base):
