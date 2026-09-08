@@ -120,12 +120,18 @@ def all_corrections(db: Session, limit: int = 200) -> list[Reconciliation]:
     )
 
 
-def create(db: Session, *, organization_id: int, kind: str, actual: Decimal,
+def create(db: Session, *, organization_id: int, kind: str, actual: Decimal | float | str,
            user_id: int, on_date: date_cls | None = None,
            subject_id: int | None = None, reason: str = "") -> Reconciliation:
     """Записать сверку. expected считается здесь же и сохраняется вместе с
-    разницей — восстановить его потом по базе было бы уже нельзя."""
+    разницей — восстановить его потом по базе было бы уже нельзя.
+
+    `actual` нормализуется к Decimal на входе: форма отдаёт число как float
+    (_parse_amount в роутере), а весь денежный слой считает в Decimal, и
+    `float - Decimal` в Python — TypeError, а не молчаливое приведение.
+    Из-за этого кнопка «Сохранить» на сверке падала с 500 (08.09)."""
     on_date = on_date or date_cls.today()
+    actual = Decimal(str(actual))
     expected = expected_for(db, organization_id, kind, subject_id, on_date)
     rec = Reconciliation(
         organization_id=organization_id,
