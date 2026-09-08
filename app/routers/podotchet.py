@@ -200,6 +200,11 @@ def podotchet_page(request: Request, org_id: str | None = None, db: Session = De
         "today": today.isoformat(),
         "days_since_snapshot": days_since_snapshot,
         "users_lookup": users_by_id,
+        # Пороги «мелкого» расхождения отдаём в шаблон, а не дублируем в JS:
+        # форма показывает требование объяснить разницу до отправки, и считать
+        # она должна ровно то же, что потом проверит сервер (08.09).
+        "small_delta_percent": float(reconciliation.SMALL_DELTA_PERCENT),
+        "big_delta": float(reconciliation.BIG_DELTA),
     })
 
 
@@ -457,6 +462,27 @@ def delete_funding(
     return RedirectResponse(redirect_url, status_code=303)
 
 
+def _reconcile_error(redirect_url: str, sep: str, msg: str, *, kind: str,
+                     balance: str = "", date_str: str = "", comment: str = "",
+                     subject_id: str = "") -> RedirectResponse:
+    """Вернуть на страницу с ошибкой, не потеряв введённое.
+
+    Раньше редирект уносил только текст ошибки, и человек набирал сумму, дату и
+    пояснение заново — на телефоне это отдельное мучение (08.09). Значения
+    возвращаются в query и подставляются обратно ровно в ту форму, из которой
+    пришли: `err_kind` (+ `err_subject` для поставщика) говорит шаблону, какую."""
+    parts = [
+        f"error={quote(msg)}",
+        f"err_kind={quote(kind)}",
+        f"err_balance={quote(balance)}",
+        f"err_date={quote(date_str)}",
+        f"err_comment={quote(comment)}",
+    ]
+    if subject_id:
+        parts.append(f"err_subject={quote(subject_id)}")
+    return RedirectResponse(f"{redirect_url}{sep}" + "&".join(parts), status_code=303)
+
+
 @router.post("/reconcile")
 def add_reconciliation(
     request: Request,
@@ -481,15 +507,19 @@ def add_reconciliation(
     if kind not in reconciliation.KIND_LABELS:
         return RedirectResponse(f"{redirect_url}{error_sep}error=Неизвестный вид сверки", status_code=303)
 
+    def _back(msg: str) -> RedirectResponse:
+        return _reconcile_error(redirect_url, error_sep, msg, kind=kind, balance=balance,
+                                date_str=date_str, comment=comment, subject_id=subject_id)
+
     try:
         balance_val = _parse_amount(balance)
         date_val = _parse_date(date_str)
     except ValueError:
-        return RedirectResponse(f"{redirect_url}{error_sep}error=Неверная сумма или дата", status_code=303)
+        return _back("Неверная сумма или дата")
 
     subject = int(subject_id) if subject_id.isdigit() else None
     if kind == reconciliation.SUPPLIER_DEBT and subject is None:
-        return RedirectResponse(f"{redirect_url}{error_sep}error=Не выбран поставщик", status_code=303)
+        return _back("Не выбран поставщик")
 
     # Долг поставщику правится один раз — по прямому требованию заказчика
     # (07.09): корректировка нужна, чтобы завести долг «с прошлого года»,
@@ -500,11 +530,10 @@ def add_reconciliation(
         existing = reconciliation.latest(db, int(organization_id),
                                          reconciliation.SUPPLIER_DEBT, subject)
         if existing is not None:
-            msg = quote(
+            return _back(
                 f"Долг этому поставщику уже корректировали {existing.date.strftime('%d.%m.%Y')}. "
                 "Отмените ту запись, если она неверна."
             )
-            return RedirectResponse(f"{redirect_url}{error_sep}error={msg}", status_code=303)
 
     rec = reconciliation.create(
         db, organization_id=int(organization_id), kind=kind, actual=balance_val,
@@ -515,8 +544,7 @@ def add_reconciliation(
     # (сдача, округление) пропускаем без пояснения, заметные — нет.
     if reconciliation.severity(rec.expected_amount, rec.delta) == "big" and not rec.reason:
         db.rollback()
-        msg = quote("Разница заметная — напишите, что произошло, без этого сверка не сохранится")
-        return RedirectResponse(f"{redirect_url}{error_sep}error={msg}", status_code=303)
+        return _back("Разница заметная — напишите, что произошло, без этого сверка не сохранится")
 
     db.commit()
     return RedirectResponse(redirect_url, status_code=303)

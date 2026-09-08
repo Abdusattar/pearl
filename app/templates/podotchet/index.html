@@ -4,6 +4,32 @@
 {% block title %}Подотчёт — Жемчужина{% endblock %}
 
 {% block content %}
+<style>
+  /* Сверка: разница и требование объяснить её показываются до отправки формы,
+     а не красной строкой после перезагрузки страницы (08.09). */
+  .reconcile-verdict { display: none; gap: 10px; align-items: flex-start;
+                       border-radius: 8px; padding: 10px 12px; font-size: 13px; }
+  .reconcile-verdict.on { display: flex; }
+  .reconcile-verdict .mark { font-weight: 700; font-variant-numeric: tabular-nums; flex-shrink: 0; }
+  .reconcile-verdict.match { background: #dcfce7; border: 1px solid #86efac; color: #166534; }
+  .reconcile-verdict.small { background: #eef2ff; border: 1px solid #c7d2fe; color: #3730a3; }
+  .reconcile-verdict.big   { background: #fffbeb; border: 1px solid #fde68a; color: #78350f; }
+
+  .req-star { color: var(--danger); }
+  .reconcile-comment.needed .form-control {
+    border-color: #f59e0b; box-shadow: 0 0 0 3px rgba(245, 158, 11, .16); background: #fffdf7;
+  }
+  .reconcile-hint { margin-top: 6px; }
+  .reconcile-hint:empty { display: none; }
+  .reconcile-comment.needed .reconcile-hint { color: #92400e; font-weight: 500; }
+
+  /* На телефоне три колонки формы сжимаются до нечитаемого — раскладываем в
+     столбец. !important: ширины колонок заданы инлайном в самих формах. */
+  @media (max-width: 768px) {
+    .reconcile-form { grid-template-columns: 1fr !important; }
+  }
+</style>
+
 <div class="page-header">
   <h1>Подотчёт</h1>
   <div style="display:flex;gap:16px;align-items:center;flex-wrap:wrap">
@@ -22,6 +48,16 @@
 {% if request.query_params.get('error') %}
 <div class="alert alert-error">{{ request.query_params.get('error') }}</div>
 {% endif %}
+
+{# Что человек ввёл перед тем, как форма вернула ошибку — подставляется обратно
+   в ту же форму, чтобы не набирать сумму и пояснение заново (08.09). #}
+{% set err = {
+  'kind':    request.query_params.get('err_kind', ''),
+  'balance': request.query_params.get('err_balance', ''),
+  'date':    request.query_params.get('err_date', ''),
+  'comment': request.query_params.get('err_comment', ''),
+  'subject': request.query_params.get('err_subject', ''),
+} %}
 
 {% if not holder %}
 <div class="alert alert-error" style="margin-bottom:18px">
@@ -210,23 +246,31 @@
     Это не сумма снятия: снятие заводится отдельно, кнопкой «Снять деньги».
     <div style="margin-top:6px">По расчёту сейчас должно быть <strong>{{ "{:,.2f}".format(expected.expected) }} с</strong>.</div>
   </div>
-  <form method="post" action="/podotchet/reconcile" style="display:grid;grid-template-columns:1fr 1fr auto;gap:16px;align-items:end">
+  {% set keep = err.kind == 'account' %}
+  <form method="post" action="/podotchet/reconcile" class="reconcile-form"
+        data-expected="{{ expected.expected }}"
+        style="display:grid;grid-template-columns:1fr 1fr auto;gap:16px;align-items:end">
     <input type="hidden" name="organization_id" value="{{ current_org_id }}">
     <input type="hidden" name="org_id" value="{{ current_org_id }}">
     <input type="hidden" name="kind" value="account">
     <div class="form-group" style="margin-bottom:0">
       <label>Сколько осталось на счету *</label>
-      <input class="form-control" type="text" name="balance" placeholder="0" required>
+      <input class="form-control" type="text" name="balance" placeholder="0" required
+             value="{{ err.balance if keep else '' }}">
     </div>
     <div class="form-group" style="margin-bottom:0">
       <label>Дата *</label>
-      <input class="form-control" type="date" name="date" value="{{ today }}" required>
+      <input class="form-control" type="date" name="date" required
+             value="{{ err.date if keep and err.date else today }}">
     </div>
     <button type="submit" class="btn btn-primary" style="height:44px">Сохранить</button>
-    <div class="form-group" style="margin-bottom:0;grid-column:1/-1">
-      <label>Пояснение, если цифра не сошлась с расчётом</label>
+    <div class="reconcile-verdict" style="grid-column:1/-1"></div>
+    <div class="form-group reconcile-comment" style="margin-bottom:0;grid-column:1/-1">
+      <label>Пояснение, если цифра не сошлась с расчётом <span class="req-star" hidden>*</span></label>
       <input class="form-control" type="text" name="comment"
+             value="{{ err.comment if keep else '' }}"
              placeholder="Например: 3 000 отдала на ремонт котла, чек занесу завтра">
+      <div class="form-hint reconcile-hint"></div>
     </div>
   </form>
 </div>
@@ -255,23 +299,31 @@
     <div style="margin-top:4px">Кассу ещё ни разу не сверяли.</div>
     {% endif %}
   </div>
-  <form method="post" action="/podotchet/reconcile" style="display:grid;grid-template-columns:1fr 1fr auto;gap:16px;align-items:end">
+  {% set keep = err.kind == 'cash' %}
+  <form method="post" action="/podotchet/reconcile" class="reconcile-form"
+        data-expected="{{ expected_cash }}"
+        style="display:grid;grid-template-columns:1fr 1fr auto;gap:16px;align-items:end">
     <input type="hidden" name="organization_id" value="{{ current_org_id }}">
     <input type="hidden" name="org_id" value="{{ current_org_id }}">
     <input type="hidden" name="kind" value="cash">
     <div class="form-group" style="margin-bottom:0">
       <label>Сколько в кассе на самом деле *</label>
-      <input class="form-control" type="text" name="balance" placeholder="0" required>
+      <input class="form-control" type="text" name="balance" placeholder="0" required
+             value="{{ err.balance if keep else '' }}">
     </div>
     <div class="form-group" style="margin-bottom:0">
       <label>Дата *</label>
-      <input class="form-control" type="date" name="date" value="{{ today }}" required>
+      <input class="form-control" type="date" name="date" required
+             value="{{ err.date if keep and err.date else today }}">
     </div>
     <button type="submit" class="btn btn-primary" style="height:44px">Сохранить</button>
-    <div class="form-group" style="margin-bottom:0;grid-column:1/-1">
-      <label>Пояснение, если не сошлось</label>
+    <div class="reconcile-verdict" style="grid-column:1/-1"></div>
+    <div class="form-group reconcile-comment" style="margin-bottom:0;grid-column:1/-1">
+      <label>Пояснение, если не сошлось <span class="req-star" hidden>*</span></label>
       <input class="form-control" type="text" name="comment"
+             value="{{ err.comment if keep else '' }}"
              placeholder="Например: в конце августа снимали 35 000, в систему не занесли">
+      <div class="form-hint reconcile-hint"></div>
     </div>
   </form>
 </div>
@@ -286,7 +338,9 @@
     правка остаётся в истории.
   </div>
   {% for s in supplier_rows %}
-  <form method="post" action="/podotchet/reconcile"
+  {% set keep = err.kind == 'supplier_debt' and err.subject == s.id|string %}
+  <form method="post" action="/podotchet/reconcile" class="reconcile-form"
+        data-expected="{{ s.debt }}"
         style="display:grid;grid-template-columns:1fr 130px auto;gap:12px;align-items:end;padding:10px 0;border-top:1px solid var(--border)">
     <input type="hidden" name="organization_id" value="{{ current_org_id }}">
     <input type="hidden" name="org_id" value="{{ current_org_id }}">
@@ -297,10 +351,16 @@
       <div style="font-weight:600">{{ s.name }}</div>
       <div class="form-hint">в системе {{ "{:,.2f}".format(s.debt) }} с</div>
     </div>
-    <input class="form-control" type="text" name="balance" placeholder="{{ "{:,.0f}".format(s.debt) }}" required>
+    <input class="form-control" type="text" name="balance" required
+           value="{{ err.balance if keep else '' }}"
+           placeholder="{{ "{:,.0f}".format(s.debt) }}">
     <button type="submit" class="btn btn-secondary" style="height:42px">Записать</button>
-    <div style="grid-column:1/-1">
-      <input class="form-control" type="text" name="comment" placeholder="Откуда сумма — например: сверились по тетради">
+    <div class="reconcile-verdict" style="grid-column:1/-1"></div>
+    <div class="reconcile-comment" style="grid-column:1/-1">
+      <input class="form-control" type="text" name="comment"
+             value="{{ err.comment if keep else '' }}"
+             placeholder="Откуда сумма — например: сверились по тетради">
+      <div class="form-hint reconcile-hint"></div>
     </div>
   </form>
   {% endfor %}
@@ -578,4 +638,86 @@
     </form>
   </div>
 </div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+// Сверка — живая разница и обязательное пояснение.
+// Пороги приходят из reconciliation.py, а не зашиты здесь: на экране должно
+// считаться ровно то, что потом проверит сервер, иначе форма пообещает
+// сохранить, а сервер откажет (ради этого расхождения всё и переделывалось).
+(function () {
+  var EXPECTED_SMALL_PERCENT = {{ small_delta_percent }};
+  var BIG_DELTA = {{ big_delta }};
+
+  function money(n) {
+    return n.toLocaleString('ru-RU', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' с';
+  }
+
+  function parseAmount(raw) {
+    // Так же терпимо, как _parse_amount на сервере: пробелы, запятая, минус.
+    var cleaned = (raw || '').replace(/[\s ]/g, '').replace(',', '.').replace('−', '-');
+    if (cleaned === '' || cleaned === '-') return null;
+    var v = Number(cleaned);
+    return isNaN(v) ? null : v;
+  }
+
+  document.querySelectorAll('.reconcile-form').forEach(function (form) {
+    var expected = Number(form.dataset.expected);
+    var balance = form.querySelector('input[name="balance"]');
+    var comment = form.querySelector('input[name="comment"]');
+    var box = form.querySelector('.reconcile-verdict');
+    var field = form.querySelector('.reconcile-comment');
+    var star = form.querySelector('.req-star');
+    var hint = form.querySelector('.reconcile-hint');
+    if (!balance || !comment || !box || !field || !hint || isNaN(expected)) return;
+
+    function render() {
+      var actual = parseAmount(balance.value);
+      if (actual === null) {
+        box.className = 'reconcile-verdict';
+        field.classList.remove('needed');
+        if (star) star.hidden = true;
+        comment.required = false;
+        hint.textContent = '';
+        return;
+      }
+      var delta = actual - expected;
+      var gap = Math.abs(delta);
+      var base = Math.max(Math.abs(expected), 1);
+      var level = gap < 0.01 ? 'match'
+        : (gap <= base * EXPECTED_SMALL_PERCENT / 100 && gap < BIG_DELTA) ? 'small' : 'big';
+
+      box.className = 'reconcile-verdict on ' + level;
+      box.innerHTML = '';
+      var mark = document.createElement('span');
+      mark.className = 'mark';
+      var text = document.createElement('span');
+      if (level === 'match') {
+        mark.textContent = '✓';
+        text.textContent = 'Сошлось с расчётом. Пояснение не нужно.';
+      } else {
+        mark.textContent = (delta > 0 ? '+' : '−') + money(gap);
+        var word = delta > 0 ? 'Больше' : 'Меньше';
+        text.textContent = level === 'small'
+          ? word + ', чем по расчёту, — на такую мелочь пояснение не обязательно.'
+          : word + ', чем по расчёту. Такую разницу нужно объяснить — иначе запись не сохранится.';
+      }
+      box.appendChild(mark);
+      box.appendChild(text);
+
+      var needed = level === 'big';
+      field.classList.toggle('needed', needed);
+      if (star) star.hidden = !needed;
+      comment.required = needed;
+      hint.textContent = needed
+        ? 'Расходится с расчётом на ' + money(gap) + ' — напишите, откуда разница.'
+        : '';
+    }
+
+    balance.addEventListener('input', render);
+    render();  // после возврата с ошибкой сумма уже в поле — показать сразу
+  });
+})();
+</script>
 {% endblock %}
