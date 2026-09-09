@@ -9,7 +9,7 @@
 from datetime import date as date_cls
 from decimal import Decimal
 
-from sqlalchemy import func
+from sqlalchemy import and_, func, or_
 from sqlalchemy.orm import Session
 
 from app.models import Reconciliation, ReceiptTransaction, Supplier, SupplierPayment, Transaction
@@ -58,6 +58,41 @@ def _debt_resets(db: Session, supplier_ids: list[int]) -> dict[int, Reconciliati
     return {r.subject_id: r for r in rows}  # последняя по порядку побеждает
 
 
+def _after_reset(model, reset: Reconciliation):
+    """Условие «этого ещё не было внутри подтверждённой сверкой суммы» (09.09).
+
+    Раньше сравнивали только по дате: всё, что датировано днём сверки или
+    раньше, считалось уже вошедшим в названную сумму. На практике это съедало
+    закупы, заведённые *после* сверки задним числом — у Халимы 09.09 сверку
+    сохранили в 15:08, а в 15:17 занесли два вчерашних закупа на 6 140,50, и
+    они исчезли из долга. Человек, называя долг, знать о них не мог.
+
+    Та же граница, что у кассы (services/podotchet.py `_not_yet_counted`):
+    дата плюс время занесения. Запись, датированная до сверки и заведённая до
+    неё, в сумму вошла — отсекается. Заведённая после — не вошла, остаётся.
+    """
+    return or_(
+        model.date > reset.date,
+        and_(model.date <= reset.date, model.created_at > reset.created_at),
+    )
+
+
+def _counted_in_reset(reset: Reconciliation | None, row_date, row_created_at) -> bool:
+    """То же, что `_after_reset`, но на готовых объектах — для батч-версии
+    (_bulk_ledger_buckets фильтрует в Python, а не в SQL). Держать в согласии с
+    SQL-вариантом обязательно: разошлись бы — карточка поставщика и список
+    расходов показали бы разный долг по одному и тому же поставщику."""
+    if reset is None or row_date is None:
+        return False
+    if row_date > reset.date:
+        return False
+    # Без времени занесения (старые записи) считаем, что запись уже была —
+    # так же ведёт себя SQL-вариант, где сравнение с NULL даёт «не подходит».
+    if reset.created_at is None or row_created_at is None:
+        return True
+    return row_created_at <= reset.created_at
+
+
 def _debt_buckets(db: Session, supplier_id: int) -> list[dict]:
     """Один бакет = один закуп со стороны поставщика (для FIFO/остатков по конкретной
     Transaction — используется /expenses для подсветки закупа). receipt_id проставлен
@@ -99,7 +134,7 @@ def _debt_buckets(db: Session, supplier_id: int) -> list[dict]:
         )
     )
     if reset is not None:
-        tx_query = tx_query.filter(Transaction.date > reset.date)
+        tx_query = tx_query.filter(_after_reset(Transaction, reset))
     txs = tx_query.order_by(Transaction.date.asc(), Transaction.id.asc()).all()
     tx_ids = [t.id for t in txs]
     receipt_by_tx = {}
@@ -139,7 +174,7 @@ def get_supplier_ledger(db: Session, supplier_id: int) -> list[dict]:
     # Платежи до сверки уже отражены в подтверждённой сумме долга — иначе
     # погасили бы её второй раз.
     if reset is not None:
-        payments_q = payments_q.filter(SupplierPayment.date > reset.date)
+        payments_q = payments_q.filter(_after_reset(SupplierPayment, reset))
     pool = Decimal(payments_q.scalar())
     for b in buckets:
         applied = min(b["original"], pool)
@@ -202,20 +237,21 @@ def _bulk_ledger_buckets(db: Session, supplier_ids: list[int]) -> dict[int, list
     )
     txs_by_supplier: dict[int, list] = {}
     for t in txs:
-        reset = resets.get(t.supplier_id)
-        if reset is not None and t.date <= reset.date:
+        if _counted_in_reset(resets.get(t.supplier_id), t.date, t.created_at):
             continue
         txs_by_supplier.setdefault(t.supplier_id, []).append(t)
 
     payment_rows = (
-        db.query(SupplierPayment.supplier_id, SupplierPayment.date, SupplierPayment.amount)
+        db.query(
+            SupplierPayment.supplier_id, SupplierPayment.date,
+            SupplierPayment.amount, SupplierPayment.created_at,
+        )
         .filter(SupplierPayment.supplier_id.in_(supplier_ids), SupplierPayment.deleted_at.is_(None))
         .all()
     )
     payments_by_supplier: dict[int, Decimal] = {}
-    for sid_, pdate, amount in payment_rows:
-        reset = resets.get(sid_)
-        if reset is not None and pdate is not None and pdate <= reset.date:
+    for sid_, pdate, amount, pcreated in payment_rows:
+        if _counted_in_reset(resets.get(sid_), pdate, pcreated):
             continue
         payments_by_supplier[sid_] = payments_by_supplier.get(sid_, ZERO) + Decimal(amount)
 

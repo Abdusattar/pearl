@@ -35,6 +35,7 @@
         <th class="num">Разница</th>
         <th>Кто</th>
         <th>Пояснение</th>
+        {% if can_cancel %}<th></th>{% endif %}
       </tr>
     </thead>
     <tbody>
@@ -61,10 +62,45 @@
           </div>
           {% endif %}
         </td>
+        {% if can_cancel %}
+        <td data-label="">
+          {% if not it.rec.cancelled_at %}
+          <button type="button" class="btn btn-secondary" style="padding:6px 12px;font-size:12px"
+                  onclick="toggleCancel({{ it.rec.id }})">Отменить</button>
+          <form id="cancel-{{ it.rec.id }}" method="post"
+                action="/podotchet/reconcile/{{ it.rec.id }}/cancel"
+                style="display:none;margin-top:8px;flex-direction:column;gap:6px;min-width:200px">
+            <input type="hidden" name="org_id" value="{{ current_org_id or '' }}">
+            <input type="text" name="reason" class="form-control" required maxlength="200"
+                   style="font-size:13px" placeholder="Почему отменяете">
+            <div style="display:flex;gap:6px">
+              <button type="submit" class="btn btn-danger" style="padding:6px 12px;font-size:12px">Отменить сверку</button>
+              <button type="button" class="btn btn-secondary" style="padding:6px 12px;font-size:12px"
+                      onclick="toggleCancel({{ it.rec.id }}, false)">Не надо</button>
+            </div>
+          </form>
+          {% endif %}
+        </td>
+        {% endif %}
       </tr>
       {% endfor %}
     </tbody>
   </table>
 </div>
+{% endif %}
+
+{% if can_cancel %}
+<script>
+// Причина обязательна на сервере — поэтому спрашиваем её прямо в строке, а не
+// через confirm(): иначе человек жмёт «ок» и возвращается с ошибкой, потеряв
+// контекст, какую именно сверку отменял.
+function toggleCancel(id, show) {
+  var form = document.getElementById('cancel-' + id);
+  if (!form) return;
+  var open = show === undefined ? form.style.display === 'none' : show;
+  form.style.display = open ? 'flex' : 'none';
+  if (open) form.querySelector('input[name="reason"]').focus();
+}
+</script>
 {% endif %}
 {% endblock %}

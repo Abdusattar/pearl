@@ -99,30 +99,36 @@ def edit_supplier(
         # «Долг на начало» — не обычное поле карточки, а прямая правка суммы,
         # которую бизнес должен поставщику: она меняет баланс расчётов, минуя
         # закупы и платежи. До 07.09 её мог поменять любой залогиненный, и след
-        # нигде не оставался. Теперь — не оператор (staff), и каждая правка
-        # пишется в журнал со старым и новым значением.
+        # нигде не оставался; 07.09 поле закрыли оператору (staff) и завели
+        # журнал правок.
+        #
+        # 09.09 закрытие снято по решению владельца. Оказалось, что запрет бил
+        # мимо цели: учётчик (Махабат, staff) ведёт всех поставщиков и старые
+        # долги «с прошлого года» знает именно она. Аккуратный инструмент был
+        # ей закрыт, а сверка долга поставщику — открыта, хотя та грубее:
+        # переписывает весь долг целиком и схлопывает историю закупов. Итог
+        # предсказуемый — 09.09 старый майский долг Халиме занесли сверкой,
+        # и 27 закупов выпали из расчёта. Журнал правок остаётся.
         old_balance = float(supplier.opening_balance or 0)
         old_date = supplier.opening_balance_date
-        new_balance, new_date = old_balance, old_date
-        if user.role != "staff":
-            try:
-                new_balance = float((opening_balance or "0").replace(",", ".")) or 0
-            except ValueError:
-                new_balance = old_balance
-            new_date = (
-                datetime.strptime(opening_balance_date, "%Y-%m-%d").date() if opening_balance_date else None
-            )
-            if new_balance != old_balance or new_date != old_date:
-                supplier.opening_balance = new_balance
-                supplier.opening_balance_date = new_date
-                db.add(AuditLog(
-                    entity_type="supplier_opening_balance", entity_id=supplier_id,
-                    action="update", user_id=user.id,
-                    old_data={"opening_balance": old_balance,
-                              "opening_balance_date": old_date.isoformat() if old_date else None},
-                    new_data={"opening_balance": new_balance,
-                              "opening_balance_date": new_date.isoformat() if new_date else None},
-                ))
+        try:
+            new_balance = float((opening_balance or "0").replace(",", ".")) or 0
+        except ValueError:
+            new_balance = old_balance
+        new_date = (
+            datetime.strptime(opening_balance_date, "%Y-%m-%d").date() if opening_balance_date else None
+        )
+        if new_balance != old_balance or new_date != old_date:
+            supplier.opening_balance = new_balance
+            supplier.opening_balance_date = new_date
+            db.add(AuditLog(
+                entity_type="supplier_opening_balance", entity_id=supplier_id,
+                action="update", user_id=user.id,
+                old_data={"opening_balance": old_balance,
+                          "opening_balance_date": old_date.isoformat() if old_date else None},
+                new_data={"opening_balance": new_balance,
+                          "opening_balance_date": new_date.isoformat() if new_date else None},
+            ))
         db.commit()
     redirect_url = f"/suppliers/{supplier_id}?org_id={org_id}" if org_id else f"/suppliers/{supplier_id}"
     return RedirectResponse(redirect_url, status_code=303)

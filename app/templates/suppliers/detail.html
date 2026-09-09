@@ -59,14 +59,17 @@
       <input type="text" name="inn" class="form-control" value="{{ supplier.inn or '' }}">
     </div>
     {# Начальное сальдо меняет сумму долга поставщику напрямую, минуя закупы и
-       платежи — поэтому оператору (staff) поле не показываем и роутер его
-       правку игнорирует. Форму видит, долг менять не может (07.09). #}
-    {% if current_user.role != "staff" %}
+       платежи. 07.09 поле спрятали от оператора (staff), 09.09 открыли обратно:
+       старые долги «с прошлого года» знает именно учётчик, и без этого поля он
+       заносит их сверкой долга — а та переписывает весь долг целиком. Каждая
+       правка пишется в журнал (routers/suppliers.py). #}
     <div class="split-row">
       <div class="form-group" style="margin-bottom:0">
         <label>Начальное сальдо (долг на начало учёта)</label>
         <input type="number" step="0.01" min="0" name="opening_balance" class="form-control"
                value="{{ supplier.opening_balance or 0 }}">
+        <div style="font-size:11px;color:#6b7280;margin-top:4px">Долг, который был до начала
+          учёта в системе. Не платёж и не закуп — только старая задолженность.</div>
       </div>
       <div class="form-group" style="margin-bottom:0">
         <label>Дата сальдо</label>
@@ -74,7 +77,6 @@
                value="{{ supplier.opening_balance_date.isoformat() if supplier.opening_balance_date else '' }}">
       </div>
     </div>
-    {% endif %}
     <div style="display:flex;gap:8px">
       <button type="submit" class="btn btn-primary">Сохранить</button>
       <button type="button" class="btn btn-secondary" onclick="toggleBlock('supplier', false)">Отмена</button>

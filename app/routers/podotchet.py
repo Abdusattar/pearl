@@ -622,6 +622,10 @@ def corrections_registry(request: Request, org_id: str = "", db: Session = Depen
         "accessible_orgs": get_accessible_orgs(user, db),
         "current_org_id": int(org_id) if org_id.isdigit() else None,
         "items": items,
+        # Смотреть реестр может любой залогиненный (в том числе директор), а
+        # отменять — только те, кто и заводит сверки: иначе кнопка есть, а роут
+        # разворачивает на главную (09.09).
+        "can_cancel": user.role in ALLOWED_ROLES,
         "active_page": "corrections",
     })
 
