@@ -4,13 +4,15 @@
 {% block content %}
 <div class="page-header">
   <h1>Склад</h1>
-  <div style="display:flex;gap:10px">
-    <a href="/warehouse/writeoff/auto?org_id={{ current_org_id }}" class="btn btn-primary">− Списание по меню (авто)</a>
+  <div style="display:flex;gap:10px;flex-wrap:wrap">
+    {# Пересчёт — главное действие на складе (09.09): остатки теперь задаёт он,
+       а не расчёт по меню. Доступен и staff — считает физически Махабат. #}
+    <a href="/warehouse/count/?org_id={{ current_org_id }}" class="btn btn-primary">Пересчёт склада</a>
     <a href="/warehouse/writeoff/meal?org_id={{ current_org_id }}" class="btn btn-secondary">− Списание на приём пищи</a>
     <a href="/warehouse/writeoff/add?org_id={{ current_org_id }}" class="btn btn-secondary">− Списание (порча/прочее)</a>
     {% if current_user.role != "staff" %}
     <a href="/warehouse/products/?org_id={{ current_org_id }}" class="btn btn-secondary">Продукты</a>
-    <a href="/warehouse/actualize?org_id={{ current_org_id }}" class="btn btn-secondary">🔍 Актуализация</a>
+    <a href="/warehouse/writeoff/auto?org_id={{ current_org_id }}" class="btn btn-secondary">Расчёт по меню (справка)</a>
     {% endif %}
   </div>
 </div>
@@ -77,12 +79,8 @@
 {% else %}
 <div class="card" style="text-align:center;padding:60px 20px;color:var(--text-muted)">
   <div style="font-size:48px;margin-bottom:16px">📦</div>
-  {% if current_user.role != "staff" %}
-  <div style="font-size:16px;margin-bottom:24px">Склад пуст — заполнится из проведённых квитанций, или занеси остаток вручную</div>
-  <a href="/warehouse/actualize?org_id={{ current_org_id }}" class="btn btn-primary btn-lg">🔍 Актуализация</a>
-  {% else %}
-  <div style="font-size:16px">Склад пуст — заполнится автоматически из проведённых квитанций</div>
-  {% endif %}
+  <div style="font-size:16px;margin-bottom:24px">Склад пуст — заполнится из проведённых квитанций, или пройди по складу и занеси остатки</div>
+  <a href="/warehouse/count/?org_id={{ current_org_id }}" class="btn btn-primary btn-lg">Пересчёт склада</a>
 </div>
 {% endif %}
 

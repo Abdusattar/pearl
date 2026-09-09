@@ -19,11 +19,14 @@ app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
 templates = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
 
-from app.routers import expenses, students, optima, auth, income, warehouse, suppliers, services, reports, assets, attendance, menu, employees, dashboard, podotchet, settings
+from app.routers import expenses, students, optima, auth, income, warehouse, suppliers, services, reports, assets, attendance, menu, employees, dashboard, podotchet, settings, stock_count
 app.include_router(auth.router)
 app.include_router(expenses.router)
 app.include_router(students.router)
 app.include_router(income.router)
+# Раньше warehouse.router — у него prefix="/warehouse", и без этого порядка
+# /warehouse/count/ мог бы перехватиться его же маршрутами.
+app.include_router(stock_count.router)
 app.include_router(warehouse.router)
 app.include_router(optima.router)
 app.include_router(suppliers.router)

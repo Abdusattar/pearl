@@ -691,3 +691,73 @@ class OptimaLog(Base):
     comment     = Column(Text)
     client_ip   = Column(String(50))
     created_at  = Column(DateTime, server_default=func.now())
+
+
+class StockCount(Base):
+    """Пересчёт склада как сессия, а не одна форма (09.09).
+
+    Актуализация была разовым сабмитом: заполнила — сохранила. Для 159 позиций
+    это не работает — Махабат обходит склад с телефоном, и любое прерывание
+    обнуляло всё введённое. Плюс форма не давала ответа на прямой вопрос
+    владельца «прошлись ли по каждому продукту»: совпавшая позиция не оставляла
+    в базе следа.
+
+    Строки заводятся на все товары сразу при старте — состав пересчёта
+    фиксируется и не плывёт, если за время обхода появится новый товар из чека.
+    Остатки меняются только на «Завершить» (см. services/stock_count.apply):
+    брошенная сессия ничего не портит."""
+    __tablename__ = "stock_counts"
+    __table_args__ = (
+        # Одна активная сессия на объект — иначе двое посчитают одно и то же
+        # по-разному, и чей результат применится, решит порядок кликов.
+        Index("ix_stock_counts_one_active", "organization_id", unique=True,
+              postgresql_where=text("status = 'active'")),
+        Index("ix_stock_counts_org_status", "organization_id", "status"),
+    )
+    id              = Column(Integer, primary_key=True)
+    organization_id = Column(Integer, ForeignKey("organizations.id"), nullable=False)
+    count_date      = Column(Date, nullable=False)
+    status          = Column(String(20), nullable=False, default="active", server_default="active")
+    started_by      = Column(Integer, ForeignKey("users.id"), nullable=False)
+    started_at      = Column(DateTime, server_default=func.now())
+    applied_by      = Column(Integer, ForeignKey("users.id"))
+    applied_at      = Column(DateTime)
+    cancelled_by    = Column(Integer, ForeignKey("users.id"))
+    cancelled_at    = Column(DateTime)
+    cancel_reason   = Column(Text)
+
+    organization = relationship("Organization")
+    lines        = relationship("StockCountLine", back_populates="count",
+                                cascade="all, delete-orphan")
+
+
+class StockCountLine(Base):
+    """Строка пересчёта — одна на товар. `actual_qty IS NULL` означает «ещё не
+    отмечено», и это не то же самое, что «насчитали ноль»: в старой форме и то
+    и другое выглядело пустым полем, из-за чего пропуск позиции был неотличим
+    от честного нуля."""
+    __tablename__ = "stock_count_lines"
+    __table_args__ = (
+        UniqueConstraint("count_id", "product_id", name="uq_stock_count_line"),
+        Index("ix_stock_count_lines_count", "count_id"),
+    )
+    id           = Column(Integer, primary_key=True)
+    count_id     = Column(Integer, ForeignKey("stock_counts.id", ondelete="CASCADE"), nullable=False)
+    product_id   = Column(Integer, ForeignKey("products.id"), nullable=False)
+    # Остаток по системе на момент отметки — снимок, по образцу
+    # Reconciliation.expected_amount. Нужен, чтобы на завершении заметить, что
+    # по товару прошло движение, пока его считали, и не проглотить это молча.
+    expected_qty = Column(Numeric(12, 3))
+    actual_qty   = Column(Numeric(12, 3))
+    mode         = Column(String(10))   # same|zero|number
+    marked_by    = Column(Integer, ForeignKey("users.id"))
+    marked_at    = Column(DateTime)
+    # Сигнал «тут что-то не так» — карточку товара не трогаем. Смена единицы
+    # задним числом переписывает смысл всей прошлой истории (Яйцо покупали
+    # лотками по 328 сом, а списывают штуками — отсюда минус 1021), это
+    # разбирается отдельно, а не на обходе склада с телефоном в руке.
+    issue        = Column(String(20))   # unit|duplicate|gone|other
+    note         = Column(Text)
+
+    count   = relationship("StockCount", back_populates="lines")
+    product = relationship("Product")

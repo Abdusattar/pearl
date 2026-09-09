@@ -1,0 +1,144 @@
+{% extends "base.html" %}
+{% block title %}Завершение пересчёта{% endblock %}
+
+{% block content %}
+<style>
+  .sum-card { background: var(--surface); border: 1px solid var(--border); border-radius: 12px;
+              padding: 18px; margin-bottom: 14px; max-width: 760px; }
+  .sum-card h3 { font-size: 15px; font-weight: 700; margin-bottom: 12px; }
+  .sum-line { display: flex; justify-content: space-between; gap: 12px; padding: 8px 0;
+              border-bottom: 1px solid var(--border); font-size: 14px;
+              font-variant-numeric: tabular-nums; }
+  .sum-line:last-child { border-bottom: 0; }
+  .sum-line b { font-weight: 700; }
+  .warn-box { background: #fffbeb; border: 1px solid #fde68a; color: #78350f;
+              padding: 12px 14px; border-radius: 8px; margin-bottom: 14px; max-width: 760px; }
+  .warn-box strong { display: block; margin-bottom: 3px; }
+  .mini { width: 100%; border-collapse: collapse; font-size: 13px; margin-top: 8px; }
+  .mini th, .mini td { padding: 7px 9px; border-bottom: 1px solid var(--border); text-align: left; }
+  .mini th { font-size: 11px; text-transform: uppercase; letter-spacing: .04em;
+             color: var(--text-muted); font-weight: 700; }
+  .mini td.num { text-align: right; font-variant-numeric: tabular-nums; }
+  .tbl-wrap { overflow-x: auto; }
+</style>
+
+<div class="page-header">
+  <h1>Завершение пересчёта</h1>
+  <a href="/warehouse/count/?org_id={{ current_org_id }}" class="btn btn-secondary">← Вернуться к пересчёту</a>
+</div>
+
+<div class="sum-card">
+  <h3>Что произойдёт после завершения</h3>
+  <div class="sum-line"><span>Отмечено позиций</span><b>{{ summary.marked }} из {{ summary.total }}</b></div>
+  <div class="sum-line"><span>Остаток изменится</span><b>{{ summary.changed | length }}</b></div>
+  <div class="sum-line"><span>Совпало с системой</span><b>{{ summary.unchanged }}</b></div>
+  <div class="sum-line">
+    <span>Не отмечено — останутся как есть</span>
+    <b style="{% if summary.left %}color:#b45309{% endif %}">{{ summary.left }}</b>
+  </div>
+</div>
+
+{% if summary.left %}
+<div class="warn-box">
+  <strong>{{ summary.left }} позиций не отмечены</strong>
+  Их остаток система не тронет. Если по ним ничего не считали — так и должно быть.
+  Если просто не дошли, лучше вернуться и досчитать: потом будет не отличить одно от другого.
+</div>
+{% endif %}
+
+{% if summary.moved %}
+<div class="warn-box">
+  <strong>По {{ summary.moved | length }} позициям остаток изменился, пока шёл пересчёт</strong>
+  Кто-то провёл приход или списание уже после того, как эти товары посчитали.
+  Разница считается от остатка на сейчас — проверь, что цифра всё ещё верна.
+  <div class="tbl-wrap">
+  <table class="mini">
+    <thead><tr><th>Товар</th><th class="num">Было при отметке</th><th class="num">Сейчас</th><th class="num">Насчитали</th></tr></thead>
+    <tbody>
+      {% for r in summary.moved %}
+      <tr>
+        <td>{{ r.name }}</td>
+        <td class="num">{{ "%g"|format(r.was_at_marking) }}</td>
+        <td class="num">{{ "%g"|format(r.current) }}</td>
+        <td class="num">{{ "%g"|format(r.actual) }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  </div>
+</div>
+{% endif %}
+
+{% if summary.no_price %}
+<div class="warn-box">
+  <strong>По {{ summary.no_price | length }} товарам цена неизвестна</strong>
+  Они ни разу не приходовались через систему — их карточки создал импорт тех.карты
+  под ингредиент рецепта. Приход по ним запишется без стоимости: количество на складе
+  появится, а в себестоимость питания они не попадут.
+  <div class="tbl-wrap">
+  <table class="mini">
+    <thead><tr><th>Товар</th><th class="num">Придёт</th></tr></thead>
+    <tbody>
+      {% for r in summary.no_price %}
+      <tr><td>{{ r.name }}</td><td class="num">+{{ "%g"|format(r.delta) }} {{ r.unit }}</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  </div>
+</div>
+{% endif %}
+
+{% if summary.issues %}
+<div class="sum-card">
+  <h3>Отмечено как «что-то не так» — {{ summary.issues | length }}</h3>
+  <div class="form-hint" style="margin-bottom:8px">
+    Карточки товаров не менялись. Это список на отдельный разбор — единицы и дубли
+    правятся с оглядкой на всю прошлую историю, не на обходе склада.
+  </div>
+  <div class="tbl-wrap">
+  <table class="mini">
+    <thead><tr><th>Товар</th><th>Что не так</th><th>Пояснение</th></tr></thead>
+    <tbody>
+      {% for r in summary.issues %}
+      <tr><td>{{ r.name }}</td><td>{{ r.issue }}</td><td>{{ r.note or "—" }}</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  </div>
+</div>
+{% endif %}
+
+{% if summary.changed %}
+<div class="sum-card">
+  <h3>Что изменится — {{ summary.changed | length }} позиций</h3>
+  <div class="tbl-wrap">
+  <table class="mini">
+    <thead>
+      <tr><th>Товар</th><th class="num">Сейчас</th><th class="num">Станет</th><th class="num">Движение</th></tr>
+    </thead>
+    <tbody>
+      {% for r in summary.changed %}
+      <tr>
+        <td>{{ r.name }} <span style="color:var(--text-muted)">{{ r.unit }}</span></td>
+        <td class="num">{{ "%g"|format(r.current) }}</td>
+        <td class="num">{{ "%g"|format(r.actual) }}</td>
+        <td class="num" style="color:{% if r.delta > 0 %}#16a34a{% else %}#dc2626{% endif %}">
+          {% if r.delta > 0 %}приход +{{ "%g"|format(r.delta) }}{% else %}списание {{ "%g"|format(r.delta) }}{% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  </div>
+</div>
+{% endif %}
+
+<form method="post" action="/warehouse/count/apply" style="max-width:760px;display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+  <input type="hidden" name="org_id" value="{{ current_org_id }}">
+  <button type="submit" class="btn btn-primary" style="padding:13px 24px;font-size:15px">
+    Завершить и применить
+  </button>
+  <a href="/warehouse/count/?org_id={{ current_org_id }}" class="btn btn-secondary">Вернуться к пересчёту</a>
+  <span class="form-hint">Приходы и списания создадутся одним разом, с пометкой «пересчёт склада».</span>
+</form>
+{% endblock %}

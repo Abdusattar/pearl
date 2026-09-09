@@ -1,0 +1,232 @@
+{% extends "base.html" %}
+{% block title %}Пересчёт склада{% endblock %}
+
+{% block content %}
+<style>
+  .cnt-rail { background: var(--surface); border: 1px solid var(--border); border-radius: 12px;
+              padding: 13px 15px; margin-bottom: 14px; display: flex; flex-direction: column; gap: 9px;
+              position: sticky; top: 0; z-index: 20; }
+  .cnt-rail .top { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+  .cnt-num { font-size: 17px; font-weight: 700; font-variant-numeric: tabular-nums; }
+  .cnt-num small { font-weight: 500; color: var(--text-muted); font-size: 13px; }
+  .cnt-who { margin-left: auto; font-size: 12px; color: var(--text-muted); }
+  .cnt-bar { height: 8px; border-radius: 99px; background: var(--bg); overflow: hidden; }
+  .cnt-bar i { display: block; height: 100%; background: var(--success); border-radius: 99px; }
+
+  .cnt-tabs { display: flex; gap: 6px; margin-bottom: 12px; flex-wrap: wrap; }
+  .cnt-tab { border: 1px solid var(--border); background: var(--surface); color: var(--text-muted);
+             padding: 9px 14px; border-radius: 10px; font-size: 13px; font-weight: 500;
+             text-decoration: none; display: inline-flex; align-items: center; gap: 8px; }
+  .cnt-tab.on { border-color: var(--primary); color: var(--primary); background: #eef2ff; font-weight: 600; }
+  .cnt-tab .n { font-size: 11px; font-weight: 700; background: var(--bg); padding: 2px 7px;
+                border-radius: 99px; font-variant-numeric: tabular-nums; }
+  .cnt-tab.on .n { background: var(--primary); color: #fff; }
+
+  .cnt-sect { background: var(--surface); border: 1px solid var(--border); border-radius: 12px;
+              overflow: hidden; margin-bottom: 10px; }
+  .cnt-sect > .head { display: flex; align-items: center; gap: 10px; padding: 11px 15px;
+                      background: var(--bg); font-weight: 600; font-size: 14px; }
+  .cnt-sect > .head .p { margin-left: auto; font-size: 11px; font-weight: 700; color: var(--text-muted);
+                         background: var(--surface); padding: 3px 9px; border-radius: 99px;
+                         font-variant-numeric: tabular-nums; }
+
+  .cnt-row { display: flex; gap: 12px; align-items: center; flex-wrap: wrap;
+             padding: 11px 15px 11px 12px; border-top: 1px solid var(--border);
+             border-left: 3px solid transparent; }
+  .cnt-row.done { border-left-color: var(--success); background: #f4fbf6; }
+  .cnt-row.diff { border-left-color: #f59e0b; background: #fffbf2; }
+  .cnt-main { flex: 1 1 240px; min-width: 0; }
+  .cnt-name { font-weight: 600; font-size: 15px; }
+  .cnt-unit { font-size: 11px; font-weight: 600; padding: 3px 8px; border-radius: 6px;
+              background: var(--bg); color: var(--text-muted); border: 1px solid var(--border);
+              margin-left: 6px; }
+  .cnt-meta { font-size: 13px; color: var(--text-muted); font-variant-numeric: tabular-nums; margin-top: 1px; }
+  .cnt-delta { font-size: 13px; font-weight: 600; margin-top: 2px; font-variant-numeric: tabular-nums; }
+  .cnt-flag { font-size: 12px; color: #b45309; margin-top: 3px; }
+  .cnt-badge { font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 99px;
+               margin-left: 6px; background: #fdf3e3; color: #b45309; border: 1px solid #f5d9a8; }
+  .cnt-badge.grey { background: var(--bg); color: var(--text-muted); border-color: var(--border); }
+
+  .cnt-ctl { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+  .cnt-ctl form { display: inline-flex; gap: 6px; align-items: center; margin: 0; }
+  .cnt-qty { width: 116px; padding: 10px 12px; text-align: right; font-size: 16px; font-weight: 700;
+             border: 1px solid var(--border); border-radius: 10px; font-family: var(--font);
+             font-variant-numeric: tabular-nums; }
+  .cnt-btn { border: 1px solid var(--border); background: var(--surface); color: var(--text-muted);
+             border-radius: 10px; padding: 9px 11px; font-size: 13px; cursor: pointer;
+             min-height: 42px; white-space: nowrap; font-family: var(--font); }
+  .cnt-btn:hover { border-color: var(--primary); color: var(--primary); }
+  .cnt-btn.on { background: #e9f8ee; border-color: var(--success); color: #16a34a; font-weight: 600; }
+
+  .cnt-actions { position: sticky; bottom: 0; background: var(--surface); border-top: 1px solid var(--border);
+                 padding: 12px 0; margin-top: 18px; display: flex; gap: 10px; align-items: center;
+                 flex-wrap: wrap; }
+  .cnt-actions .note { font-size: 13px; color: var(--text-muted); }
+
+  dialog.flagbox { border: 1px solid var(--border); border-radius: 12px; padding: 20px; max-width: 380px; width: 92%; }
+  dialog.flagbox::backdrop { background: rgba(15,20,40,.35); }
+</style>
+
+<div class="page-header">
+  <h1>Пересчёт склада</h1>
+  <a href="/warehouse/?org_id={{ current_org_id }}" class="btn btn-secondary">← Склад</a>
+</div>
+
+<div class="cnt-rail">
+  <div class="top">
+    <span class="cnt-num">{{ progress.marked }} из {{ progress.total }} <small>отмечено</small></span>
+    <span class="cnt-who">
+      начат {{ count.count_date.strftime("%d.%m.%Y") }}, {{ started_by_name }}
+    </span>
+  </div>
+  <div class="cnt-bar">
+    <i style="width: {{ (progress.marked / progress.total * 100) if progress.total else 0 }}%"></i>
+  </div>
+</div>
+
+<div class="cnt-tabs">
+  {% for key, label in [("food","Продукты питания"), ("house","Хозтовары"), ("unsorted","Не разобрано")] %}
+  <a class="cnt-tab {% if tab == key %}on{% endif %}"
+     href="/warehouse/count/?org_id={{ current_org_id }}&tab={{ key }}{% if only_left %}&only_left=1{% endif %}">
+    {{ label }} <span class="n">{{ tab_counts[key].marked }}/{{ tab_counts[key].total }}</span>
+  </a>
+  {% endfor %}
+  <a class="cnt-tab {% if only_left %}on{% endif %}" style="margin-left:auto"
+     href="/warehouse/count/?org_id={{ current_org_id }}&tab={{ tab }}{% if not only_left %}&only_left=1{% endif %}">
+    {% if only_left %}Показать все{% else %}Только непройденные{% endif %}
+  </a>
+</div>
+
+<div class="form-hint" style="margin-bottom:14px">
+  Считай в той единице, что указана рядом с названием. Если единица неверная или
+  товар дублируется — отметь через «⋮», но сам не меняй: поправим отдельно, чтобы
+  не переписать всю прошлую историю по этому товару.
+</div>
+
+{% for category, rows in sections %}
+<div class="cnt-sect">
+  <div class="head">
+    <span>{{ category }}</span>
+    <span class="p">{{ rows | selectattr("line.actual_qty") | list | length }}/{{ rows | length }}</span>
+  </div>
+  {% for r in rows %}
+  {% set line = r.line %}
+  {% set marked = line.actual_qty is not none %}
+  {% set delta = (line.actual_qty - r.balance) if marked else 0 %}
+  <div class="cnt-row {% if marked and (delta > 0.001 or delta < -0.001) %}diff{% elif marked %}done{% endif %}">
+    <div class="cnt-main">
+      <div>
+        <span class="cnt-name">{{ r.product.name }}</span>
+        <span class="cnt-unit">{{ r.product.unit or "кг" }}</span>
+        {% if r.balance < -0.001 %}<span class="cnt-badge">система в минусе</span>{% endif %}
+        {% if not r.has_price %}<span class="cnt-badge grey">цена неизвестна</span>{% endif %}
+      </div>
+      <div class="cnt-meta">по системе {{ "%g"|format(r.balance) }} {{ r.product.unit or "кг" }}</div>
+      {% if marked %}
+        {% if delta > 0.001 or delta < -0.001 %}
+        <div class="cnt-delta" style="color:#b45309">
+          станет {{ "%g"|format(line.actual_qty) }} · {% if delta > 0 %}приход +{% else %}списание {% endif %}{{ "%g"|format(delta) }}
+        </div>
+        {% else %}
+        <div class="cnt-delta" style="color:#16a34a">совпало</div>
+        {% endif %}
+      {% endif %}
+      {% if line.issue %}
+      <div class="cnt-flag">⚑ {{ issues.get(line.issue, line.issue) }}{% if line.note %} — {{ line.note }}{% endif %}</div>
+      {% endif %}
+    </div>
+
+    <div class="cnt-ctl">
+      <form method="post" action="/warehouse/count/line/{{ line.id }}">
+        <input type="hidden" name="org_id" value="{{ current_org_id }}">
+        <input type="hidden" name="tab" value="{{ tab }}">
+        <input type="hidden" name="only_left" value="{{ only_left }}">
+        <input type="hidden" name="mode" value="number">
+        <input type="text" name="value" class="cnt-qty" inputmode="decimal" placeholder="—"
+               value="{% if marked %}{{ '%g'|format(line.actual_qty) }}{% endif %}"
+               onchange="this.form.submit()">
+      </form>
+      <form method="post" action="/warehouse/count/line/{{ line.id }}">
+        <input type="hidden" name="org_id" value="{{ current_org_id }}">
+        <input type="hidden" name="tab" value="{{ tab }}">
+        <input type="hidden" name="only_left" value="{{ only_left }}">
+        <input type="hidden" name="mode" value="{% if line.mode == 'same' %}clear{% else %}same{% endif %}">
+        <button type="submit" class="cnt-btn {% if line.mode == 'same' %}on{% endif %}">столько же</button>
+      </form>
+      <form method="post" action="/warehouse/count/line/{{ line.id }}">
+        <input type="hidden" name="org_id" value="{{ current_org_id }}">
+        <input type="hidden" name="tab" value="{{ tab }}">
+        <input type="hidden" name="only_left" value="{{ only_left }}">
+        <input type="hidden" name="mode" value="{% if line.mode == 'zero' %}clear{% else %}zero{% endif %}">
+        <button type="submit" class="cnt-btn {% if line.mode == 'zero' %}on{% endif %}">нет</button>
+      </form>
+      <button type="button" class="cnt-btn" style="padding:9px 12px"
+              onclick="document.getElementById('flag-{{ line.id }}').showModal()">⋮</button>
+    </div>
+  </div>
+
+  <dialog class="flagbox" id="flag-{{ line.id }}">
+    <form method="post" action="/warehouse/count/line/{{ line.id }}/flag">
+      <input type="hidden" name="org_id" value="{{ current_org_id }}">
+      <input type="hidden" name="tab" value="{{ tab }}">
+      <div style="font-weight:700;margin-bottom:4px">{{ r.product.name }}</div>
+      <div class="form-hint" style="margin-bottom:12px">Что не так? Мы разберём и поправим — карточка товара сейчас не изменится.</div>
+      <div class="form-group">
+        <label>Проблема</label>
+        <select name="issue" class="form-control">
+          <option value="">— нет проблемы —</option>
+          {% for key, label in issues.items() %}
+          <option value="{{ key }}" {% if line.issue == key %}selected{% endif %}>{{ label }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="form-group">
+        <label>Пояснение</label>
+        <input type="text" name="note" class="form-control" value="{{ line.note or '' }}"
+               placeholder="например: считаем пучками, не килограммами">
+      </div>
+      <div style="display:flex;gap:8px;margin-top:14px">
+        <button type="submit" class="btn btn-primary">Сохранить</button>
+        <button type="button" class="btn btn-secondary"
+                onclick="document.getElementById('flag-{{ line.id }}').close()">Отмена</button>
+      </div>
+    </form>
+  </dialog>
+  {% endfor %}
+</div>
+{% else %}
+<div class="card" style="text-align:center;color:var(--text-muted)">
+  Здесь пусто — сними фильтр «только непройденные», чтобы увидеть остальные позиции.
+</div>
+{% endfor %}
+
+<div class="cnt-actions">
+  <a href="/warehouse/count/finish?org_id={{ current_org_id }}" class="btn btn-primary"
+     style="padding:13px 22px">Завершить пересчёт</a>
+  <span class="note">
+    {% if progress.left %}Не отмечено: {{ progress.left }}. {% endif %}
+    Остатки изменятся только на завершении — пересчёт можно бросить и вернуться.
+  </span>
+  <button type="button" class="btn btn-secondary" style="margin-left:auto"
+          onclick="document.getElementById('cancel-count').showModal()">Отменить пересчёт</button>
+</div>
+
+<dialog class="flagbox" id="cancel-count">
+  <form method="post" action="/warehouse/count/cancel">
+    <input type="hidden" name="org_id" value="{{ current_org_id }}">
+    <div style="font-weight:700;margin-bottom:4px">Отменить пересчёт?</div>
+    <div class="form-hint" style="margin-bottom:12px">
+      Отмеченное пропадёт, остатки не изменятся. Запись об отменённом пересчёте останется.
+    </div>
+    <div class="form-group">
+      <label>Почему отменяем</label>
+      <input type="text" name="reason" class="form-control" placeholder="например: начали не тем числом">
+    </div>
+    <div style="display:flex;gap:8px;margin-top:14px">
+      <button type="submit" class="btn btn-danger">Отменить пересчёт</button>
+      <button type="button" class="btn btn-secondary"
+              onclick="document.getElementById('cancel-count').close()">Не надо</button>
+    </div>
+  </form>
+</dialog>
+{% endblock %}

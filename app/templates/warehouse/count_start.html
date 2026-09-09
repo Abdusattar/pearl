@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+{% block title %}Пересчёт склада{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <h1>Пересчёт склада</h1>
+  <a href="/warehouse/?org_id={{ current_org_id }}" class="btn btn-secondary">← Назад</a>
+</div>
+
+<div class="card" style="max-width:620px;text-align:center;padding:36px 24px">
+  <div style="font-size:15px;font-weight:600;margin-bottom:8px">{{ current_org_name or current_org.name }}</div>
+  <p style="color:var(--text-muted);font-size:14px;max-width:44ch;margin:0 auto 20px">
+    Возьми телефон, пройди по складу и отмечай, сколько чего есть на самом деле.
+    Можно в несколько заходов — отмеченное не потеряется.
+  </p>
+
+  <form method="post" action="/warehouse/count/start">
+    <input type="hidden" name="org_id" value="{{ current_org_id }}">
+    <div class="form-group" style="max-width:220px;margin:0 auto 18px;text-align:left">
+      <label>Дата пересчёта</label>
+      <input type="date" name="count_date" class="form-control" value="{{ today }}" required>
+    </div>
+    <button type="submit" class="btn btn-primary" style="padding:13px 26px;font-size:15px">
+      Начать пересчёт
+    </button>
+  </form>
+
+  <div class="form-hint" style="margin-top:16px">
+    В список попадёт {{ candidates }} позиций — то, что в обороте: закупали за
+    последние 60 дней или числится остаток.
+  </div>
+</div>
+
+{% if last %}
+<div class="card" style="max-width:620px;margin-top:16px">
+  <div style="font-size:13px;color:var(--text-muted)">
+    Последний пересчёт — {{ last.count_date.strftime("%d.%m.%Y") }}.
+  </div>
+</div>
+{% endif %}
+{% endblock %}
