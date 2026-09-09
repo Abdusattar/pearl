@@ -152,6 +152,75 @@ def test_transfer_after_reconciliation_reduces_the_new_baseline(db, orgs):
     assert podotchet.get_org_balance(db, school.id) == Decimal("20000")
 
 
+def _make_owner(db, org):
+    import bcrypt
+    u = User(
+        name="__test_transfer_owner__", role="owner", organization_id=org.id,
+        password_hash=bcrypt.hashpw(b"test-pass", bcrypt.gensalt()).decode(),
+    )
+    db.add(u)
+    db.flush()
+    return u
+
+
+def _post_transfer(client, db, current, other, direction, amount="260000"):
+    user = _make_owner(db, current)
+    client.post("/login", data={"user_id": user.id, "password": "test-pass"})
+    client.post("/podotchet/transfer", data={
+        "amount": amount, "date": "2026-09-09",
+        "other_organization_id": str(other.id), "direction": direction,
+        "comment": "на стройматериалы школы", "org_id": str(current.id),
+    }, follow_redirects=False)
+
+
+def test_podotchet_page_renders_transfer_form(client, db, orgs):
+    """Страница подотчёта открывается и показывает форму перетока.
+
+    Форма собирает имена держателей касс всех бизнесов (holder_names) и
+    подставляет их в скрипт — ошибка в шаблоне уронила бы весь экран, а не
+    только модалку.
+    """
+    sadik, school = orgs
+    user = _make_owner(db, sadik)
+    client.post("/login", data={"user_id": user.id, "password": "test-pass"})
+
+    page = client.get(f"/podotchet/?org_id={sadik.id}")
+    assert page.status_code == 200
+    assert "Переток между бизнесами" in page.text
+    assert "Передали в другой бизнес" in page.text
+    assert "Получили из другого бизнеса" in page.text
+
+
+def test_route_records_incoming_transfer(client, db, orgs):
+    """Заводим со страницы школы: «получили из садика»."""
+    sadik, school = orgs
+    _fund(db, sadik, "260000", START + timedelta(days=1))
+    _post_transfer(client, db, school, sadik, "in")
+
+    assert podotchet.get_org_balance(db, school.id) == Decimal("260000")
+    assert podotchet.get_org_balance(db, sadik.id) == Decimal("0")
+
+
+def test_route_records_outgoing_transfer(client, db, orgs):
+    """Та же операция со страницы садика: «передали в школу».
+
+    Направление меняет концы, но не тип записи — результат обязан совпасть
+    с входящим вариантом, иначе одна и та же передача денег считалась бы
+    по-разному в зависимости от того, с чьей страницы её завели.
+    """
+    sadik, school = orgs
+    _fund(db, sadik, "260000", START + timedelta(days=1))
+    _post_transfer(client, db, sadik, school, "out")
+
+    assert podotchet.get_org_balance(db, school.id) == Decimal("260000")
+    assert podotchet.get_org_balance(db, sadik.id) == Decimal("0")
+
+    saved = db.query(CashFunding).filter(CashFunding.source_organization_id == sadik.id).one()
+    assert saved.organization_id == school.id
+    # Отчитывается держатель кассы получателя, а не того, с чьей страницы завели
+    assert saved.accountable_user_id == school._holder_id
+
+
 def test_flows_panel_still_shows_the_transfer(db, orgs):
     """Витрина «Перетоки между бизнесами» не сломалась — направление и сумма."""
     sadik, school = orgs

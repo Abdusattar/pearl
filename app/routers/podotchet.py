@@ -187,6 +187,12 @@ def podotchet_page(request: Request, org_id: str | None = None, db: Session = De
         "active_page": "podotchet",
         "business_orgs": business_orgs,
         "holder": holder,
+        # Держатель кассы каждого бизнеса — на перетоке отчитывается тот, чей
+        # объект получил деньги, а он зависит от выбранного направления.
+        "holder_names": {
+            o.id: (h.name if (h := _resolve_holder(db, o)) else None)
+            for o in business_orgs
+        },
         "inventory": inventory,
         "expected": expected,
         "person_cards": person_cards,
@@ -270,20 +276,33 @@ def create_withdrawal(
     return RedirectResponse(redirect_url, status_code=303)
 
 
-@router.post("/borrow")
-def create_borrow(
+@router.post("/transfer")
+def create_transfer(
     request: Request,
     amount: str = Form(...),
     date_str: str = Form(..., alias="date"),
-    source_organization_id: str = Form(...),
+    other_organization_id: str = Form(...),
+    direction: str = Form(default="in"),
     comment: str = Form(default=""),
     org_id: str = Form(...),
     db: Session = Depends(get_db),
 ):
-    """Одолжили наличными у другого бизнеса — получатель всегда текущий
-    объект страницы, «откуда» выбирается отдельно. Деньги никогда не были на
-    счету получателя — это всегда direct_cash, не withdrawal. Отчитывается —
-    держатель кассы объекта-получателя (см. create_withdrawal)."""
+    """Переток наличных между бизнесами — заводится с любой стороны (09.09).
+
+    Раньше это называлось «одолжили» и записывалось только со стороны
+    получателя. Название владелец снял: бизнесы принадлежат одним и тем же
+    людям, друг другу они не должны и рассчитываться не будут. Осталась суть —
+    наличные физически переехали из одной кассы в другую.
+
+    Направление задаёт, кто из двух объектов получатель: `in` — деньги пришли
+    в текущий объект, `out` — ушли из него в выбранный. Запись в базе одна и та
+    же (CashFunding у получателя с source_organization_id донора), меняются
+    только концы — поэтому оба направления дают ровно один тип строки, а не
+    две несогласуемые сущности.
+
+    Деньги никогда не были на счету получателя — это всегда direct_cash, не
+    withdrawal. Отчитывается держатель кассы объекта-получателя, кто бы из
+    двух им ни оказался (см. create_withdrawal)."""
     user, redirect = _guard(request, db)
     if redirect:
         return redirect
@@ -301,23 +320,26 @@ def create_borrow(
     if not org:
         return RedirectResponse(f"{redirect_url}&error=Выберите конкретный объект наверху страницы", status_code=303)
 
-    src = _resolve_business_org(db, source_organization_id)
-    if not src or src.id == org.id:
-        return RedirectResponse(f"{redirect_url}&error=Укажите, у какого другого бизнеса одолжили", status_code=303)
+    other = _resolve_business_org(db, other_organization_id)
+    if not other or other.id == org.id:
+        return RedirectResponse(f"{redirect_url}&error=Укажите второй бизнес", status_code=303)
 
-    holder = _resolve_holder(db, org)
+    receiver, donor = (other, org) if direction == "out" else (org, other)
+
+    holder = _resolve_holder(db, receiver)
     if not holder:
-        msg = "Для этого объекта не задан держатель кассы — задайте в Настройках"
+        msg = (f"Для объекта «{receiver.name}» не задан держатель кассы — "
+               "задайте в Настройках")
         return RedirectResponse(f"{redirect_url}&error={quote(msg)}", status_code=303)
 
     db.add(CashFunding(
-        organization_id=org.id,
+        organization_id=receiver.id,
         source_type="direct_cash",
         amount=amount_val,
         date=date_val,
         taken_by=user.id,
         accountable_user_id=holder.id,
-        source_organization_id=src.id,
+        source_organization_id=donor.id,
         comment=comment.strip() or None,
         created_by=user.id,
     ))

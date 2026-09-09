@@ -34,7 +34,7 @@
   <h1>Подотчёт</h1>
   <div style="display:flex;gap:16px;align-items:center;flex-wrap:wrap">
     {% if holder %}
-    <a href="#" onclick="openModal('borrow-modal');return false" style="font-size:13px;color:var(--text-muted)">Одолжили у другого бизнеса?</a>
+    <a href="#" onclick="openModal('transfer-modal');renderTransferArrow();return false" style="font-size:13px;color:var(--text-muted)">Переток между бизнесами?</a>
     <a href="#" onclick="openModal('founder-fund-modal');return false" style="font-size:13px;color:var(--text-muted)">Учредитель дал наличные?</a>
     {% endif %}
     <a href="#" onclick="openModal('founder-withdraw-modal');return false" style="font-size:13px;color:var(--text-muted)">Учредитель забрал?</a>
@@ -427,7 +427,7 @@
         <td data-label="Сумма" class="num">{{ "{:,.2f}".format(r.amount) }} с</td>
         <td data-label="Источник">
           {% if r.source_org_name %}
-          Одолжили у {{ r.source_org_name }}
+          Переток из «{{ r.source_org_name }}»
           {% elif r.source_founder_name %}
           Взнос учредителя ({{ r.source_founder_name }})
           {% elif r.source_type == "withdrawal" %}
@@ -522,13 +522,13 @@
   </div>
 </div>
 
-<div class="modal-overlay" id="borrow-modal" hidden>
+<div class="modal-overlay" id="transfer-modal" hidden>
   <div class="modal">
     <div class="modal-header">
-      <h3>Одолжили у другого бизнеса</h3>
-      <button type="button" class="modal-close" onclick="closeModal('borrow-modal')">✕</button>
+      <h3>Переток между бизнесами</h3>
+      <button type="button" class="modal-close" onclick="closeModal('transfer-modal')">✕</button>
     </div>
-    <form method="post" action="/podotchet/borrow">
+    <form method="post" action="/podotchet/transfer">
       <input type="hidden" name="org_id" value="{{ current_org_id }}">
 
       <div class="split-row">
@@ -543,34 +543,78 @@
       </div>
 
       <div class="form-group">
-        <label>Откуда *</label>
-        <select class="form-control" name="source_organization_id" required>
+        <label>Направление *</label>
+        <select class="form-control" name="direction" id="transfer-direction" onchange="renderTransferArrow()">
+          <option value="in">Получили из другого бизнеса</option>
+          <option value="out">Передали в другой бизнес</option>
+        </select>
+      </div>
+
+      <div class="form-group">
+        <label>Второй бизнес *</label>
+        <select class="form-control" name="other_organization_id" id="transfer-other" required
+                onchange="renderTransferArrow()">
           <option value="">— выбрать —</option>
           {% for o in business_orgs if o.id != current_org_id %}
-          <option value="{{ o.id }}">{{ o.name }}</option>
+          <option value="{{ o.id }}" data-name="{{ o.name }}"
+                  data-holder="{{ holder_names.get(o.id) or '' }}">{{ o.name }}</option>
           {% endfor %}
         </select>
-        <div class="form-hint">Получатель — {{ current_org_name }} (текущий объект). У того, у кого одолжили,
-          касса уменьшится на эту же сумму. Появится в блоке «Перетоки между бизнесами».</div>
+        <div class="form-hint" id="transfer-arrow" style="font-weight:600;color:var(--text)"></div>
+        <div class="form-hint">У того, кто отдал, касса уменьшится на эту же сумму. Не долг:
+          возвращать не обязательно, срок система не ведёт.</div>
       </div>
 
       <div class="form-group">
         <label>Отчитывается</label>
-        <div class="form-hint" style="font-size:15px;color:var(--text)">{{ holder.name if holder else "—" }} <span style="font-size:12px;color:var(--text-muted)">держатель кассы объекта</span></div>
+        <div class="form-hint" id="transfer-holder" style="font-size:15px;color:var(--text)">
+          {{ holder.name if holder else "—" }}
+          <span style="font-size:12px;color:var(--text-muted)">держатель кассы получателя</span>
+        </div>
       </div>
 
       <div class="form-group" style="margin-bottom:20px">
         <label>Комментарий</label>
-        <input class="form-control" type="text" name="comment" placeholder="Например: на зарплату, не хватило со своего счёта">
+        <input class="form-control" type="text" name="comment" placeholder="Например: на стройматериалы школы">
       </div>
 
       <div style="display:flex;gap:8px">
         <button type="submit" class="btn btn-primary">Сохранить</button>
-        <button type="button" class="btn btn-secondary" onclick="closeModal('borrow-modal')">Отмена</button>
+        <button type="button" class="btn btn-secondary" onclick="closeModal('transfer-modal')">Отмена</button>
       </div>
     </form>
   </div>
 </div>
+
+<script>
+// Направление задаёт не только запись, но и то, кто отчитывается: деньги
+// принимает один из двух объектов, и держатель кассы у каждого свой. Без этой
+// подсказки человек видел бы имя держателя текущего объекта даже когда деньги
+// уходят в другой.
+function renderTransferArrow() {
+  var dir = document.getElementById('transfer-direction');
+  var sel = document.getElementById('transfer-other');
+  var arrow = document.getElementById('transfer-arrow');
+  var holderBox = document.getElementById('transfer-holder');
+  if (!dir || !sel || !arrow) return;
+  var opt = sel.options[sel.selectedIndex];
+  var other = opt ? (opt.getAttribute('data-name') || '') : '';
+  var here = {{ current_org_name | tojson }};
+  var hereHolder = {{ (holder.name if holder else "") | tojson }};
+  if (!other) {
+    arrow.textContent = '';
+  } else {
+    arrow.textContent = dir.value === 'out' ? here + ' → ' + other : other + ' → ' + here;
+  }
+  if (holderBox) {
+    var name = dir.value === 'out'
+      ? (opt ? opt.getAttribute('data-holder') : '') || ''
+      : hereHolder;
+    holderBox.innerHTML = (name || '—') +
+      ' <span style="font-size:12px;color:var(--text-muted)">держатель кассы получателя</span>';
+  }
+}
+</script>
 
 <div class="modal-overlay" id="founder-fund-modal" hidden>
   <div class="modal">
