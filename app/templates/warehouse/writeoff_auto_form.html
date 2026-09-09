@@ -7,6 +7,18 @@
   <a href="/warehouse/?org_id={{ current_org_id }}" class="btn btn-secondary">← Назад</a>
 </div>
 
+{% if not menu_writeoff_enabled %}
+<div class="alert" style="background:#fffbeb;border:1px solid #fde68a;color:#78350f;padding:12px 14px;border-radius:8px;margin-bottom:18px;max-width:720px">
+  <strong>Меню больше не списывает со склада.</strong>
+  <div style="margin-top:4px;font-size:13px">
+    Расчёт ниже остаётся как справка — сколько сырья ушло бы по норме на это меню
+    и эту явку. Но со склада он ничего не снимает: норма из тех.карты не сходится
+    с тем, сколько повара кладут на самом деле. Реальные остатки задаёт пересчёт
+    склада, а дальше их будет вести отпуск продуктов на кухню.
+  </div>
+</div>
+{% endif %}
+
 <div class="card" style="max-width:720px">
   <form method="get" action="/warehouse/writeoff/auto" style="margin-bottom:16px">
     <input type="hidden" name="org_id" value="{{ current_org_id }}">
@@ -102,7 +114,9 @@
       </tbody>
     </table>
 
+    {% if menu_writeoff_enabled %}
     <button type="submit" class="btn btn-primary" style="margin-top:16px">Списать</button>
+    {% endif %}
   </form>
 
   {% if draft.unlinked %}

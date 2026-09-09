@@ -13,7 +13,9 @@ from app.dependencies import get_current_user, get_accessible_orgs, resolve_org
 from app.models import ExpenseCategory, Organization, Product, WarehouseReceipt, WriteOff
 from app.services.products import get_or_create_product, UNITS, CATEGORIES
 from app.services.warehouse import get_product_balances as _get_balances
-from app.services.writeoff_calc import AUTO_REASON, auto_apply_if_pending, compute_day_draft
+from app.services.writeoff_calc import (
+    AUTO_REASON, MENU_WRITEOFF_ENABLED, auto_apply_if_pending, compute_day_draft,
+)
 
 router = APIRouter(prefix="/warehouse", tags=["warehouse"])
 templates = Jinja2Templates(directory=str(Path(__file__).parent.parent / "templates"))
@@ -219,6 +221,7 @@ def writeoff_auto_form(request: Request, org_id: str | None = None, writeoff_dat
         "writeoff_date": target_date.isoformat(),
         "draft": draft,
         "error": None,
+        "menu_writeoff_enabled": MENU_WRITEOFF_ENABLED,
     })
     return templates.TemplateResponse("warehouse/writeoff_auto_form.html", ctx)
 
@@ -237,6 +240,13 @@ def writeoff_auto_save(
         return RedirectResponse("/login", status_code=302)
     if not ctx["current_org"]:
         return RedirectResponse(f"/warehouse/?org_id={org_id or ''}", status_code=302)
+
+    # Ручное подтверждение расчёта по меню — тот же путь «меню → склад», что и
+    # авто-списание, поэтому выключается тем же флагом (09.09). Экран остаётся
+    # доступным как справка «сколько по норме должно уйти», но со склада уже
+    # ничего не списывает.
+    if not MENU_WRITEOFF_ENABLED:
+        return RedirectResponse(f"/warehouse/?org_id={ctx['current_org_id']}", status_code=302)
 
     d = date_type.fromisoformat(writeoff_date)
     draft = compute_day_draft(db, ctx["current_org"].id, d)
