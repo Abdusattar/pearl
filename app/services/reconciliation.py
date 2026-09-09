@@ -67,15 +67,16 @@ def history(db: Session, organization_id: int, limit: int = 20) -> list[Reconcil
 def expected_cash(db: Session, organization_id: int) -> Decimal:
     """Сколько должно быть наличных в кассе объекта.
 
-    Не `podotchet.get_org_balance()`: тот считает по FIFO-бакетам и упирается в
-    ноль, когда расходов больше, чем заведённых денег — перерасход при этом
-    пропадает. Для сверки нужна честная величина, в том числе отрицательная:
-    минус означает, что тратили из денег, которых в системе нет.
+    Не `podotchet.get_org_balance()`: тот упирается в ноль, когда расходов
+    больше, чем заведённых денег — перерасход при этом пропадает. Для сверки
+    нужна честная величина, в том числе отрицательная: минус означает, что
+    тратили из денег, которых в системе нет.
+
+    Отсчёт идёт от предыдущей сверки кассы (09.09) — так каждая следующая
+    сверка сравнивает факт не со всей историей объекта, а с тем, что реально
+    случилось с кассой после прошлого пересчёта.
     """
-    funded = sum(
-        (b["amount"] for b in podotchet._funding_buckets(db, organization_id)), ZERO
-    )
-    return funded - podotchet._spent_pool(db, organization_id)
+    return podotchet.get_cash_state(db, organization_id)["net"]
 
 
 def expected_for(db: Session, organization_id: int, kind: str,

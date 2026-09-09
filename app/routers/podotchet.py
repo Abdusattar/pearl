@@ -1,17 +1,21 @@
 from datetime import date, datetime
+from decimal import Decimal
 from pathlib import Path
 from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, Form, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
-from sqlalchemy import func
+from sqlalchemy import func, text
 from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.dependencies import get_accessible_orgs, get_current_user, resolve_org
-from app.models import CapitalWithdrawal, CashFunding, Organization, Supplier, User
+from app.models import (
+    CapitalWithdrawal, CashFunding, Organization, Reconciliation, Supplier, User,
+)
 from app.services import podotchet, reconciliation, supplier_ledger
+from app.services.dedup_guard import acquire_submission_lock
 from app.services.warehouse import get_inventory_summary
 
 router = APIRouter(prefix="/podotchet", tags=["podotchet"])
@@ -112,7 +116,8 @@ def podotchet_page(request: Request, org_id: str | None = None, db: Session = De
 
     today = date.today()
     expected = podotchet.get_expected_balance(db, current_org.id, today)
-    ledger = podotchet.get_podotchet_ledger(db, current_org.id)
+    cash_state = podotchet.get_cash_state(db, current_org.id)
+    ledger = list(cash_state["buckets"])
     ledger.sort(key=lambda b: (b["date"], b["id"]), reverse=True)
     holder = _resolve_holder(db, current_org)
     inventory = get_inventory_summary(db, {current_org.id})
@@ -146,7 +151,7 @@ def podotchet_page(request: Request, org_id: str | None = None, db: Session = De
         }
         for s in db.query(Supplier).order_by(Supplier.name).all()
     ]
-    expected_cash = reconciliation.expected_cash(db, current_org.id)
+    expected_cash = cash_state["net"]
     last_cash = reconciliation.latest(db, current_org.id, reconciliation.CASH)
     days_since_snapshot = (today - expected["since"]).days if expected["since"] else None
 
@@ -192,7 +197,13 @@ def podotchet_page(request: Request, org_id: str | None = None, db: Session = De
         "expected_cash": expected_cash,
         "last_cash": last_cash,
         "kind_labels": reconciliation.KIND_LABELS,
-        "uncovered": podotchet.get_uncovered_expenses(db, current_org.id),
+        # Остаток кассы берём из расчёта, а не суммой карточек людей: деньги,
+        # пересчитанные на сверке, принадлежат объекту, и если держатель кассы
+        # не назначен, карточки их не покажут, а в кассе они есть.
+        "cash_on_hand": cash_state["on_hand"],
+        "cash_baseline": cash_state["baseline"],
+        "cash_baseline_remaining": cash_state["baseline_remaining"],
+        "uncovered": max(Decimal("0"), -cash_state["net"]),
         "ledger_rows": ledger_rows,
         "founders": founders,
         "founder_capital": founder_capital,
@@ -520,6 +531,31 @@ def add_reconciliation(
     subject = int(subject_id) if subject_id.isdigit() else None
     if kind == reconciliation.SUPPLIER_DEBT and subject is None:
         return _back("Не выбран поставщик")
+
+    # Двойной сабмит — не гипотеза: 08.09 сверка кассы Сокулука записалась
+    # дважды с разницей в 44 секунды (id 4 и 5, одинаковые суммы). На расчёт
+    # это не влияет (берётся последняя), но реестр корректировок, который
+    # собственники смотрят как список событий, задваивался. Тот же
+    # acquire_submission_lock, что на /students/add и оплате разовой услуги.
+    acquire_submission_lock(
+        db, "reconcile", f"{organization_id}:{kind}:{subject}:{date_val}:{balance_val}"
+    )
+    recent = (
+        db.query(Reconciliation)
+        .filter(
+            Reconciliation.organization_id == int(organization_id),
+            Reconciliation.kind == kind,
+            Reconciliation.date == date_val,
+            Reconciliation.actual_amount == Decimal(str(balance_val)),
+            Reconciliation.cancelled_at.is_(None),
+            Reconciliation.created_at >= func.now() - text("interval '30 seconds'"),
+        )
+        .first()
+    )
+    if recent is not None:
+        # Молча уводим на страницу: человек нажал дважды, ошибки не было —
+        # его сверка уже сохранена.
+        return RedirectResponse(redirect_url, status_code=303)
 
     # Долг поставщику правится один раз — по прямому требованию заказчика
     # (07.09): корректировка нужна, чтобы завести долг «с прошлого года»,

@@ -85,12 +85,15 @@
   </div>
   <div class="stat-box">
     <div class="stat-label">Касса на руках</div>
-    <div class="stat-value">{{ "{:,.2f}".format(person_cards|sum(attribute='amount') if person_cards else 0) }} с</div>
+    <div class="stat-value">{{ "{:,.2f}".format(cash_on_hand) }} с</div>
     <div class="form-hint" style="margin-top:2px">
       {% if person_cards|length == 1 %}у {{ person_cards[0].name }}
       {% elif person_cards|length > 1 %}у нескольких — см. карточки ниже
       {% elif holder %}у {{ holder.name }}, сейчас пусто
       {% else %}держатель не назначен{% endif %}
+      {% if cash_baseline.date %}
+      <div style="margin-top:2px">от пересчёта {{ cash_baseline.date.strftime("%d.%m.%Y") }}</div>
+      {% endif %}
     </div>
   </div>
   <div class="stat-box">
@@ -449,8 +452,30 @@
         </td>
       </tr>
       {% else %}
+      {% if not cash_baseline.date %}
       <tr><td colspan="7" style="text-align:center;color:var(--text-muted)">Пополнений ещё не было</td></tr>
+      {% endif %}
       {% endfor %}
+      {% if cash_baseline.date %}
+      {# Пересчитанная на сверке касса — самые старые деньги в пуле, поэтому
+         внизу (таблица отсортирована от новых к старым). Строка справочная:
+         это не пополнение, удалять нечего — правится следующей сверкой. #}
+      <tr style="background:var(--bg)">
+        <td data-label="Дата">{{ cash_baseline.date.strftime("%d.%m.%Y") }}</td>
+        <td data-label="Сумма" class="num">{{ "{:,.2f}".format(cash_baseline.amount) }} с</td>
+        <td data-label="Источник">Пересчёт кассы</td>
+        <td data-label="Отчитывается">{{ holder.name if holder else "—" }}</td>
+        <td data-label="Комментарий">Столько насчитали в кассе при сверке. Всё, что было до этой даты, уже внутри этой суммы.</td>
+        <td data-label="Статус">
+          {% if cash_baseline_remaining > 1 %}
+          <span class="badge badge-pending">осталось {{ "{:,.2f}".format(cash_baseline_remaining) }} с</span>
+          {% else %}
+          <span class="badge">израсходовано</span>
+          {% endif %}
+        </td>
+        <td></td>
+      </tr>
+      {% endif %}
     </tbody>
   </table>
 </div>

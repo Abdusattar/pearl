@@ -17,10 +17,12 @@ source_type='withdrawal') − прямые расходы (paid_directly=True) �
 from datetime import date as date_cls
 from decimal import Decimal
 
-from sqlalchemy import func
+from sqlalchemy import and_, func, or_
 from sqlalchemy.orm import Session
 
-from app.models import CapitalWithdrawal, CashFunding, Reconciliation, Transaction
+from app.models import (
+    CapitalWithdrawal, CashFunding, Organization, Reconciliation, Transaction,
+)
 
 ZERO = Decimal("0")
 # Копейки в обороте не считаются реальным остатком "на руках" — тот же порог,
@@ -37,13 +39,62 @@ DUST = Decimal("1")
 PODOTCHET_START_DATE = date_cls(2026, 8, 25)
 
 
-def _funding_buckets(db: Session, organization_id: int) -> list[dict]:
-    fundings = (
-        db.query(CashFunding)
-        .filter(CashFunding.organization_id == organization_id, CashFunding.deleted_at.is_(None))
-        .order_by(CashFunding.date.asc(), CashFunding.id.asc())
-        .all()
+def get_cash_baseline(db: Session, organization_id: int) -> dict:
+    """Точка отсчёта для кассы — последняя действующая сверка наличных (09.09).
+
+    До 09.09 сверка кассы только записывала расхождение и на остаток не влияла:
+    Махабат ввела «в кассе 3 500», а подотчёт продолжал показывать 0, потому что
+    FIFO упирался в ноль. Теперь механика та же, что у счёта
+    (`get_expected_balance`): пересчитанная сумма становится новой базой, а к ней
+    прибавляются только движения, которых в ней ещё не было.
+
+    Пока кассу ни разу не сверяли — база нулевая и ничего не отсекается, то есть
+    ровно прежнее поведение.
+    """
+    rec = (
+        db.query(Reconciliation)
+        .filter(
+            Reconciliation.organization_id == organization_id,
+            Reconciliation.kind == "cash",
+            Reconciliation.cancelled_at.is_(None),
+        )
+        .order_by(Reconciliation.date.desc(), Reconciliation.id.desc())
+        .first()
     )
+    if rec is None:
+        return {"amount": ZERO, "date": None, "at": None, "id": None}
+    return {
+        "amount": Decimal(rec.actual_amount),
+        "date": rec.date,
+        "at": rec.created_at,
+        "id": rec.id,
+    }
+
+
+def _not_yet_counted(model, baseline: dict):
+    """Условие «движение ещё не сидит внутри базовой суммы сверки».
+
+    В записях хранится только дата, без времени — одной датой не отделить
+    «пересчитали кассу в 11:47» от «купили продукты в 15:00 того же дня».
+    Время занесения (`created_at`) эту границу даёт: то, что попало в систему
+    уже после самой сверки, в пересчитанную сумму войти не могло. А расход,
+    датированный до сверки и занесённый после неё, наоборот, физически из кассы
+    уже ушёл и в пересчёте учтён — такой отсекается, и это правильно.
+    """
+    return or_(
+        model.date > baseline["date"],
+        and_(model.date == baseline["date"], model.created_at > baseline["at"]),
+    )
+
+
+def _funding_buckets(db: Session, organization_id: int, baseline: dict | None = None) -> list[dict]:
+    baseline = baseline if baseline is not None else get_cash_baseline(db, organization_id)
+    q = db.query(CashFunding).filter(
+        CashFunding.organization_id == organization_id, CashFunding.deleted_at.is_(None),
+    )
+    if baseline["date"] is not None:
+        q = q.filter(_not_yet_counted(CashFunding, baseline))
+    fundings = q.order_by(CashFunding.date.asc(), CashFunding.id.asc()).all()
     return [
         {
             "id": f.id, "date": f.date, "amount": Decimal(f.amount),
@@ -57,9 +108,15 @@ def _funding_buckets(db: Session, organization_id: int) -> list[dict]:
     ]
 
 
-def _spent_pool(db: Session, organization_id: int) -> Decimal:
-    """Сколько денег ушло из кассы: расходы из подотчёта + изъятия учредителей."""
-    consumed = db.query(func.coalesce(func.sum(
+def _spent_pool(db: Session, organization_id: int, baseline: dict | None = None) -> Decimal:
+    """Сколько денег ушло из кассы: расходы из подотчёта + изъятия учредителей.
+
+    Считается только то, что произошло после последней сверки кассы — всё
+    более раннее уже отражено в пересчитанной сумме (`get_cash_baseline`).
+    """
+    baseline = baseline if baseline is not None else get_cash_baseline(db, organization_id)
+
+    q_txn = db.query(func.coalesce(func.sum(
         func.coalesce(Transaction.amount_paid, Transaction.amount)
     ), 0)).filter(
         Transaction.organization_id == organization_id,
@@ -67,27 +124,60 @@ def _spent_pool(db: Session, organization_id: int) -> Decimal:
         Transaction.paid_directly.is_(False),
         Transaction.date >= PODOTCHET_START_DATE,
         Transaction.deleted_at.is_(None),
-    ).scalar()
-    withdrawn_capital = db.query(func.coalesce(func.sum(CapitalWithdrawal.amount), 0)).filter(
+    )
+    q_cap = db.query(func.coalesce(func.sum(CapitalWithdrawal.amount), 0)).filter(
         CapitalWithdrawal.organization_id == organization_id,
         CapitalWithdrawal.date >= PODOTCHET_START_DATE,
         CapitalWithdrawal.deleted_at.is_(None),
-    ).scalar()
-    return Decimal(consumed) + Decimal(withdrawn_capital)
+    )
+    if baseline["date"] is not None:
+        q_txn = q_txn.filter(_not_yet_counted(Transaction, baseline))
+        q_cap = q_cap.filter(_not_yet_counted(CapitalWithdrawal, baseline))
+
+    return Decimal(q_txn.scalar()) + Decimal(q_cap.scalar())
 
 
-def get_podotchet_ledger(db: Session, organization_id: int) -> list[dict]:
+def get_podotchet_ledger(db: Session, organization_id: int,
+                         baseline: dict | None = None) -> list[dict]:
     """Пополнения этого бизнеса с остатком (remaining) после списания расходов
     FIFO — от самого старого пополнения к новому. Изъятия учредителей
     (CapitalWithdrawal) уменьшают пул тем же образом, что расходы — деньги
-    физически ушли из кассы, но это не Transaction/расход бизнеса."""
-    buckets = _funding_buckets(db, organization_id)
-    pool = _spent_pool(db, organization_id)
+    физически ушли из кассы, но это не Transaction/расход бизнеса.
+
+    Пересчитанная на сверке касса — самые старые деньги в пуле: расходы съедают
+    сначала её, и только остаток доходит до пополнений, заведённых после сверки.
+    """
+    baseline = baseline if baseline is not None else get_cash_baseline(db, organization_id)
+    buckets = _funding_buckets(db, organization_id, baseline)
+    pool = max(ZERO, _spent_pool(db, organization_id, baseline) - baseline["amount"])
     for b in buckets:
         applied = min(b["amount"], pool)
         b["remaining"] = b["amount"] - applied
         pool -= applied
     return buckets
+
+
+def get_cash_state(db: Session, organization_id: int) -> dict:
+    """Полная картина по кассе объекта одним проходом.
+
+    `net` — честный остаток, в том числе отрицательный: минус означает, что
+    тратили из денег, которых в системе нет. `on_hand` — то же, но не ниже
+    нуля: столько наличных реально числится на руках.
+    """
+    baseline = get_cash_baseline(db, organization_id)
+    buckets = get_podotchet_ledger(db, organization_id, baseline)
+    spent = _spent_pool(db, organization_id, baseline)
+    funded = sum((b["amount"] for b in buckets), ZERO)
+    baseline_left = max(ZERO, baseline["amount"] - spent)
+    return {
+        "baseline": baseline,
+        "baseline_remaining": baseline_left,
+        "buckets": buckets,
+        "funded": funded,
+        "spent": spent,
+        "net": baseline["amount"] + funded - spent,
+        "on_hand": baseline_left + sum((b["remaining"] for b in buckets), ZERO),
+    }
 
 
 def get_uncovered_expenses(db: Session, organization_id: int) -> Decimal:
@@ -98,21 +188,37 @@ def get_uncovered_expenses(db: Session, organization_id: int) -> Decimal:
     того, что в систему не занесено (не завели снятие, взяли из личных, или
     расход задвоен). У Садика Сокулук так набралось 11 326 сом, и заметить это
     можно было только запросом к базе."""
-    spent = _spent_pool(db, organization_id)
-    funded = sum((b["amount"] for b in _funding_buckets(db, organization_id)), ZERO)
-    return max(ZERO, spent - funded)
+    return max(ZERO, -get_cash_state(db, organization_id)["net"])
 
 
 def get_org_balance(db: Session, organization_id: int) -> Decimal:
-    return sum((b["remaining"] for b in get_podotchet_ledger(db, organization_id)), ZERO)
+    return get_cash_state(db, organization_id)["on_hand"]
+
+
+def _cash_holder_id(db: Session, organization_id: int) -> int | None:
+    org = db.get(Organization, organization_id)
+    return org.cash_recipient_user_id if org else None
 
 
 def get_balances_by_person(db: Session, organization_id: int) -> dict[int, Decimal]:
-    """user_id -> сколько сейчас на руках (по остаткам его пополнений, после FIFO)."""
+    """user_id -> сколько сейчас на руках (по остаткам его пополнений, после FIFO).
+
+    Пересчитанная на сверке касса приписывается держателю кассы объекта
+    (`Organization.cash_recipient_user_id`) — она принадлежит объекту, а держатель
+    один на бизнес (решение 04.09), так что другого владельца у неё быть не может.
+    Если держатель не назначен, эти деньги остаются в общем остатке объекта, но
+    без карточки человека.
+    """
+    state = get_cash_state(db, organization_id)
     result: dict[int, Decimal] = {}
-    for b in get_podotchet_ledger(db, organization_id):
+    for b in state["buckets"]:
         if b["remaining"] > DUST:
             result[b["accountable_user_id"]] = result.get(b["accountable_user_id"], ZERO) + b["remaining"]
+
+    if state["baseline_remaining"] > DUST:
+        holder_id = _cash_holder_id(db, organization_id)
+        if holder_id:
+            result[holder_id] = result.get(holder_id, ZERO) + state["baseline_remaining"]
     return result
 
 
