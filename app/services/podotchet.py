@@ -108,8 +108,32 @@ def _funding_buckets(db: Session, organization_id: int, baseline: dict | None = 
     ]
 
 
+def _lent_out(db: Session, organization_id: int, baseline: dict) -> Decimal:
+    """Наличные, отданные другому бизнесу (09.09).
+
+    «Одолжили у другого бизнеса» до 09.09 была односторонней записью: касса
+    получателя росла, касса донора не уменьшалась. Пока это касалось Кожомкула,
+    чья касса толком не велась, дыра не всплывала. Стоило садику профинансировать
+    школу — и одни и те же деньги показались бы разом в двух кассах.
+
+    Отдельной таблицы для этого не нужно: сама запись пополнения и есть перевод.
+    У получателя она лежит в его пуле (organization_id), у донора — вычитается
+    здесь по source_organization_id. Одна строка, два эффекта; удалили её —
+    откатились оба конца сразу.
+    """
+    q = db.query(func.coalesce(func.sum(CashFunding.amount), 0)).filter(
+        CashFunding.source_organization_id == organization_id,
+        CashFunding.date >= PODOTCHET_START_DATE,
+        CashFunding.deleted_at.is_(None),
+    )
+    if baseline["date"] is not None:
+        q = q.filter(_not_yet_counted(CashFunding, baseline))
+    return Decimal(q.scalar())
+
+
 def _spent_pool(db: Session, organization_id: int, baseline: dict | None = None) -> Decimal:
-    """Сколько денег ушло из кассы: расходы из подотчёта + изъятия учредителей.
+    """Сколько денег ушло из кассы: расходы из подотчёта + изъятия учредителей
+    + наличные, отданные другому бизнесу.
 
     Считается только то, что произошло после последней сверки кассы — всё
     более раннее уже отражено в пересчитанной сумме (`get_cash_baseline`).
@@ -134,15 +158,16 @@ def _spent_pool(db: Session, organization_id: int, baseline: dict | None = None)
         q_txn = q_txn.filter(_not_yet_counted(Transaction, baseline))
         q_cap = q_cap.filter(_not_yet_counted(CapitalWithdrawal, baseline))
 
-    return Decimal(q_txn.scalar()) + Decimal(q_cap.scalar())
+    return Decimal(q_txn.scalar()) + Decimal(q_cap.scalar()) + _lent_out(db, organization_id, baseline)
 
 
 def get_podotchet_ledger(db: Session, organization_id: int,
                          baseline: dict | None = None) -> list[dict]:
     """Пополнения этого бизнеса с остатком (remaining) после списания расходов
     FIFO — от самого старого пополнения к новому. Изъятия учредителей
-    (CapitalWithdrawal) уменьшают пул тем же образом, что расходы — деньги
-    физически ушли из кассы, но это не Transaction/расход бизнеса.
+    (CapitalWithdrawal) и наличные, отданные другому бизнесу (`_lent_out`),
+    уменьшают пул тем же образом, что расходы — деньги физически ушли из кассы,
+    но это не Transaction/расход бизнеса.
 
     Пересчитанная на сверке касса — самые старые деньги в пуле: расходы съедают
     сначала её, и только остаток доходит до пополнений, заведённых после сверки.
