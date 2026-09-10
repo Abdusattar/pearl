@@ -159,6 +159,23 @@ def writeoff_add_save(
     if ctx is None:
         return RedirectResponse("/login", status_code=302)
 
+    all_orgs = db.query(Organization).all()
+    org_ids = _descendants(ctx["current_org"].id, all_orgs) if ctx["current_org"] else set()
+    balances = _get_balances(db, org_ids)
+    in_stock = [b for b in balances if b["balance"] > 0]
+
+    # Тот же запрет, что и на списании по приёмам пищи: в минус склад не уходит.
+    available = _get_balance_map(db, org_ids).get(product_id, {}).get("balance", 0.0)
+    if quantity > available + 0.001:
+        product = db.get(Product, product_id)
+        unit = (product.unit if product else "") or "ед"
+        ctx.update({
+            "in_stock": in_stock, "today": writeoff_date,
+            "error": (f"Не списано: {product.name if product else product_id} — "
+                      f"списываете {quantity:g} {unit}, на складе {available:g} {unit}"),
+        })
+        return templates.TemplateResponse("warehouse/writeoff_form.html", ctx)
+
     writeoff = WriteOff(
         date=date_type.fromisoformat(writeoff_date),
         product_id=product_id,
@@ -325,6 +342,11 @@ def writeoff_meal_save(
         return RedirectResponse("/login", status_code=302)
 
     d = date_type.fromisoformat(writeoff_date)
+
+    # Сначала разбираем всю форму, потом проверяем, и только потом пишем.
+    # Иначе первые строки уже легли бы в базу, а на четвёртой всплыла ошибка —
+    # человек не поймёт, что списалось, а что нет.
+    parsed = []
     for i, pid_str in enumerate(item_product_id):
         pid_str = pid_str.strip()
         qty_str = item_quantity[i].strip() if i < len(item_quantity) else ""
@@ -337,10 +359,57 @@ def writeoff_meal_save(
         if qty <= 0:
             continue
         dish_str = item_dish_id[i].strip() if i < len(item_dish_id) else ""
+        parsed.append({"product_id": int(pid_str), "qty": qty,
+                       "dish_id": int(dish_str) if dish_str else None})
+
+    # Больше, чем лежит на складе, списать нельзя (10.09). Морковь ушла в минус
+    # на 3 988 кг, потому что 4 кг ввели как 4000 — граммы в поле килограммов.
+    # Считаем сразу по всем строкам формы: один товар может встретиться дважды,
+    # и порознь каждая строка проходит, а вместе они уводят остаток в минус.
+    all_orgs = db.query(Organization).all()
+    org_ids = _descendants(ctx["current_org"].id, all_orgs) if ctx["current_org"] else set()
+    balance_map = _get_balance_map(db, org_ids)
+    wanted = {}
+    for item in parsed:
+        wanted[item["product_id"]] = wanted.get(item["product_id"], 0.0) + item["qty"]
+
+    problems = []
+    for pid, qty in wanted.items():
+        available = balance_map.get(pid, {}).get("balance", 0.0)
+        if qty > available + 0.001:
+            product = db.get(Product, pid)
+            unit = (product.unit if product else "") or "ед"
+            problems.append(
+                f"{product.name if product else pid}: списываете {qty:g} {unit}, "
+                f"на складе {available:g} {unit}"
+            )
+
+    if problems:
+        balances = _get_balances(db, org_ids)
+        in_stock = [b for b in balances if b["balance"] > 0]
+        ctx.update({
+            "in_stock": in_stock,
+            "in_stock_json": [
+                {"id": b["product"].id, "name": b["product"].name,
+                 "unit": b["product"].unit or "кг", "balance": b["balance"]}
+                for b in in_stock
+            ],
+            "meal_types": MEAL_TYPES,
+            "today": writeoff_date,
+            "meal_type": meal_type,
+            # Введённое возвращается на форму — переписывать десяток строк
+            # заново из-за одной опечатки человек не станет, он просто
+            # исправит цифру «на глаз» и потеряет остальное.
+            "submitted": parsed,
+            "error": "Не списано: больше, чем есть на складе. " + "; ".join(problems),
+        })
+        return templates.TemplateResponse("warehouse/writeoff_meal_form.html", ctx)
+
+    for item in parsed:
         db.add(WriteOff(
-            date=d, product_id=int(pid_str), quantity=qty,
+            date=d, product_id=item["product_id"], quantity=item["qty"],
             organization_id=ctx["current_org"].id, reason="питание детей",
-            meal_type=meal_type, dish_id=int(dish_str) if dish_str else None,
+            meal_type=meal_type, dish_id=item["dish_id"],
             created_by=ctx["current_user"].id,
         ))
     db.commit()

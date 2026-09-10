@@ -30,7 +30,7 @@
         <label>Приём пищи</label>
         <select name="meal_type" class="form-control" required>
           {% for m in meal_types %}
-          <option value="{{ m }}">{{ m }}</option>
+          <option value="{{ m }}" {% if meal_type == m %}selected{% endif %}>{{ m }}</option>
           {% endfor %}
         </select>
       </div>
@@ -57,7 +57,7 @@
       <button type="button" onclick="addRow()" style="margin-top:8px;font-size:12px;color:var(--primary);background:none;border:none;cursor:pointer;padding:4px 0">+ добавить строку</button>
     </div>
 
-    <button type="submit" class="btn btn-primary" style="margin-top:8px">Списать всё</button>
+    <button type="submit" class="btn btn-primary" id="submit-btn" style="margin-top:8px">Списать всё</button>
   </form>
   {% endif %}
 </div>
@@ -81,6 +81,7 @@ function addRow() {
     </td>
     <td style="padding:4px">
       <input type="text" class="form-control item-qty" name="item_quantity" placeholder="0.000" style="font-size:13px;padding:5px 8px;text-align:right">
+      <div class="qty-err" style="font-size:11px;color:var(--danger);margin-top:2px;display:none"></div>
     </td>
     <td style="padding:4px">
       <select class="form-control item-dish" name="item_dish_id" style="font-size:13px;padding:5px 8px">
@@ -96,11 +97,43 @@ function addRow() {
   fillDishSelect(row.querySelector('.item-dish'));
 }
 
+// Списать больше, чем лежит на складе, нельзя. Ловим это прямо в строке, пока
+// человек смотрит на поле: 4000 вместо 4 (граммы в поле килограммов) видно
+// сразу, а не после отправки. Сервер проверяет то же самое ещё раз.
+function checkRow(row) {
+  const pid = row.querySelector('.item-pid').value;
+  const qtyEl = row.querySelector('.item-qty');
+  const errEl = row.querySelector('.qty-err');
+  const qty = parseFloat((qtyEl.value || '').replace(',', '.'));
+  const p = PRODUCTS.find(x => String(x.id) === String(pid));
+  const bad = p && !isNaN(qty) && qty > p.balance + 0.001;
+  errEl.style.display = bad ? '' : 'none';
+  if (bad) {
+    const left = p.balance.toFixed(3).replace(/\.?0+$/, '');
+    errEl.textContent = `на складе только ${left} ${p.unit}`;
+  }
+  qtyEl.style.borderColor = bad ? 'var(--danger)' : '';
+  return !bad;
+}
+
+function checkAll() {
+  let ok = true;
+  document.querySelectorAll('#items-body tr').forEach(r => { if (!checkRow(r)) ok = false; });
+  const btn = document.getElementById('submit-btn');
+  if (btn) {
+    btn.disabled = !ok;
+    btn.style.opacity = ok ? '' : '.5';
+    btn.style.cursor = ok ? '' : 'not-allowed';
+  }
+  return ok;
+}
+
 function initRow(row) {
   const input = row.querySelector('.item-name');
   const dropdown = row.querySelector('.ac-dropdown');
   const hiddenId = row.querySelector('.item-pid');
   const hint = row.querySelector('.balance-hint');
+  row.querySelector('.item-qty').addEventListener('input', checkAll);
 
   function render(items) {
     if (!items.length) { dropdown.style.display = 'none'; return; }
@@ -119,6 +152,7 @@ function initRow(row) {
         hiddenId.value = p.id;
         hint.textContent = 'на складе: ' + p.balance.toFixed(3).replace(/\.?0+$/,'') + ' ' + p.unit;
         dropdown.style.display = 'none';
+        checkAll();
       });
     });
   }
@@ -138,10 +172,12 @@ function initRow(row) {
 let CURRENT_DISHES = [];
 
 function fillDishSelect(select) {
-  const prev = select.value;
+  // Блюда подгружаются позже строк, поэтому выбор восстановленной строки ждёт
+  // в data-wanted, пока список не приедет.
+  const prev = select.value || select.dataset.wanted || '';
   select.innerHTML = '<option value="">—</option>' +
     CURRENT_DISHES.map(d => `<option value="${d.id}">${d.name}</option>`).join('');
-  if (CURRENT_DISHES.some(d => String(d.id) === prev)) select.value = prev;
+  if (CURRENT_DISHES.some(d => String(d.id) === String(prev))) select.value = prev;
 }
 
 function reloadDishes() {
@@ -161,7 +197,28 @@ function reloadDishes() {
 document.querySelector('input[name=writeoff_date]').addEventListener('change', reloadDishes);
 document.querySelector('select[name=meal_type]').addEventListener('change', reloadDishes);
 
-addRow();
+// Форма вернулась с ошибкой — восстанавливаем введённое. Переписывать десяток
+// строк заново из-за одной опечатки никто не станет.
+const SUBMITTED = {{ (submitted or []) | tojson }};
+
+if (SUBMITTED.length) {
+  SUBMITTED.forEach(item => {
+    addRow();
+    const row = document.querySelector('#items-body tr:last-child');
+    const p = PRODUCTS.find(x => String(x.id) === String(item.product_id));
+    row.querySelector('.item-pid').value = item.product_id;
+    row.querySelector('.item-qty').value = item.qty;
+    if (p) {
+      row.querySelector('.item-name').value = p.name;
+      row.querySelector('.balance-hint').textContent =
+        'на складе: ' + p.balance.toFixed(3).replace(/\.?0+$/, '') + ' ' + p.unit;
+    }
+    if (item.dish_id) row.querySelector('.item-dish').dataset.wanted = item.dish_id;
+  });
+  checkAll();
+} else {
+  addRow();
+}
 reloadDishes();
 </script>
 {% endblock %}
