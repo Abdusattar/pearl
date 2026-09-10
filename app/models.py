@@ -729,6 +729,9 @@ class StockCount(Base):
     organization = relationship("Organization")
     lines        = relationship("StockCountLine", back_populates="count",
                                 cascade="all, delete-orphan")
+    photos       = relationship("StockCountPhoto", back_populates="count",
+                                cascade="all, delete-orphan",
+                                order_by="StockCountPhoto.id")
 
 
 class StockCountLine(Base):
@@ -761,3 +764,26 @@ class StockCountLine(Base):
 
     count   = relationship("StockCount", back_populates="lines")
     product = relationship("Product")
+
+
+class StockCountPhoto(Base):
+    """Фотография бумажного листа, по которому шёл пересчёт (10.09).
+
+    Считают на складе с тетрадью в руках, а в систему цифры переносят потом.
+    Без снимка листа результат пересчёта — число без основания: через месяц
+    не проверить, откуда взялось «сахар 1 270 кг», и спор упирается в память
+    людей. Снимок — первичка к акту, ровно как фото чека к закупу.
+
+    Страниц бывает несколько (первый же реальный пересчёт пришёл на двух
+    листах), поэтому отдельная таблица, а не колонка на сессии."""
+    __tablename__ = "stock_count_photos"
+    __table_args__ = (Index("ix_stock_count_photos_count", "count_id"),)
+
+    id          = Column(Integer, primary_key=True)
+    count_id    = Column(Integer, ForeignKey("stock_counts.id", ondelete="CASCADE"), nullable=False)
+    file_path   = Column(String(500), nullable=False)
+    caption     = Column(String(200))
+    uploaded_by = Column(Integer, ForeignKey("users.id"))
+    uploaded_at = Column(DateTime, server_default=func.now())
+
+    count = relationship("StockCount", back_populates="photos")

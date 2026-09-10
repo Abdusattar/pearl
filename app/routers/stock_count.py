@@ -5,23 +5,33 @@
 Махабат (role=staff), а старый экран актуализации её разворачивал, то есть
 человек, который ведёт склад, к нему допущен не был.
 """
-from datetime import date as date_type
+import uuid
+from datetime import date as date_type, datetime
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, Form, Request
+from fastapi import APIRouter, Depends, File, Form, Request, UploadFile
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.dependencies import get_accessible_orgs, get_current_user, resolve_org
-from app.models import Organization, Product, StockCount, StockCountLine, User
+from app.models import (
+    Organization, Product, StockCount, StockCountLine, StockCountPhoto, User,
+)
 from app.services import stock_count
 from app.services.dedup_guard import acquire_submission_lock
 
 router = APIRouter(prefix="/warehouse/count", tags=["stock_count"])
 templates = Jinja2Templates(directory=str(Path(__file__).parent.parent / "templates"))
+
+# Тот же корень, что у фотографий чеков: media уже отдаётся статикой через
+# /media и переживает деплой (проверено на файле чека от 08.09).
+PHOTO_DIR = Path(__file__).parent.parent.parent / "media" / "stock_counts"
+PHOTO_DIR.mkdir(parents=True, exist_ok=True)
+PHOTO_EXTS = {".jpg", ".jpeg", ".png", ".webp", ".heic", ".pdf"}
+PHOTO_MAX_BYTES = 15 * 1024 * 1024
 
 
 def _descendants(org_id: int, all_orgs: list) -> set:
@@ -125,6 +135,7 @@ def count_page(request: Request, org_id: str | None = None, tab: str = "food",
         "progress": stock_count.progress(db, count.id),
         "issues": stock_count.ISSUES,
         "started_by_name": starter.name if starter else "?",
+        "photos": count.photos,
     })
     return templates.TemplateResponse("warehouse/count.html", ctx)
 
@@ -188,6 +199,63 @@ def count_flag(line_id: int, request: Request, org_id: str = Form(""),
     return RedirectResponse(_back(ctx, tab), status_code=303)
 
 
+@router.post("/photo")
+async def count_photo_upload(request: Request, org_id: str = Form(""),
+                             caption: str = Form(""), tab: str = Form("food"),
+                             file: UploadFile = File(...),
+                             db: Session = Depends(get_db)):
+    """Приложить снимок бумажного листа к активному пересчёту.
+
+    Лист — основание для цифр, поэтому грузится к сессии, а не «куда-нибудь в
+    расходы»: иначе через месяц связь акта с тетрадью придётся восстанавливать
+    по датам."""
+    ctx, _ = _ctx(request, db, org_id)
+    if ctx is None:
+        return RedirectResponse("/login", status_code=302)
+    count = stock_count.get_active(db, ctx["current_org"].id)
+    if count is None:
+        return RedirectResponse(_back(ctx, tab), status_code=303)
+
+    ext = Path(file.filename or "").suffix.lower()
+    if ext not in PHOTO_EXTS:
+        return RedirectResponse(_back(ctx, tab) + "&photo_err=type", status_code=303)
+    data = await file.read()
+    if not data:
+        return RedirectResponse(_back(ctx, tab) + "&photo_err=empty", status_code=303)
+    if len(data) > PHOTO_MAX_BYTES:
+        return RedirectResponse(_back(ctx, tab) + "&photo_err=size", status_code=303)
+
+    month_dir = PHOTO_DIR / datetime.now().strftime("%Y-%m")
+    month_dir.mkdir(parents=True, exist_ok=True)
+    name = f"{uuid.uuid4().hex[:12]}{ext}"
+    (month_dir / name).write_bytes(data)
+
+    db.add(StockCountPhoto(
+        count_id=count.id,
+        file_path=f"stock_counts/{month_dir.name}/{name}",
+        caption=(caption or "").strip()[:200] or None,
+        uploaded_by=ctx["current_user"].id,
+    ))
+    db.commit()
+    return RedirectResponse(_back(ctx, tab), status_code=303)
+
+
+@router.post("/photo/{photo_id}/delete")
+def count_photo_delete(photo_id: int, request: Request, org_id: str = Form(""),
+                       tab: str = Form("food"), db: Session = Depends(get_db)):
+    """Убрать ошибочно приложенный снимок. Файл с диска не трогаем — снимок
+    мог быть приложен и к уже завершённому пересчёту, а удаление файла сделало
+    бы дыру в чужой истории."""
+    ctx, _ = _ctx(request, db, org_id)
+    if ctx is None:
+        return RedirectResponse("/login", status_code=302)
+    photo = db.get(StockCountPhoto, photo_id)
+    if photo is not None and photo.count.organization_id == ctx["current_org"].id:
+        db.delete(photo)
+        db.commit()
+    return RedirectResponse(_back(ctx, tab), status_code=303)
+
+
 @router.get("/finish", response_class=HTMLResponse)
 def count_finish(request: Request, org_id: str | None = None, db: Session = Depends(get_db)):
     ctx, org_ids = _ctx(request, db, org_id)
@@ -196,7 +264,8 @@ def count_finish(request: Request, org_id: str | None = None, db: Session = Depe
     count = stock_count.get_active(db, ctx["current_org"].id)
     if count is None:
         return RedirectResponse(_back(ctx), status_code=303)
-    ctx.update({"count": count, "summary": stock_count.summary(db, count, org_ids)})
+    ctx.update({"count": count, "summary": stock_count.summary(db, count, org_ids),
+                "photos": count.photos})
     return templates.TemplateResponse("warehouse/count_finish.html", ctx)
 
 

@@ -300,3 +300,61 @@ def test_new_session_can_start_after_cancel(db, org):
     second = _start(db, org)
     assert second.id != first.id
     assert second.status == "active"
+
+
+# --- лист пересчёта как приложение (10.09) ---------------------------------
+# Бумажная тетрадь — основание для цифр: без неё через месяц не проверить,
+# откуда взялось «сахар 1 270 кг». Снимок живёт при сессии, а не «где-то в
+# расходах», и переживает завершение пересчёта.
+
+def test_photos_attach_to_session(db, org):
+    from app.models import StockCountPhoto
+
+    count = _start(db, org)
+    db.add(StockCountPhoto(count_id=count.id, file_path="stock_counts/2026-09/a.jpg",
+                           caption="страница 1", uploaded_by=org._user_id))
+    db.add(StockCountPhoto(count_id=count.id, file_path="stock_counts/2026-09/b.jpg",
+                           caption="страница 2", uploaded_by=org._user_id))
+    db.flush()
+    db.refresh(count)
+
+    assert [p.caption for p in count.photos] == ["страница 1", "страница 2"]
+
+
+def test_photos_survive_apply(db, org):
+    """Приложение нужно именно после применения — тогда по нему и сверяются."""
+    from app.models import StockCountPhoto
+
+    p = _product(db, "__Сахар-тест__")
+    _receipt(db, org, p, "10", "1000")
+    count = _start(db, org)
+    db.add(StockCountPhoto(count_id=count.id, file_path="stock_counts/2026-09/c.jpg",
+                           uploaded_by=org._user_id))
+    stock_count.mark(db, _line(db, count, p), stock_count.MODE_NUMBER,
+                     Decimal("4"), Decimal("10"), org._user_id)
+    db.flush()
+
+    stock_count.apply(db, count, {org.id}, org._user_id)
+    db.flush()
+    db.refresh(count)
+
+    assert count.status == "applied"
+    assert len(count.photos) == 1
+    assert _balance(db, org, p) == Decimal("4")
+
+
+def test_photos_go_away_with_session(db, org):
+    """Удалили пересчёт — приложения не остаются висеть сиротами."""
+    from app.models import StockCountPhoto
+
+    count = _start(db, org)
+    db.add(StockCountPhoto(count_id=count.id, file_path="stock_counts/2026-09/d.jpg",
+                           uploaded_by=org._user_id))
+    db.flush()
+    count_id = count.id
+
+    db.delete(count)
+    db.flush()
+
+    left = db.query(StockCountPhoto).filter_by(count_id=count_id).count()
+    assert left == 0

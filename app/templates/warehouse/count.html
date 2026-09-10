@@ -65,6 +65,27 @@
 
   dialog.flagbox { border: 1px solid var(--border); border-radius: 12px; padding: 20px; max-width: 380px; width: 92%; }
   dialog.flagbox::backdrop { background: rgba(15,20,40,.35); }
+
+  .sheet-box { background: var(--surface); border: 1px solid var(--border); border-radius: 12px;
+               padding: 13px 15px; margin-bottom: 14px; }
+  .sheet-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .sheet-head b { font-size: 14px; }
+  .sheet-head .hint { font-size: 12px; color: var(--text-muted); }
+  .sheet-list { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 11px; }
+  .sheet-card { border: 1px solid var(--border); border-radius: 10px; overflow: hidden;
+                width: 122px; background: var(--bg); }
+  .sheet-card img { display: block; width: 100%; height: 92px; object-fit: cover; }
+  .sheet-card .pdf { display: flex; align-items: center; justify-content: center;
+                     height: 92px; font-size: 26px; }
+  .sheet-card .cap { font-size: 11px; color: var(--text-muted); padding: 5px 7px;
+                     word-break: break-word; }
+  .sheet-card .cap button { border: 0; background: none; color: #dc2626; cursor: pointer;
+                            padding: 0; font-size: 11px; font-family: var(--font); }
+  .sheet-add { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-top: 11px; }
+  .sheet-add input[type=file] { font-size: 13px; max-width: 100%; }
+  .sheet-add input[type=text] { flex: 1 1 190px; min-width: 0; padding: 9px 11px;
+                                border: 1px solid var(--border); border-radius: 9px;
+                                font-family: var(--font); font-size: 13px; }
 </style>
 
 <div class="page-header">
@@ -82,6 +103,55 @@
   <div class="cnt-bar">
     <i style="width: {{ (progress.marked / progress.total * 100) if progress.total else 0 }}%"></i>
   </div>
+</div>
+
+<div class="sheet-box">
+  <div class="sheet-head">
+    <b>Лист пересчёта</b>
+    <span class="hint">
+      {% if photos %}приложено: {{ photos | length }}{% else %}снимок тетради, по которой считали — основание для цифр{% endif %}
+    </span>
+  </div>
+
+  {% if photos %}
+  <div class="sheet-list">
+    {% for ph in photos %}
+    <div class="sheet-card">
+      <a href="/media/{{ ph.file_path }}" target="_blank" rel="noopener">
+        {% if ph.file_path.endswith(".pdf") %}
+        <div class="pdf">📄</div>
+        {% else %}
+        <img src="/media/{{ ph.file_path }}" alt="{{ ph.caption or 'Лист пересчёта' }}">
+        {% endif %}
+      </a>
+      <div class="cap">
+        {{ ph.caption or "страница" }}
+        <form method="post" action="/warehouse/count/photo/{{ ph.id }}/delete" style="display:inline">
+          <input type="hidden" name="org_id" value="{{ current_org_id }}">
+          <input type="hidden" name="tab" value="{{ tab }}">
+          <button type="submit" onclick="return confirm('Убрать этот снимок?')">убрать</button>
+        </form>
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+  {% endif %}
+
+  <form class="sheet-add" method="post" action="/warehouse/count/photo"
+        enctype="multipart/form-data">
+    <input type="hidden" name="org_id" value="{{ current_org_id }}">
+    <input type="hidden" name="tab" value="{{ tab }}">
+    <input type="file" name="file" accept="image/*,.pdf" required>
+    <input type="text" name="caption" placeholder="Например: страница 1">
+    <button type="submit" class="btn btn-secondary">Приложить</button>
+  </form>
+  {% if request.query_params.get("photo_err") == "type" %}
+  <div class="form-hint" style="color:#b45309">Можно приложить фото или PDF.</div>
+  {% elif request.query_params.get("photo_err") == "size" %}
+  <div class="form-hint" style="color:#b45309">Файл больше 15 МБ — сожми или сфотографируй заново.</div>
+  {% elif request.query_params.get("photo_err") == "empty" %}
+  <div class="form-hint" style="color:#b45309">Файл пустой.</div>
+  {% endif %}
 </div>
 
 <div class="cnt-tabs">
