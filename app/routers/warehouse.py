@@ -1,6 +1,7 @@
-from datetime import date as date_type, timedelta
+from datetime import date as date_type, datetime, timedelta
 from pathlib import Path
 from typing import List
+from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, Form, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
@@ -10,7 +11,9 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.dependencies import get_current_user, get_accessible_orgs, resolve_org
-from app.models import ExpenseCategory, Organization, Product, WarehouseReceipt, WriteOff
+from app.models import (
+    AuditLog, ExpenseCategory, Organization, Product, WarehouseReceipt, WriteOff,
+)
 from app.services.products import get_or_create_product, UNITS, CATEGORIES
 from app.services.warehouse import get_product_balances as _get_balances
 from app.services.writeoff_calc import (
@@ -86,8 +89,32 @@ def _get_balance_map(db: Session, org_ids: set) -> dict:
     return result
 
 
+def _writeoff_days(db: Session, org_ids: set, limit_days: int = 14) -> list:
+    """Расход на кухню по дням — то, что человек проверяет вечером: занесли или нет.
+
+    Дни с пропусками видно только в сплошном списке, поэтому группируем по дате
+    и отдаём как есть, без склейки. Пересчёт склада сюда не попадает: у него
+    свой reason и своя страница, мешать их — потерять оба."""
+    rows = (
+        db.query(WriteOff)
+        .filter(WriteOff.organization_id.in_(org_ids), WriteOff.deleted_at.is_(None))
+        .order_by(WriteOff.date.desc(), WriteOff.id.asc())
+        .limit(400).all()
+    )
+    days, order = {}, []
+    for w in rows:
+        if w.date not in days:
+            if len(order) >= limit_days:
+                continue
+            days[w.date] = []
+            order.append(w.date)
+        days[w.date].append(w)
+    return [{"date": d, "lines": days[d]} for d in order]
+
+
 @router.get("/", response_class=HTMLResponse)
-def index(request: Request, org_id: str | None = None, db: Session = Depends(get_db)):
+def index(request: Request, org_id: str | None = None, err: str | None = None,
+          msg: str | None = None, db: Session = Depends(get_db)):
     ctx = _base_ctx(request, db, org_id)
     if ctx is None:
         return RedirectResponse("/login", status_code=302)
@@ -119,13 +146,43 @@ def index(request: Request, org_id: str | None = None, db: Session = Depends(get
     tomorrow = date_type.today() + timedelta(days=1)
     tomorrow_draft = compute_day_draft(db, ctx["current_org"].id, tomorrow) if ctx["current_org"] else None
 
+    # Нулевые позиции с экрана убраны (11.09): 113 строк с остатком и так
+    # длиннее телефона, а «ноль» не отвечает ни на один вопрос — товар либо
+    # закончился, либо его никогда не покупали.
+    in_stock = [b for b in balances if abs(b["balance"]) > 0.0001]
+    by_cat = {}
+    for b in in_stock:
+        by_cat.setdefault(b["product"].category or "прочее", []).append(b)
+    cat_order = ["овощи", "крупы", "мясо", "молочные", "масла", "зелень", "специи",
+                 "бакалея", "фрукты", "напитки", "бытовая химия", "инвентарь",
+                 "стройматериалы", "прочее"]
+    groups = [{"name": c, "items": by_cat[c]} for c in cat_order if c in by_cat]
+    groups += [{"name": c, "items": v} for c, v in by_cat.items() if c not in cat_order]
+
+    today = date_type.today()
+    days = _writeoff_days(db, org_ids)
+    today_lines = next((d["lines"] for d in days if d["date"] == today), [])
+
+    # Остаток по каждому товару — нужен на правке строки: показать, сколько
+    # останется, надо до сохранения, а не ловить нехватку после.
+    balance_by_pid = {b["product"].id: b["balance"] for b in balances}
+
     ctx.update({
         "balances": balances,
+        "balance_by_pid": balance_by_pid,
+        "groups": groups,
+        "in_stock_count": len(in_stock),
+        "minus_items": [b for b in in_stock if b["balance"] < 0],
         "total_value": total_value,
         "recent_receipts": recent_receipts,
         "recent_writeoffs": recent_writeoffs,
+        "days": days,
+        "today": today,
+        "today_lines": today_lines,
         "tomorrow_date": tomorrow.isoformat(),
         "tomorrow_missing": tomorrow_draft["unlinked"] if tomorrow_draft else [],
+        "err": err,
+        "msg": msg,
     })
     return templates.TemplateResponse("warehouse/index.html", ctx)
 
@@ -414,6 +471,110 @@ def writeoff_meal_save(
         ))
     db.commit()
     return RedirectResponse(f"/warehouse/?org_id={ctx['current_org_id']}", status_code=302)
+
+
+def _writeoff_for_edit(db: Session, ctx: dict, wid: int):
+    """Строка списания, которую этому пользователю можно трогать.
+
+    Возвращает (строка, ошибка). Чужой объект и уже удалённая строка —
+    не «нет прав», а «нечего править»: подробности о существовании чужих
+    записей наружу не выдаём."""
+    all_orgs = db.query(Organization).all()
+    org_ids = _descendants(ctx["current_org"].id, all_orgs) if ctx["current_org"] else set()
+    w = db.get(WriteOff, wid)
+    if not w or w.deleted_at is not None or w.organization_id not in org_ids:
+        return None, "Строка не найдена"
+    return w, None
+
+
+@router.post("/writeoff/{wid}/edit")
+def writeoff_edit(
+    wid: int,
+    request: Request,
+    org_id: str | None = Form(None),
+    quantity: str = Form(...),
+    db: Session = Depends(get_db),
+):
+    """Правка количества в уже проведённом списании.
+
+    Расход кухни заводится каждый день по листу поваров — описка в цифре тут
+    рядовое событие, а не корректировка счёта. До 11.09 пути исправить её не
+    было вообще: 200 граммов масла, занесённые как 200 кг, уводили склад в
+    минус на 199,6 кг, и разобрать это мог только разработчик напрямую в базе."""
+    ctx = _base_ctx(request, db, org_id)
+    if ctx is None:
+        return RedirectResponse("/login", status_code=302)
+
+    back = f"/warehouse/?org_id={ctx['current_org_id']}"
+    w, err = _writeoff_for_edit(db, ctx, wid)
+    if err:
+        return RedirectResponse(f"{back}&err={quote(err)}", status_code=302)
+
+    try:
+        qty = float(quantity.strip().replace(",", "."))
+    except ValueError:
+        return RedirectResponse(f"{back}&err={quote('Количество не похоже на число')}", status_code=302)
+    if qty <= 0:
+        return RedirectResponse(f"{back}&err={quote('Количество должно быть больше нуля')}", status_code=302)
+
+    # Та же проверка, что на списании, но с поправкой: эта строка уже сидит
+    # в расходе, поэтому её собственное количество возвращается в остаток.
+    all_orgs = db.query(Organization).all()
+    org_ids = _descendants(ctx["current_org"].id, all_orgs)
+    available = _get_balance_map(db, org_ids).get(w.product_id, {}).get("balance", 0.0) + float(w.quantity)
+    product = db.get(Product, w.product_id)
+    unit = (product.unit if product else "") or "ед"
+    if qty > available + 0.001:
+        msg = (f"{product.name if product else w.product_id}: на складе {available:g} {unit}, "
+               f"списать {qty:g} нельзя")
+        return RedirectResponse(f"{back}&err={quote(msg)}", status_code=302)
+
+    old = float(w.quantity)
+    w.quantity = qty
+    db.add(AuditLog(
+        entity_type="write_off", entity_id=w.id, action="update",
+        user_id=ctx["current_user"].id,
+        old_data={"quantity": f"{old:g}"},
+        new_data={"quantity": f"{qty:g}", "unit": unit},
+    ))
+    db.commit()
+    ok = f"{product.name if product else ''}: {old:g} → {qty:g} {unit}"
+    return RedirectResponse(f"{back}&msg={quote(ok)}", status_code=302)
+
+
+@router.post("/writeoff/{wid}/delete")
+def writeoff_delete(
+    wid: int,
+    request: Request,
+    org_id: str | None = Form(None),
+    db: Session = Depends(get_db),
+):
+    """Мягкое удаление строки списания — лишняя, задвоенная, ошибочная.
+
+    Мягкое, а не физическое: тот же приём, что у расходов и сверок — запись
+    остаётся в базе, из остатка выпадает (везде фильтр deleted_at IS NULL)."""
+    ctx = _base_ctx(request, db, org_id)
+    if ctx is None:
+        return RedirectResponse("/login", status_code=302)
+
+    back = f"/warehouse/?org_id={ctx['current_org_id']}"
+    w, err = _writeoff_for_edit(db, ctx, wid)
+    if err:
+        return RedirectResponse(f"{back}&err={quote(err)}", status_code=302)
+
+    product = db.get(Product, w.product_id)
+    unit = (product.unit if product else "") or "ед"
+    w.deleted_at = datetime.utcnow()
+    db.add(AuditLog(
+        entity_type="write_off", entity_id=w.id, action="delete",
+        user_id=ctx["current_user"].id,
+        old_data={"quantity": f"{float(w.quantity):g}", "unit": unit,
+                  "date": w.date.isoformat()},
+        new_data={"deleted": True},
+    ))
+    db.commit()
+    ok = f"Убрано: {product.name if product else ''} {float(w.quantity):g} {unit}"
+    return RedirectResponse(f"{back}&msg={quote(ok)}", status_code=302)
 
 
 @router.get("/products/", response_class=HTMLResponse)

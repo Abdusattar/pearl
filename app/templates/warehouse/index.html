@@ -1,130 +1,315 @@
 {% extends "base.html" %}
 {% block title %}Склад — Жемчужина{% endblock %}
 
+{#- Количество по-человечески: 31,6 вместо 31.600. Точка в «31.600» читается
+    как разделитель тысяч — на складе, где рядом стоят и 1 270 кг сахара, и
+    0,2 кг масла, это прямой путь к ошибке на глаз. -#}
+{% macro qty(v) -%}
+{{ ("%.3f"|format(v|float)).rstrip('0').rstrip('.')|replace('.', ',') }}
+{%- endmacro %}
+
 {% block content %}
+{#
+  Экран склада (11.09). Раньше это была таблица на семь колонок: остаток
+  терялся между приходом, расходом, ценой и стоимостью, а на телефоне, с
+  которым Махабат ходит по складу, читался хуже всего.
+
+  Теперь: остаток — одно число на строку, категории свёрнуты (113 позиций
+  подряд — стена), а под ними расход на кухню по дням. Дни без записей видно
+  сразу, и это главное: с 28 августа по 9 сентября расход не вносился вовсе.
+  На ноутбуке обе колонки раскрыты — прятать там нечего, места хватает.
+#}
+<style>
+  .wh-grp { background: var(--card); border: 1px solid var(--border);
+            border-radius: 11px; margin-bottom: 8px; overflow: hidden; }
+  .wh-grp-btn { width: 100%; box-sizing: border-box; display: flex; align-items: center;
+                gap: 10px; text-align: left; background: none; border: 0;
+                padding: 12px 14px; min-height: 44px; cursor: pointer;
+                font-family: inherit; color: var(--text); }
+  .wh-grp-btn:hover { background: var(--bg); }
+  .wh-grp-btn .g { font-size: 15px; font-weight: 600; }
+  .wh-grp-btn .c { flex: 1 1 auto; font-size: 13px; color: var(--text-muted); }
+  .wh-grp-btn .chev { color: var(--text-muted); font-size: 13px; }
+  .wh-lst { border-top: 1px solid var(--border); }
+  .wh-itm { display: flex; align-items: center; gap: 10px; padding: 10px 14px;
+            border-top: 1px solid var(--border); }
+  .wh-itm:first-child { border-top: 0; }
+  .wh-itm .n { flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; font-size: 14px; }
+  .wh-itm .v { font-size: 17px; font-weight: 700; white-space: nowrap; }
+  .wh-itm .v .u { font-size: 12px; font-weight: 500; color: var(--text-muted); margin-left: 3px; }
+  .wh-itm.minus .v { color: var(--danger); }
+
+  .wh-find { width: 100%; box-sizing: border-box; padding: 12px 14px; font-size: 16px;
+             font-family: inherit; border: 1px solid var(--border); border-radius: 11px;
+             background: var(--card); color: var(--text); margin-bottom: 12px; }
+
+  .wh-today { display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+              background: var(--card); border: 1px solid var(--border);
+              border-radius: 11px; padding: 12px 14px; margin-bottom: 20px; }
+  .wh-today .t { flex: 1 1 150px; font-size: 14px; }
+  .wh-today .t span { display: block; font-size: 13px; color: var(--text-muted); }
+
+  .wh-band { display: flex; align-items: baseline; gap: 10px; margin-bottom: 9px; }
+  .wh-band h2 { font-size: 15px; font-weight: 700; margin: 0; }
+  .wh-band .sub { font-size: 13px; color: var(--text-muted); }
+
+  .wh-day { background: var(--card); border: 1px solid var(--border);
+            border-radius: 11px; margin-bottom: 8px; overflow: hidden; }
+  .wh-day-btn { width: 100%; box-sizing: border-box; display: flex; align-items: center;
+                gap: 10px; text-align: left; background: none; border: 0;
+                padding: 13px 14px; min-height: 44px; cursor: pointer;
+                font-family: inherit; color: var(--text); }
+  .wh-day-btn:hover { background: var(--bg); }
+  .wh-day-btn .d { font-size: 15px; font-weight: 600; }
+  .wh-day-btn .s { flex: 1 1 auto; font-size: 13px; color: var(--text-muted); }
+  .wh-day-btn .chev { color: var(--text-muted); font-size: 13px; }
+  .wh-day-body { border-top: 1px solid var(--border); padding: 2px 14px 10px; }
+
+  .wh-line { width: 100%; box-sizing: border-box; display: flex; align-items: center;
+             gap: 10px; text-align: left; background: none; border: 0; padding: 9px 0;
+             min-height: 44px; cursor: pointer; font-family: inherit; color: var(--text);
+             font-size: 14px; border-top: 1px solid var(--border); }
+  .wh-day-body .wh-line:first-child { border-top: 0; }
+  .wh-line .n { flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; }
+  .wh-line .v { font-weight: 600; white-space: nowrap; }
+  .wh-line .chev { color: var(--text-muted); font-size: 12px; }
+
+  .wh-ed { background: var(--bg); border: 1px solid var(--border); border-radius: 10px;
+           padding: 11px; margin-bottom: 10px; }
+  .wh-ed form { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: 0; }
+  .wh-ed input[type=text] { width: 116px; padding: 10px 12px; font-size: 17px;
+                            font-weight: 600; font-family: inherit; border: 1px solid var(--border);
+                            border-radius: 9px; background: var(--card); color: var(--text); }
+  .wh-ed .u { font-size: 15px; font-weight: 600; color: var(--text-muted); }
+  .wh-ed button[disabled] { opacity: .45; cursor: not-allowed; }
+  .wh-ed .sp { flex: 1 1 auto; }
+  .wh-after { margin-top: 9px; font-size: 13px; color: var(--text-muted); }
+  .wh-after b { color: var(--text); }
+  .wh-after.err { color: var(--danger); }
+  .wh-after.err b { color: var(--danger); }
+  .wh-empty { color: var(--text-muted); font-size: 13px; padding: 9px 0; }
+
+  @media (min-width: 900px) {
+    .wh-cols { display: grid; grid-template-columns: 1fr 1fr; gap: 26px; align-items: start; }
+  }
+</style>
+
 <div class="page-header">
   <h1>Склад</h1>
   <div style="display:flex;gap:10px;flex-wrap:wrap">
-    {# Пересчёт — главное действие на складе (09.09): остатки теперь задаёт он,
-       а не расчёт по меню. Доступен и staff — считает физически Махабат. #}
-    <a href="/warehouse/count/?org_id={{ current_org_id }}" class="btn btn-primary">Пересчёт склада</a>
-    <a href="/warehouse/writeoff/meal?org_id={{ current_org_id }}" class="btn btn-secondary">− Списание на приём пищи</a>
-    <a href="/warehouse/writeoff/add?org_id={{ current_org_id }}" class="btn btn-secondary">− Списание (порча/прочее)</a>
+    <a href="/warehouse/writeoff/meal?org_id={{ current_org_id }}" class="btn btn-primary">Занести расход</a>
+    <a href="/warehouse/count/?org_id={{ current_org_id }}" class="btn btn-secondary">Пересчёт склада</a>
+    <a href="/warehouse/writeoff/add?org_id={{ current_org_id }}" class="btn btn-secondary">Порча и прочее</a>
     {% if current_user.role != "staff" %}
     <a href="/warehouse/products/?org_id={{ current_org_id }}" class="btn btn-secondary">Продукты</a>
-    <a href="/warehouse/writeoff/auto?org_id={{ current_org_id }}" class="btn btn-secondary">Расчёт по меню (справка)</a>
     {% endif %}
   </div>
 </div>
 
+{% if msg %}<div class="alert alert-success" style="margin-bottom:14px">{{ msg }}</div>{% endif %}
+{% if err %}<div class="alert alert-danger" style="margin-bottom:14px">{{ err }}</div>{% endif %}
+
+{% if minus_items %}
+{# Физически минуса не бывает — это всегда ошибка ввода, и её надо вынести
+   наверх, а не подсветить строкой в общем списке. #}
+<div class="alert alert-danger" style="margin-bottom:14px">
+  <strong>{{ minus_items|length }} {% if minus_items|length == 1 %}позиция ушла{% else %}позиции ушли{% endif %} в минус:</strong>
+  {% for b in minus_items %}{{ b.product.name }} {{ qty(b.balance) }} {{ b.product.unit or 'кг' }}{% if not loop.last %}, {% endif %}{% endfor %}
+  — так выглядит промах с единицами при списании. Найдите строку в расходе по дням и поправьте.
+</div>
+{% endif %}
+
 {% if tomorrow_missing %}
-<div class="alert alert-warning" style="margin-bottom:16px">
+<div class="alert alert-warning" style="margin-bottom:14px">
   <strong>На завтра ({{ tomorrow_date[8:10] }}.{{ tomorrow_date[5:7] }}) не хватает на складе:</strong>
   {{ tomorrow_missing | map(attribute="names") | map("join", " / ") | join(", ") }}
-  — <a href="/warehouse/writeoff/auto?org_id={{ current_org_id }}&writeoff_date={{ tomorrow_date }}">подробнее</a>
 </div>
 {% endif %}
 
-{% if balances %}
-<div class="card">
-  <table class="table">
-    <thead>
-      <tr>
-        <th>Продукт</th>
-        <th style="width:60px">Ед.</th>
-        <th style="width:80px;text-align:right">Приход</th>
-        <th style="width:80px;text-align:right">Расход</th>
-        <th style="width:90px;text-align:right;color:var(--primary)">Остаток</th>
-        <th style="width:90px;text-align:right">Ср.цена</th>
-        <th style="width:110px;text-align:right">Стоимость</th>
-      </tr>
-    </thead>
-    <tbody>
-      {% set ns = namespace(prev_cat="") %}
-      {% for b in balances %}
-      {% set cat = b.product.category or "прочее" %}
-      {% if cat != ns.prev_cat %}
-      {% set ns.prev_cat = cat %}
-      <tr>
-        <td colspan="7" style="background:var(--bg);padding:6px 14px;font-size:11px;font-weight:700;text-transform:uppercase;color:var(--text-muted);letter-spacing:0.5px">
-          {{ cat }}
-        </td>
-      </tr>
-      {% endif %}
-      <tr>
-        <td data-label="Продукт" style="font-weight:500">{{ b.product.name }}</td>
-        <td data-label="Ед." style="color:var(--text-muted);font-size:13px">{{ b.product.unit or 'кг' }}</td>
-        <td data-label="Приход" style="text-align:right;color:var(--text-muted);font-size:13px">{{ "%.2f"|format(b.received) }}</td>
-        <td data-label="Расход" style="text-align:right;color:var(--text-muted);font-size:13px">{{ "%.2f"|format(b.written) }}</td>
-        <td data-label="Остаток" style="text-align:right;font-weight:700;color:{% if b.balance < 1 %}var(--danger){% elif b.balance < 3 %}#f59e0b{% else %}var(--text){% endif %}">
-          {{ "%.3f"|format(b.balance)|replace('.000','') }}
-        </td>
-        <td data-label="Ср.цена" style="text-align:right;font-size:13px;color:var(--text-muted)">
-          {% if b.avg_price > 0 %}{{ "{:,.0f}".format(b.avg_price) }} с{% endif %}
-        </td>
-        <td data-label="Стоимость" style="text-align:right;font-size:13px">
-          {% if b.balance_value > 0 %}{{ "{:,.0f}".format(b.balance_value) }} с{% endif %}
-        </td>
-      </tr>
-      {% endfor %}
-    </tbody>
-  </table>
+<input class="wh-find" id="whFind" type="search" placeholder="Найти продукт" autocomplete="off">
+<div id="whNohit" class="wh-empty" style="display:none">Ничего не нашлось</div>
 
-  <div class="totals">
-    <div class="total-item">Позиций: <strong>{{ balances|length }}</strong></div>
-    <div class="total-item">Стоимость склада: <strong>{{ "{:,.0f}".format(total_value) }} с</strong></div>
+<div class="wh-today">
+  <div class="t">
+    Сегодня, {{ today.strftime('%d.%m') }}
+    <span>{% if today_lines %}занесено {{ today_lines|length }} {% if today_lines|length == 1 %}позиция{% else %}позиций{% endif %}{% else %}расход не заносили{% endif %}</span>
   </div>
+  <a href="/warehouse/writeoff/meal?org_id={{ current_org_id }}" class="btn btn-primary">Занести расход</a>
 </div>
 
-{% else %}
-<div class="card" style="text-align:center;padding:60px 20px;color:var(--text-muted)">
-  <div style="font-size:48px;margin-bottom:16px">📦</div>
-  <div style="font-size:16px;margin-bottom:24px">Склад пуст — заполнится из проведённых квитанций, или пройди по складу и занеси остатки</div>
-  <a href="/warehouse/count/?org_id={{ current_org_id }}" class="btn btn-primary btn-lg">Пересчёт склада</a>
-</div>
-{% endif %}
-
-{% if recent_receipts or recent_writeoffs %}
-<div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:16px">
-
-  {% if recent_receipts %}
-  <div class="card">
-    <div style="font-weight:600;margin-bottom:14px;font-size:14px">Последние поступления</div>
-    {% for r in recent_receipts %}
-    <div style="display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--border);font-size:13px">
-      <div>
-        <div style="font-weight:500">{{ r.product.name }}</div>
-        <div style="color:var(--text-muted);font-size:12px">{{ r.date.strftime('%d.%m.%Y') }}{% if r.supplier_name %} · {{ r.supplier_name }}{% endif %}</div>
-      </div>
-      <div style="text-align:right">
-        <div style="color:var(--success);font-weight:600">+{{ "%.3f"|format(r.quantity)|replace('.000','') }} {{ r.product.unit or 'кг' }}</div>
-        <div style="color:var(--text-muted);font-size:12px">{{ "{:,.0f}".format(r.total_cost) }} с</div>
-      </div>
+<div class="wh-cols">
+  <div>
+    <div class="wh-band">
+      <h2>Остатки</h2>
+      <span class="sub">{{ in_stock_count }} позиций</span>
     </div>
-    {% endfor %}
-  </div>
-  {% endif %}
 
-  {% if recent_writeoffs %}
-  <div class="card">
-    <div style="font-weight:600;margin-bottom:14px;font-size:14px">Последние списания</div>
-    {% for w in recent_writeoffs %}
-    <div style="display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--border);font-size:13px">
-      <div>
-        <div style="font-weight:500">{{ w.product.name }}</div>
-        <div style="color:var(--text-muted);font-size:12px">
-          {{ w.date.strftime('%d.%m.%Y') }}{% if w.meal_type %} · {{ w.meal_type }}{% endif %}{% if w.children_count %} · {{ w.children_count }} детей{% endif %}
+    {% for g in groups %}
+    <div class="wh-grp">
+      <button class="wh-grp-btn" type="button" aria-expanded="false">
+        <span class="g">{{ g.name|capitalize }}</span>
+        <span class="c">{{ g["items"]|length }}{% if g.name == "прочее" %} · не разнесены по категориям{% endif %}</span>
+        <span class="chev">⌄</span>
+      </button>
+      <div class="wh-lst" hidden>
+        {% for b in g["items"] %}
+        <div class="wh-itm{% if b.balance < 0 %} minus{% endif %}">
+          <span class="n">{{ b.product.name }}</span>
+          <span class="v">{{ qty(b.balance) }}<span class="u">{{ b.product.unit or 'кг' }}</span></span>
         </div>
+        {% endfor %}
       </div>
-      <div style="text-align:right">
-        <div style="color:var(--danger);font-weight:600">−{{ "%.3f"|format(w.quantity)|replace('.000','') }} {{ w.product.unit or 'кг' }}</div>
-        <div style="color:var(--text-muted);font-size:12px">{{ w.reason }}</div>
-      </div>
+    </div>
+    {% else %}
+    <div class="card" style="text-align:center;padding:40px 20px;color:var(--text-muted)">
+      Склад пуст — заполнится из проведённых квитанций или пересчёта.
     </div>
     {% endfor %}
   </div>
-  {% endif %}
 
+  <div>
+    <div class="wh-band"><h2>Расход по дням</h2></div>
+
+    {% for day in days %}
+    <div class="wh-day">
+      <button class="wh-day-btn" type="button" aria-expanded="{{ 'true' if loop.first else 'false' }}">
+        <span class="d">{{ day.date.strftime('%d.%m.%Y') }}</span>
+        <span class="s">{{ day["lines"]|length }} {% if day["lines"]|length == 1 %}позиция{% else %}позиций{% endif %}</span>
+        <span class="chev">{{ '⌃' if loop.first else '⌄' }}</span>
+      </button>
+      <div class="wh-day-body"{% if not loop.first %} hidden{% endif %}>
+        {% for w in day["lines"] %}
+        {# data-avail — остаток БЕЗ этой строки: она уже сидит в расходе,
+           и на правке её собственное количество возвращается в запас. #}
+        <button class="wh-line" type="button"
+                data-id="{{ w.id }}"
+                data-unit="{{ w.product.unit or 'кг' }}"
+                data-qty="{{ qty(w.quantity) }}"
+                data-avail="{{ "%.3f"|format(balance_by_pid.get(w.product_id, 0) + w.quantity|float) }}"
+                data-name="{{ w.product.name }}">
+          <span class="n">{{ w.product.name }}{% if w.reason and w.reason != "питание детей" %} <span style="color:var(--text-muted);font-size:12px">{{ w.reason }}</span>{% endif %}</span>
+          <span class="v">{{ qty(w.quantity) }} {{ w.product.unit or 'кг' }}</span>
+          <span class="chev">›</span>
+        </button>
+        {% endfor %}
+      </div>
+    </div>
+    {% else %}
+    <div class="card" style="padding:20px;color:var(--text-muted);font-size:14px">
+      Расход на кухню ещё не заносили.
+    </div>
+    {% endfor %}
+  </div>
 </div>
-{% endif %}
+
+<script>
+(function () {
+  const orgId = {{ current_org_id or 'null' }};
+  const fmt = n => n.toLocaleString('ru-RU', { maximumFractionDigits: 3 });
+  const wide = window.matchMedia('(min-width: 900px)');
+
+  function toggle(btn, open) {
+    btn.nextElementSibling.hidden = !open;
+    btn.setAttribute('aria-expanded', String(open));
+    const chev = btn.querySelector('.chev');
+    if (chev) chev.textContent = open ? '⌃' : '⌄';
+  }
+
+  document.querySelectorAll('.wh-grp-btn, .wh-day-btn').forEach(b => {
+    b.addEventListener('click', () => toggle(b, b.nextElementSibling.hidden));
+  });
+
+  // На ноутбуке категории раскрыты сразу: лишний клик за каждым продуктом
+  // раздражает быстрее, чем длинный список, а места там хватает.
+  const applyWide = () => {
+    if (document.getElementById('whFind').value) return;
+    document.querySelectorAll('.wh-grp-btn').forEach(b => toggle(b, wide.matches));
+  };
+  applyWide();
+  wide.addEventListener('change', applyWide);
+
+  // Поиск идёт по всему складу и сам раскрывает категории с совпадениями:
+  // человек ищет продукт, а не категорию, в которой тот лежит.
+  const find = document.getElementById('whFind'), nohit = document.getElementById('whNohit');
+  find.addEventListener('input', () => {
+    const s = find.value.trim().toLowerCase();
+    let shown = 0;
+    document.querySelectorAll('.wh-grp').forEach(g => {
+      const btn = g.querySelector('.wh-grp-btn');
+      let n = 0;
+      g.querySelectorAll('.wh-itm').forEach(i => {
+        const hit = !s || i.querySelector('.n').textContent.toLowerCase().includes(s);
+        i.hidden = !hit;
+        if (hit) n++;
+      });
+      g.hidden = !!s && n === 0;
+      toggle(btn, s ? n > 0 : wide.matches);
+      shown += n;
+    });
+    nohit.style.display = s && !shown ? 'block' : 'none';
+  });
+
+  // Правка строки расхода — тап по самой строке, без отдельной кнопки.
+  document.querySelectorAll('.wh-line').forEach(line => {
+    line.addEventListener('click', () => {
+      const open = line.nextElementSibling;
+      if (open && open.classList.contains('wh-ed')) { open.remove(); return; }
+      document.querySelectorAll('.wh-ed').forEach(e => e.remove());
+
+      const id = line.dataset.id, unit = line.dataset.unit;
+      const qty = parseFloat(line.dataset.qty.replace(',', '.'));
+      const pidRow = line.dataset.name;
+
+      const ed = document.createElement('div');
+      ed.className = 'wh-ed';
+      ed.innerHTML = `
+        <form method="post" action="/warehouse/writeoff/${id}/edit">
+          <input type="hidden" name="org_id" value="${orgId ?? ''}">
+          <input type="text" name="quantity" inputmode="decimal" value="${String(qty).replace('.', ',')}">
+          <span class="u">${unit}</span>
+          <span class="sp"></span>
+          <button class="btn btn-primary" type="submit">Сохранить</button>
+        </form>
+        <form method="post" action="/warehouse/writeoff/${id}/delete" style="margin-top:9px">
+          <input type="hidden" name="org_id" value="${orgId ?? ''}">
+          <button class="btn btn-secondary" type="submit"
+                  onclick="return confirm('Убрать «${pidRow}» из расхода за этот день?')">Убрать строку</button>
+        </form>
+        <div class="wh-after"></div>`;
+      line.after(ed);
+
+      const input = ed.querySelector('input[type=text]');
+      const after = ed.querySelector('.wh-after');
+      const save = ed.querySelector('button[type=submit]');
+      const avail = line.dataset.avail ? parseFloat(line.dataset.avail) : null;
+
+      // Под полем стоит не подсказка, а следствие: подсказку вида «вводите в
+      // килограммах» человек переписывает в само поле — так уже было с паприкой.
+      const recalc = () => {
+        const v = parseFloat(input.value.replace(',', '.'));
+        if (isNaN(v) || v <= 0) {
+          after.className = 'wh-after err';
+          after.textContent = 'Введите количество больше нуля.';
+          save.disabled = true; return;
+        }
+        save.disabled = false;
+        if (avail === null) { after.className = 'wh-after'; after.textContent = ''; return; }
+        const left = avail - v;
+        if (left < 0) {
+          after.className = 'wh-after err';
+          after.innerHTML = `На складе есть только <b>${fmt(avail)} ${unit}</b> — не хватает ${fmt(-left)}.`;
+          save.disabled = true;
+        } else {
+          after.className = 'wh-after';
+          after.innerHTML = `Останется на складе <b>${fmt(left)} ${unit}</b>`;
+        }
+      };
+      input.addEventListener('input', recalc);
+      recalc();
+      input.focus();
+      input.select();
+    });
+  });
+})();
+</script>
 {% endblock %}
