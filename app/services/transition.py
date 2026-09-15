@@ -20,8 +20,10 @@ from pathlib import Path
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
-from app.models import (DishIngredient, Product, ProductAlias, ProductCategory,
-                        ReceiptItem, StockCountLine, WarehouseReceipt, WriteOff)
+from app.models import (AccountBalanceSnapshot, CapitalWithdrawal, CashFunding,
+                        DishIngredient, Organization, Product, ProductAlias,
+                        ProductCategory, ReceiptItem, Reconciliation, StockCount,
+                        StockCountLine, WarehouseReceipt, WriteOff)
 
 MINOR_CATEGORIES = ["зелень", "специи", "хлеб и выпечка", "моющее и инвентарь",
                     "канцелярия", "ремонт"]
@@ -215,6 +217,99 @@ def apply_layout(db: Session, rows: list[dict], renames: dict[int, str] | None =
             if p.name != new_name:
                 lines.append(f"≡ «{p.name}» → «{new_name}»")
                 rename_product(db, p, new_name)
+        db.flush()
+        if dry_run:
+            sp.rollback()
+        else:
+            sp.commit()
+    except Exception:
+        if sp.is_active:
+            sp.rollback()
+        raise
+    return lines
+
+
+# --- Слияние площадки: склад и касса Школы → Садик Сокулук (схема 06, 15.09) ---
+
+def _source_stock(db: Session, org_id: int) -> dict[int, Decimal]:
+    """Остаток по товарам объекта: приходы минус списания, без удалённых."""
+    recv = dict(db.query(WarehouseReceipt.product_id, func.sum(WarehouseReceipt.quantity))
+                .filter(WarehouseReceipt.organization_id == org_id, WarehouseReceipt.deleted_at.is_(None))
+                .group_by(WarehouseReceipt.product_id).all())
+    woff = dict(db.query(WriteOff.product_id, func.sum(WriteOff.quantity))
+                .filter(WriteOff.organization_id == org_id, WriteOff.deleted_at.is_(None))
+                .group_by(WriteOff.product_id).all())
+    out = {}
+    for pid in set(recv) | set(woff):
+        qty = Decimal(recv.get(pid) or 0) - Decimal(woff.get(pid) or 0)
+        if qty != 0:
+            out[pid] = qty
+    return out
+
+
+def merge_site(db: Session, source_id: int, target_id: int, cutoff, reason: str,
+               user_id: int | None, dry_run: bool = True) -> list[str]:
+    """Склад и касса `source` переезжают к площадке `target`.
+
+    Склад: приходы, списания и пересчёты источника переводятся на площадку;
+    на остаток источника по каждому товару добавляется списание датой
+    `cutoff` (день пересчёта, который считал общую кухню целиком), так что
+    остатки площадки не меняются. Касса: пополнения, изъятия, сверки и точки
+    счёта переводятся; пополнение «одолжено у площадки» перестаёт быть
+    займом — внутри одной кассы это карман. Транзакции не трогаются: метка
+    объекта на расходе остаётся. Брошенный пересчёт площадки без единой
+    отметки отменяется. Повторный запуск ничего не меняет.
+    """
+    lines: list[str] = []
+    sp = db.begin_nested()
+    try:
+        source = db.get(Organization, source_id)
+        target = db.get(Organization, target_id)
+        if source is None or target is None:
+            raise ValueError(f"нет организации {source_id} или {target_id}")
+        if source.site_id != target.id:
+            lines.append(f"· {source.name}: площадка → «{target.name}»")
+            source.site_id = target.id
+
+        stock = _source_stock(db, source_id)
+        for pid, qty in sorted(stock.items()):
+            p = db.get(Product, pid)
+            db.add(WriteOff(date=cutoff, product_id=pid, quantity=qty, organization_id=target_id,
+                            reason=reason, created_by=user_id))
+            lines.append(f"− {p.name}: остаток {source.name} {qty.normalize():f} {p.unit} списан датой {cutoff:%d.%m} «{reason}»")
+        for model, label in ((WarehouseReceipt, "приходов"), (WriteOff, "списаний"), (StockCount, "пересчётов")):
+            n = (db.query(model).filter(model.organization_id == source_id)
+                 .update({model.organization_id: target_id}, synchronize_session=False))
+            if n:
+                lines.append(f"→ {label} {source.name} → {target.name}: {n}")
+
+        for f in (db.query(CashFunding).filter(CashFunding.organization_id == source_id)
+                  .order_by(CashFunding.date, CashFunding.id).all()):
+            what = f"₸ пополнение {f.date:%d.%m} {f.amount:g} ({f.source_type}, подотчётный {f.accountable_user_id}) → {target.name}"
+            f.organization_id = target_id
+            if f.source_organization_id == target_id:
+                f.source_organization_id = None
+                what += ", больше не заём"
+            lines.append(what)
+        for model, label in ((CapitalWithdrawal, "изъятий"), (Reconciliation, "сверок"),
+                             (AccountBalanceSnapshot, "точек счёта")):
+            n = (db.query(model).filter(model.organization_id == source_id)
+                 .update({model.organization_id: target_id}, synchronize_session=False))
+            if n:
+                lines.append(f"→ {label} {source.name} → {target.name}: {n}")
+
+        for c in db.query(StockCount).filter(StockCount.organization_id == target_id,
+                                             StockCount.status == "active").all():
+            marked = (db.query(StockCountLine)
+                      .filter(StockCountLine.count_id == c.id, StockCountLine.actual_qty.isnot(None)).count())
+            if marked:
+                lines.append(f"! пересчёт {c.id} от {c.count_date:%d.%m} активен, отметок {marked} — не трогаю")
+                continue
+            c.status = "cancelled"
+            c.cancelled_by = user_id
+            c.cancelled_at = datetime.now()
+            c.cancel_reason = "слияние складов Сокулука, ничего не отмечено"
+            lines.append(f"× пересчёт {c.id} от {c.count_date:%d.%m} отменён: ничего не отмечено")
         db.flush()
         if dry_run:
             sp.rollback()

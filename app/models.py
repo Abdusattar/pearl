@@ -46,10 +46,18 @@ class Organization(Base):
     # См. app/services/podotchet.py — тот же человек становится подотчётным
     # за эту сумму (CashFunding.accountable_user_id).
     cash_recipient_user_id = Column(Integer, ForeignKey("users.id"))
+    # Площадка: у какой организации лежат склад и касса этой (15.09, слияние
+    # Сокулука: Школа → Садик Сокулук). NULL — сама себе площадка. Читает
+    # только новый вход; старый ходит по объекту пользователя как раньше.
+    site_id   = Column(Integer, ForeignKey("organizations.id"))
     created_at = Column(DateTime, server_default=func.now())
 
     children  = relationship("Organization", foreign_keys=[parent_id],
                              backref=backref("parent", remote_side="Organization.id"))
+
+    @property
+    def site_org_id(self) -> int:
+        return self.site_id or self.id
 
 
 class User(Base):
