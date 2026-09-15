@@ -139,3 +139,22 @@ def test_apply_layout_dry_run_writes_nothing(db, org):
     # повторный прогон ничего не меняет
     again = apply_layout(db, rows, renames={luk.id: "Лук репчатый тест-раскладка"}, dry_run=False)
     assert [l for l in again if not l.startswith("!")] == []
+
+
+def test_unit_change_goes_before_merge(db, org):
+    """Пачка чая 500 г сливается в карточку, которая в той же раскладке
+    переводится из кг в г: коэффициент слияния задан в граммах, поэтому
+    смена единицы цели должна пройти первой (найдено на diff по проду 15.09)."""
+    tea = _product(db, "Чай кг тест-порядок", unit="кг")
+    packs = _product(db, "чай уп тест-порядок", unit="уп", standard=False)
+    _receipt(db, tea, org, Decimal("0.5"), 800)
+    _receipt(db, packs, org, 3, 400)
+    rows = [
+        {"id": str(tea.id), "name": tea.name, "new_category": "напитки и вода", "level": "склад", "merge_into": ""},
+        {"id": str(packs.id), "name": packs.name, "new_category": "напитки и вода", "level": "склад", "merge_into": str(tea.id)},
+    ]
+    apply_layout(db, rows, unit_changes={tea.id: ("г", 1000)}, merge_factors={packs.id: 500}, dry_run=False)
+    db.expire_all()
+    qtys = sorted(r.quantity for r in db.query(WarehouseReceipt).filter_by(product_id=tea.id))
+    assert qtys == [Decimal("500.000"), Decimal("1500.000")]
+    assert db.get(Product, tea.id).unit == "г"

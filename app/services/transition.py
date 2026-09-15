@@ -179,7 +179,18 @@ def apply_layout(db: Session, rows: list[dict], renames: dict[int, str] | None =
             if p.category_id != cat.id:
                 lines.append(f"· {p.name}: категория «{p.category or '—'}» → «{cat.name}» ({'мелочь' if cat.is_minor else 'склад'})")
                 p.category_id = cat.id
-        # 2. слияния (после категорий: цель уже разложена)
+        # 2. смена единицы с коэффициентом — до слияний: коэффициент слияния
+        # задан относительно новой единицы цели (пачка чая 500 г при цели в г)
+        for pid, (unit, factor) in unit_changes.items():
+            p = products.get(pid) or db.get(Product, pid)
+            if p is None or p.unit == unit:
+                continue
+            old_unit = p.unit
+            counts = change_unit(db, p, unit, factor)
+            what = ", ".join(f"{k} {v}" for k, v in counts.items() if v)
+            lines.append(f"⚖ {p.name}: единица {old_unit} → {unit}, история ×{factor}"
+                         + (f": {what}" if what else ": истории нет"))
+        # 3. слияния (после категорий и единиц: цель уже разложена и в нужной единице)
         for pid, r in by_id.items():
             p = products.get(pid)
             if p is None or p.name != r["name"] or not r["merge_into"]:
@@ -195,7 +206,7 @@ def apply_layout(db: Session, rows: list[dict], renames: dict[int, str] | None =
             what = ", ".join(f"{k} {v}" for k, v in moved.items() if v)
             lines.append(f"→ {p.name} ({p.unit}) слита в «{target.name}» ({target.unit})"
                          + (f", ×{factor}" if factor != 1 else "") + (f": {what}" if what else ": истории нет"))
-        # 3. переименования
+        # 4. переименования
         for pid, new_name in renames.items():
             p = products.get(pid) or db.get(Product, pid)
             if p is None:
@@ -204,16 +215,6 @@ def apply_layout(db: Session, rows: list[dict], renames: dict[int, str] | None =
             if p.name != new_name:
                 lines.append(f"≡ «{p.name}» → «{new_name}»")
                 rename_product(db, p, new_name)
-        # 4. смена единицы с коэффициентом
-        for pid, (unit, factor) in unit_changes.items():
-            p = products.get(pid) or db.get(Product, pid)
-            if p is None or p.unit == unit:
-                continue
-            old_unit = p.unit
-            counts = change_unit(db, p, unit, factor)
-            what = ", ".join(f"{k} {v}" for k, v in counts.items() if v)
-            lines.append(f"⚖ {p.name}: единица {old_unit} → {unit}, история ×{factor}"
-                         + (f": {what}" if what else ": истории нет"))
         db.flush()
         if dry_run:
             sp.rollback()
