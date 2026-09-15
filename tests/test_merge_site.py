@@ -73,11 +73,12 @@ def test_cash_loan_becomes_pocket(db, orgs):
     assert get_cash_state(db, sadik.id)["net"] == Decimal("215625")   # 250 000 − отдано Школе
 
     lines = merge_site(db, school.id, sadik.id, CUTOFF, REASON, owner.id, dry_run=False)
-    assert any("больше не заём" in l for l in lines)
-    assert get_cash_state(db, sadik.id)["net"] == Decimal("284375")   # 250 000 + 34 375, заём исчез
+    assert any("перевод между карманами" in l for l in lines)
+    # денег в кассе по-прежнему 250 000: 34 375 из них в кармане Айжан, не сверху
+    assert get_cash_state(db, sadik.id)["net"] == Decimal("250000")
     assert get_cash_state(db, school.id)["net"] == 0
     f = db.query(CashFunding).filter_by(accountable_user_id=aizhan.id).one()
-    assert f.organization_id == sadik.id and f.source_organization_id is None
+    assert f.organization_id == sadik.id and f.source_organization_id == sadik.id
 
 
 def test_dangling_count_cancelled_only_when_empty(db, orgs):

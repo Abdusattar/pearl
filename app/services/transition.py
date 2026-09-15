@@ -288,8 +288,13 @@ def merge_site(db: Session, source_id: int, target_id: int, cutoff, reason: str,
             what = f"₸ пополнение {f.date:%d.%m} {f.amount:g} ({f.source_type}, подотчётный {f.accountable_user_id}) → {target.name}"
             f.organization_id = target_id
             if f.source_organization_id == target_id:
-                f.source_organization_id = None
-                what += ", больше не заём"
+                # «Школа одолжила у Садика» внутри одной кассы — перевод из
+                # кармана в карман: деньги уже были в кассе (снятие), второй
+                # раз не приходят. source_organization_id остаётся: старый
+                # вход считает такую запись как «получено + отдано» и итог
+                # кассы не раздувает (проверено на проде 15.09: без этого
+                # касса показала 47 846 вместо 13 471).
+                what += ", перевод между карманами"
             lines.append(what)
         for model, label in ((CapitalWithdrawal, "изъятий"), (Reconciliation, "сверок"),
                              (AccountBalanceSnapshot, "точек счёта")):
