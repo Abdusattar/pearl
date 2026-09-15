@@ -42,13 +42,16 @@ def rank_candidates(db: Session, raw: str, limit: int = 5, standard_only: bool =
     if not key:
         return []
 
-    base_q = db.query(Product)
+    # слитые и убранные карточки (переход 15.09) в кандидаты не попадают
+    base_q = db.query(Product).filter(Product.merged_into_id.is_(None), Product.retired_at.is_(None))
     if standard_only:
         base_q = base_q.filter(Product.is_standard == True)
 
     alias = db.query(ProductAlias).filter(
         func.lower(ProductAlias.raw_text) == key
     ).first()
+    if alias and not alias.product.is_active:
+        alias = None
     if alias and (not standard_only or alias.product.is_standard):
         exact_id = alias.product_id
         result = [{"id": alias.product_id, "name": alias.product.name, "score": 100}]
@@ -105,9 +108,12 @@ def find_product(db: Session, name: str) -> Product | None:
     name = name.strip()
     product = db.query(Product).filter(func.lower(Product.name) == name.lower()).first()
     if product:
-        return product
+        # слитая карточка ведёт на цель; убранная («не товар») — не карточка
+        while product.merged_into_id is not None:
+            product = product.merged_into
+        return None if product.retired_at is not None else product
     alias = db.query(ProductAlias).filter(func.lower(ProductAlias.raw_text) == _key(name)).first()
-    if alias:
+    if alias and alias.product.is_active:
         return alias.product
     candidates = rank_candidates(db, name, limit=1, standard_only=True)
     if candidates and candidates[0]["score"] >= 85:

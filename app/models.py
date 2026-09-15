@@ -270,14 +270,37 @@ class ReceiptTransaction(Base):
     amount         = Column(Numeric(12, 2), nullable=False)
 
 
+class ProductCategory(Base):
+    """Категория товара с уровнем (макет 3г, 15.09). Уровень задаёт категория,
+    а не человек: `minor` — мелочь, в расход в день покупки, остаток не
+    считается; `stock` — числится по остатку. Список категорий-мелочи задаёт
+    собственник один раз, новый товар получает уровень от категории."""
+    __tablename__ = "product_categories"
+    id         = Column(Integer, primary_key=True)
+    name       = Column(String(50), nullable=False, unique=True)
+    level      = Column(String(10), nullable=False, default="stock", server_default="stock")  # stock|minor
+    sort_order = Column(Integer, nullable=False, default=100, server_default="100")
+    created_at = Column(DateTime, server_default=func.now())
+
+    @property
+    def is_minor(self) -> bool:
+        return self.level == "minor"
+
+
 class Product(Base):
     __tablename__ = "products"
     id                  = Column(Integer, primary_key=True)
     name                = Column(String(100), nullable=False, unique=True)
     unit                = Column(String(10), default="кг")   # кг, л, шт, г, уп
-    category            = Column(String(50))                  # мясо, молочные, крупы, овощи, прочее — для склада/AI-подсказок
+    category            = Column(String(50))                  # строка старого входа; новый вход читает category_id
+    category_id         = Column(Integer, ForeignKey("product_categories.id"))
     expense_category_id = Column(Integer, ForeignKey("expense_categories.id"))  # статья расходов — для авторазбивки по категориям
     is_standard         = Column(Boolean, default=False, nullable=False)
+    # Карточка слита в другую (переход 15.09): история перенесена на цель, эта
+    # карточка — указатель, чтобы старое имя вело на цель. retired_at — «не
+    # товар» (такси, ключ-дубликат): строки чеков остаются, в каталоге нет.
+    merged_into_id      = Column(Integer, ForeignKey("products.id"))
+    retired_at          = Column(DateTime)
     # Сколько грамм в 1 unit — нужно для авто-списания по рецептуре (тех.карта даёт
     # граммы на порцию, склад считает в unit товара). Для кг/л это всегда 1000
     # (кг и л не хранятся тут — считаются в коде), колонка нужна только для штучных
@@ -288,6 +311,12 @@ class Product(Base):
     created_at          = Column(DateTime, server_default=func.now())
 
     aliases = relationship("ProductAlias", back_populates="product")
+    product_category = relationship("ProductCategory")
+    merged_into = relationship("Product", remote_side=[id], foreign_keys=[merged_into_id])
+
+    @property
+    def is_active(self) -> bool:
+        return self.merged_into_id is None and self.retired_at is None
 
 
 class ProductAlias(Base):
