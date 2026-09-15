@@ -11,6 +11,7 @@
 - [deploy_ops.md](architecture/deploy_ops.md) — Railway CLI, пайплайн деплоя, разбор инцидента «медленный прод» → auth-баг
 - [menu_module.md](architecture/menu_module.md) — Меню/приёмы пищи, dish_id на списании (10.07)
 - [unit_economics_module.md](architecture/unit_economics_module.md) — Сотрудники/ФОТ, Амортизация (живой расчёт, не Transaction), роль founder (10.07)
+- [revision_2026_09.md](architecture/revision_2026_09.md) — ревизия и пересборка (14.09): одна касса Сокулука, принципы, судьба модулей
 
 ### payments/
 - [strategy.md](payments/strategy.md) — стратегия оплат: ручной ввод → автоматика, два банка
