@@ -97,10 +97,11 @@ def rank_candidates(db: Session, raw: str, limit: int = 5, standard_only: bool =
     return deduped[:limit]
 
 
-def get_or_create_product(db: Session, name: str) -> Product:
-    """Возвращает существующий продукт или создаёт временный (is_standard=False).
-    Перед созданием проверяет alias и fuzzy-совпадение со стандартными.
-    """
+def find_product(db: Session, name: str) -> Product | None:
+    """Ищет карточку по имени: точное имя → alias → fuzzy ≥85 среди эталонных.
+    Ничего не создаёт — форма закупа должна знать, есть ли карточка, потому что
+    у существующей единица берётся из карточки, а для новой её выбирает человек
+    (защита единиц, 15.09)."""
     name = name.strip()
     product = db.query(Product).filter(func.lower(Product.name) == name.lower()).first()
     if product:
@@ -113,7 +114,18 @@ def get_or_create_product(db: Session, name: str) -> Product:
         matched = db.get(Product, candidates[0]["id"])
         if matched:
             return matched
-    product = Product(name=name, is_standard=False)
+    return None
+
+
+def get_or_create_product(db: Session, name: str, unit: str | None = None) -> Product:
+    """Возвращает существующий продукт или создаёт временный (is_standard=False).
+    Перед созданием проверяет alias и fuzzy-совпадение со стандартными.
+    """
+    name = name.strip()
+    product = find_product(db, name)
+    if product:
+        return product
+    product = Product(name=name, is_standard=False, unit=unit or "кг")
     db.add(product)
     db.flush()
     return product

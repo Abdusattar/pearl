@@ -17,9 +17,10 @@ from app.models import (
 )
 from app.services.ocr import compute_hash, analyze_receipt
 from app.services.products import (
-    match_product, rank_candidates, get_or_create_product, ensure_alias,
+    match_product, rank_candidates, get_or_create_product, find_product, ensure_alias,
     UNITS, CATEGORIES, UNITS_NEED_GRAMS_PER_UNIT, DUPLICATE_SCORE_THRESHOLD,
 )
+from app.services.price_check import price_anomaly_hint
 from app.services.normalize import normalize_items
 from app.services import recurring_expenses
 from app.services import supplier_ledger
@@ -153,44 +154,112 @@ def create_split_transactions(
     return tx_by_cat
 
 
+PRICE_QUESTION_MESSAGE = "Проверь цену в отмеченных строках: поправь или отметь «да, так» и запиши снова"
+
+
+def _num_at(vals, i):
+    try:
+        v = vals[i].strip() if i < len(vals) else ""
+        return float(v.replace(",", ".")) if v else None
+    except (ValueError, AttributeError):
+        return None
+
+
+def _str_at(vals, i):
+    return vals[i].strip() if i < len(vals) and vals[i] else ""
+
+
+def _plain(v):
+    """1260.0 → 1260 для поля type=number (иначе браузер показывает «1260,0»)."""
+    return int(v) if isinstance(v, float) and v == int(v) else v
+
+
+def resolve_item_product(db: Session, name: str, pid_str: str, unit_val: str) -> tuple[Product | None, str | None]:
+    """Карточка для позиции формы + защита единиц (15.09).
+
+    У существующей карточки единица не вводится: она из карточки. Если форма
+    всё же прислала другую (имя набрано руками и сервер сам нашёл карточку) —
+    это не «поменять единицу», а «человек считает не в том»: возвращаем ошибку,
+    ничего не пишем. Единица вводится только для новой карточки.
+    Возвращает (product, error_message)."""
+    product = db.get(Product, int(pid_str)) if pid_str.isdigit() else None
+    if not product:
+        product = find_product(db, name)
+    if product:
+        if unit_val and product.unit and unit_val != product.unit:
+            return None, (f"«{product.name}» считается в {product.unit}, а в строке выбрано {unit_val}. "
+                          f"Введи количество в {product.unit}; единицу карточки меняет только собственник.")
+        return product, None
+    if not unit_val:
+        return None, f"«{name}» — новый товар, выбери для него единицу"
+    return get_or_create_product(db, name, unit=unit_val), None
+
+
+def submitted_rows(db: Session, item_name, item_unit, item_qty, item_unit_price, item_product_id,
+                   item_price_ok, hints: dict | None = None) -> list[dict]:
+    """Строки формы как их прислал человек — чтобы при ошибке или вопросе о
+    цене форма вернулась с теми же данными, а не с пустой таблицей.
+    Количество и цена — строками, как набраны (не «3.0» вместо «3»)."""
+    hints = hints or {}
+    rows = []
+    for i, raw_name in enumerate(item_name):
+        qty_val = _num_at(item_qty, i)
+        price_val = _num_at(item_unit_price, i)
+        pid = _str_at(item_product_id, i)
+        product = db.get(Product, int(pid)) if pid.isdigit() else None
+        total = round(qty_val * price_val, 2) if qty_val is not None and price_val is not None else None
+        rows.append({
+            "name": raw_name.strip(),
+            # у карточки единица своя, что бы ни прислала форма
+            "unit": (product.unit or "") if product else _str_at(item_unit, i),
+            "qty": _str_at(item_qty, i),
+            "unit_price": _str_at(item_unit_price, i),
+            "total_price": f"{total:.2f}".rstrip("0").rstrip(".") if total is not None else None,
+            "product_id": product.id if product else None,
+            "price_ok": _str_at(item_price_ok, i) == "1",
+            "price_hint": hints.get(i),
+        })
+    return rows
+
+
 def resolve_manual_items(
     db: Session, item_name: list[str], item_qty: list[str], item_unit_price: list[str],
     item_unit: list[str], item_product_id: list[str],
-) -> tuple[list[dict], str | None]:
+    item_price_ok: list[str] | None = None, tx_date: date | None = None,
+    exclude_tx_ids: list[int] | None = None,
+) -> tuple[list[dict], str | None, dict]:
     """Резолвит позиции закупа (add / edit-manual) в формат для create_split_transactions.
-    Позиции в целом необязательны, но если названа позиция — количество, цена и единица
-    измерения обязательны все три вместе (иначе её доля денег была бы либо потеряна, либо
-    размазана по чужим категориям — см. wiki про 07.07). Возвращает (items, error_message)."""
-    def _safe(vals, i):
-        try:
-            v = vals[i].strip() if i < len(vals) else ""
-            return float(v.replace(",", ".")) if v else None
-        except (ValueError, AttributeError):
-            return None
-
+    Позиции в целом необязательны, но если названа позиция — количество и цена
+    обязательны (иначе её доля денег была бы либо потеряна, либо размазана по
+    чужим категориям — см. wiki про 07.07); единица — только для нового товара,
+    у существующего она из карточки. Цена сверяется с обычной: аномальная
+    строка без «да, так» попадает в price_hints по индексу строки.
+    Возвращает (items, error_message, price_hints)."""
+    item_price_ok = item_price_ok or []
     resolved_items = []
+    price_hints: dict[int, str] = {}
     for i, raw_name in enumerate(item_name):
         name = raw_name.strip()
         if not name:
             continue
-        qty_val = _safe(item_qty, i)
-        price_val = _safe(item_unit_price, i)
-        unit_val = item_unit[i].strip() if i < len(item_unit) else ""
-        if qty_val is None or price_val is None or not unit_val:
-            return [], "Заполни количество, цену и единицу измерения для каждой введённой позиции"
+        qty_val = _num_at(item_qty, i)
+        price_val = _num_at(item_unit_price, i)
+        if qty_val is None or price_val is None:
+            return [], "Заполни количество и цену для каждой введённой позиции", {}
 
-        pid_str = item_product_id[i].strip() if i < len(item_product_id) else ""
-        product = db.get(Product, int(pid_str)) if pid_str.isdigit() else None
-        if not product:
-            product = get_or_create_product(db, name)
-        if not product.is_standard and product.unit != unit_val:
-            product.unit = unit_val
+        product, err = resolve_item_product(db, name, _str_at(item_product_id, i), _str_at(item_unit, i))
+        if err:
+            return [], err, {}
+        if _str_at(item_price_ok, i) != "1":
+            hint = price_anomaly_hint(db, product, price_val, tx_date, exclude_tx_ids)
+            if hint:
+                price_hints[i] = hint
 
         resolved_items.append({
             "name": name, "product": product, "qty": qty_val,
             "unit_price": price_val, "total": round(qty_val * price_val, 2),
         })
-    return resolved_items, None
+    return resolved_items, None, price_hints
 
 
 def create_warehouse_receipts(
@@ -229,6 +298,12 @@ def search_products(q: str = "", standard_only: bool = True, db: Session = Depen
     if not q.strip():
         return JSONResponse([])
     candidates = rank_candidates(db, q.strip(), limit=6, standard_only=standard_only)
+    # Единица карточки нужна форме закупа: выбранный товар запирает единицу
+    # в строке, человек её не вводит (защита единиц, 15.09).
+    ids = [c["id"] for c in candidates]
+    units = {p.id: p.unit for p in db.query(Product).filter(Product.id.in_(ids)).all()} if ids else {}
+    for c in candidates:
+        c["unit"] = units.get(c["id"]) or ""
     return JSONResponse(candidates)
 
 
@@ -906,6 +981,8 @@ def confirm_form(
         "unmatched_count": unmatched_count,
         "suppliers": all_suppliers,
         "today": date.today().isoformat(),
+        "units": UNITS,
+        "form_prefill": None,
         "confirmed_tx": confirmed_tx,
         "error": "Выбери поставщика — без него нельзя провести квитанцию" if err == "supplier" else "Укажи количество и цену для всех позиций" if err == "qty" else "Укажи единицу измерения для всех позиций" if err == "unit" else None,
         "success": None,
@@ -931,6 +1008,7 @@ def handle_confirm(
     item_unit: List[str] = Form(default=[]),
     item_qty: List[str] = Form(default=[]),
     item_unit_price: List[str] = Form(default=[]),
+    item_price_ok: List[str] = Form(default=[]),
     add_to_warehouse: str = Form(default=""),
     supplier_id: str = Form(default=""),
     new_supplier_name: str = Form(default=""),
@@ -959,35 +1037,70 @@ def handle_confirm(
     tx_date = date.fromisoformat(date_) if date_ else date.today()
     org_map = {o.id: o.name for o in db.query(Organization).all()}
 
-    if not amount:
-        accessible = get_accessible_orgs(user, db)
-        items = db.query(ReceiptItem).filter(ReceiptItem.receipt_id == receipt_id).all()
-        return templates.TemplateResponse("expenses/confirm.html", {
-            "request": request, "current_user": user,
-            "accessible_orgs": accessible,
-            "current_org_id": org_id,
-            "receipt": {"id": receipt.id, "file_path": receipt.file_path,
-                        "ocr_raw": receipt.ocr_raw, "amount_detected": receipt.amount_detected,
-                        "amount_confirmed": receipt.amount_confirmed, "ocr_status": receipt.ocr_status,
-                        "org_name": org_map.get(receipt.organization_id, "—")},
-            "items": items,
-            "today": date.today().isoformat(),
-            "error": "Укажи сумму",
-            "success": None,
-        })
-
     def _parse_amount(s):
         try:
             return float(str(s).replace(",", ".")) if s else None
         except ValueError:
             return None
 
-    def _safe_num(vals, i):
-        try:
-            v = vals[i].strip() if i < len(vals) else ""
-            return float(v.replace(",", ".")) if v else None
-        except (ValueError, AttributeError):
-            return None
+    def _error_response(message: str | None, price_hints: dict | None = None):
+        # Форма возвращается с введёнными строками (а не с повторным разбором
+        # OCR, как делал редирект с ?err=) — и при ошибке, и при вопросе о цене.
+        rows = submitted_rows(db, item_name, item_unit, item_qty, item_unit_price,
+                              item_product_id, item_price_ok, price_hints)
+        items = []
+        for i, r in enumerate(rows):
+            items.append({
+                "id": None,
+                "raw_name": _str_at(item_raw_name, i),
+                "display_name": r["name"],
+                "display_product_id": r["product_id"],
+                "product_matched": bool(r["product_id"]),
+                "fuzzy_matched": False, "provisional_matched": False,
+                "is_standard_match": bool(r["product_id"]),
+                "needs_check": not r["product_id"],
+                "check_hint": "" if r["product_id"] else "проверь — не из каталога",
+                "unit": r["unit"], "candidates": [],
+                "qty": r["qty"], "unit_price": r["unit_price"],
+                "total_price": r["total_price"],
+                "price_hint": r["price_hint"], "price_ok": r["price_ok"],
+            })
+        sid_for_view = int(supplier_id) if supplier_id.isdigit() else None
+        creator = db.get(User, receipt.created_by) if receipt.created_by else None
+        return templates.TemplateResponse("expenses/confirm.html", {
+            "request": request, "current_user": user,
+            "accessible_orgs": get_accessible_orgs(user, db),
+            "current_org_id": org_id,
+            "upload_orgs": get_upload_orgs(user, db),
+            "receipt": {
+                "id": receipt.id, "file_path": receipt.file_path,
+                "ocr_raw": receipt.ocr_raw, "amount_detected": receipt.amount_detected,
+                "amount_confirmed": receipt.amount_confirmed,
+                "ocr_status": receipt.ocr_status,
+                "org_id": receipt_org_id or receipt.organization_id,
+                "org_name": org_map.get(receipt.organization_id, "—"),
+                "created_by_name": creator.name if creator else "—",
+            },
+            "items": items,
+            "unmatched_count": 0,
+            "suppliers": db.query(Supplier).order_by(Supplier.name).all(),
+            "today": date.today().isoformat(),
+            "units": UNITS,
+            "confirmed_tx": None,
+            "form_prefill": {
+                "supplier_id": sid_for_view,
+                "description": description or "",
+                "amount_paid": None if paid_full else (_parse_amount(amount_paid) or 0.0),
+                "due_date": due_date or "",
+                "date_iso": date_ or date.today().isoformat(),
+                "paid_directly": paid_directly_val,
+            },
+            "error": message,
+            "success": None,
+        })
+
+    if not amount:
+        return _error_response("Укажи сумму")
 
     # Чекбокс "Оплачено полностью" — источник истины. Пустое поле "Оплачено" при
     # снятой галочке значит "оплачено 0" (долг = вся сумма), а не "не указано".
@@ -1001,56 +1114,54 @@ def handle_confirm(
 
     sid = resolve_supplier(db, supplier_id, new_supplier_name, new_supplier_phone)
     if not sid:
-        return RedirectResponse(
-            f"/expenses/{receipt_id}/confirm?org_id={org_id or ''}&err=supplier",
-            status_code=303,
-        )
+        return _error_response("Выбери поставщика — без него нельзя провести квитанцию")
+
+    # Свои же старые приходы (повторное «Провести» после правки) в «обычную
+    # цену» не считаем — правят как раз их.
+    own_tx_ids = [
+        rt.transaction_id for rt in
+        db.query(ReceiptTransaction).filter(ReceiptTransaction.receipt_id == receipt_id).all()
+    ]
 
     # Валидация + разрешение товара для каждой позиции — нужно ДО разбивки по категориям,
     # т.к. категория расхода теперь берётся из товара, а не выбирается человеком.
     resolved_items = []  # [{name, raw, product, qty, unit_price, total}, ...]
+    price_hints: dict[int, str] = {}
     for i, name in enumerate(item_name):
         name = name.strip()
         if not name:
             continue
-        qty_val = _safe_num(item_qty, i)
-        price_val = _safe_num(item_unit_price, i)
+        qty_val = _num_at(item_qty, i)
+        price_val = _num_at(item_unit_price, i)
         # Сумма никогда не берётся из отправленного поля напрямую (его туда мог
         # вписать только JS-расчёт на глазах у человека) — сервер всегда сам
         # пересчитывает total = кол-во × цена. Нет кол-ва/цены — нет позиции,
         # заполнять руками обязательно, автоподстановки "1 шт." нет.
         if qty_val is None or price_val is None:
-            return RedirectResponse(
-                f"/expenses/{receipt_id}/confirm?org_id={org_id or ''}&err=qty",
-                status_code=303,
-            )
+            return _error_response("Укажи количество и цену для всех позиций")
         total = round(qty_val * price_val, 2)
-        unit_val = item_unit[i].strip() if i < len(item_unit) else ""
-        if not unit_val:
-            return RedirectResponse(
-                f"/expenses/{receipt_id}/confirm?org_id={org_id or ''}&err=unit",
-                status_code=303,
-            )
 
-        raw = item_raw_name[i].strip() if i < len(item_raw_name) else ""
-        pid_str = item_product_id[i].strip() if i < len(item_product_id) else ""
-        if pid_str and pid_str.isdigit():
-            product = db.get(Product, int(pid_str))
-            if not product:
-                product = get_or_create_product(db, name)
-        else:
-            product = get_or_create_product(db, name)
+        # Единица: из карточки, если товар есть; вводится только для нового
+        # (защита единиц, 15.09). Несовпадение с карточкой — ошибка, не правка.
+        product, err = resolve_item_product(db, name, _str_at(item_product_id, i), _str_at(item_unit, i))
+        if err:
+            return _error_response(err)
+        raw = _str_at(item_raw_name, i)
         if raw:
             ensure_alias(db, raw, product.id)
-
-        # Обновить unit для временных продуктов (у эталонов unit уже верный)
-        if unit_val and not product.is_standard and product.unit != unit_val:
-            product.unit = unit_val
+        if _str_at(item_price_ok, i) != "1":
+            hint = price_anomaly_hint(db, product, price_val, tx_date, own_tx_ids)
+            if hint:
+                price_hints[i] = hint
 
         resolved_items.append({
             "name": name, "raw": raw, "product": product,
             "qty": qty_val, "unit_price": price_val, "total": total,
         })
+
+    if price_hints:
+        # Без commit: новые карточки и алиасы не остаются, пока человек не ответил.
+        return _error_response(PRICE_QUESTION_MESSAGE, price_hints)
 
     # Если квитанция уже была подтверждена раньше (правка через "Изменить") — старые
     # Transaction/склад этого чека мягко удаляются перед пересозданием, иначе повторное
@@ -1144,6 +1255,7 @@ def add_form(request: Request, org_id: int | None = None, category_id: int | Non
         "upload_orgs": get_upload_orgs(user, db),
         "suppliers": all_suppliers,
         "today": date.today().isoformat(),
+        "units": UNITS,
         "preselect_category_id": category_id,
         "is_service_mode": is_service_mode,
         "error": None,
@@ -1166,6 +1278,7 @@ def handle_add(
     item_unit_price: List[str] = Form(default=[]),
     item_unit: List[str] = Form(default=[]),
     item_product_id: List[str] = Form(default=[]),
+    item_price_ok: List[str] = Form(default=[]),
     supplier_id: str = Form(default=""),
     new_supplier_name: str = Form(default=""),
     new_supplier_phone: str = Form(default=""),
@@ -1182,7 +1295,16 @@ def handle_add(
     service_category_id = get_service_category_id(db)
     is_service_mode = bool(category_id) and category_id == service_category_id
 
-    def _error_response(message: str):
+    def _parse_amount(s):
+        try:
+            return float(str(s).replace(",", ".")) if s else None
+        except ValueError:
+            return None
+
+    def _error_response(message: str | None, price_hints: dict | None = None):
+        # Форма возвращается с тем, что человек ввёл, — и при ошибке, и при
+        # вопросе о цене; раньше при ошибке таблица позиций приходила пустой.
+        sid_for_view = int(supplier_id) if supplier_id.isdigit() else None
         return templates.TemplateResponse("expenses/add.html", {
             "request": request, "current_user": user,
             "accessible_orgs": accessible,
@@ -1192,7 +1314,17 @@ def handle_add(
             "preselect_category_id": category_id,
             "is_service_mode": is_service_mode,
             "today": date.today().isoformat(),
+            "units": UNITS,
             "error": message,
+            "edit_supplier_id": sid_for_view,
+            "edit_description": description or "",
+            "edit_amount": _plain(amount),
+            "edit_amount_paid": None if paid_full else _plain(_parse_amount(amount_paid) or 0.0),
+            "edit_due_date": due_date or "",
+            "edit_date": date_ or date.today().isoformat(),
+            "edit_items": submitted_rows(db, item_name, item_unit, item_qty, item_unit_price,
+                                         item_product_id, item_price_ok, price_hints),
+            "edit_paid_directly": paid_directly_val,
         })
 
     if not current_org:
@@ -1209,12 +1341,6 @@ def handle_add(
 
     if is_service_mode and not (description or "").strip():
         return _error_response("Укажи в комментарии, за что заплатили — без поставщика это единственная зацепка")
-
-    def _parse_amount(s):
-        try:
-            return float(str(s).replace(",", ".")) if s else None
-        except ValueError:
-            return None
 
     if paid_full:
         amount_paid_val = None
@@ -1241,11 +1367,15 @@ def handle_add(
 
     # Закуп — категория больше не выбирается вручную, определяется по товару
     # каждой позиции (та же логика, что в confirm.html после фото чека).
-    resolved_items, item_error = resolve_manual_items(
+    resolved_items, item_error, price_hints = resolve_manual_items(
         db, item_name, item_qty, item_unit_price, item_unit, item_product_id,
+        item_price_ok, tx_date,
     )
     if item_error:
         return _error_response(item_error)
+    if price_hints:
+        # Без commit: новые карточки не остаются, пока человек не ответил.
+        return _error_response(PRICE_QUESTION_MESSAGE, price_hints)
 
     receipt_id = None
     if resolved_items:
@@ -1564,6 +1694,7 @@ def edit_manual_form(receipt_id: int, request: Request, org_id: int | None = Non
         "upload_orgs": upload_orgs,
         "suppliers": db.query(Supplier).order_by(Supplier.name).all(),
         "today": date.today().isoformat(),
+        "units": UNITS,
         "preselect_category_id": None,
         "is_service_mode": False,
         "error": None,
@@ -1598,6 +1729,7 @@ def handle_edit_manual(
     item_unit_price: List[str] = Form(default=[]),
     item_unit: List[str] = Form(default=[]),
     item_product_id: List[str] = Form(default=[]),
+    item_price_ok: List[str] = Form(default=[]),
     supplier_id: str = Form(default=""),
     new_supplier_name: str = Form(default=""),
     new_supplier_phone: str = Form(default=""),
@@ -1612,17 +1744,9 @@ def handle_edit_manual(
     if not receipt or receipt.file_path != "manual":
         return HTMLResponse("Запись не найдена", status_code=404)
 
-    def _error_response(message: str):
-        raw_items = db.query(ReceiptItem).filter(ReceiptItem.receipt_id == receipt_id).all()
-        items = []
-        for it in raw_items:
-            product = db.get(Product, it.product_id) if it.product_id else None
-            items.append({
-                "name": product.name if product else it.name,
-                "unit": product.unit if product else "",
-                "qty": it.qty, "unit_price": it.unit_price, "total_price": it.total_price,
-                "product_id": it.product_id,
-            })
+    def _error_response(message: str | None, price_hints: dict | None = None):
+        items = submitted_rows(db, item_name, item_unit, item_qty, item_unit_price,
+                               item_product_id, item_price_ok, price_hints)
         sid_for_view = int(supplier_id) if supplier_id.isdigit() else None
         supplier = db.get(Supplier, sid_for_view) if sid_for_view else None
         upload_orgs = get_upload_orgs(user, db)
@@ -1634,6 +1758,7 @@ def handle_edit_manual(
             "upload_orgs": upload_orgs,
             "suppliers": db.query(Supplier).order_by(Supplier.name).all(),
             "today": date.today().isoformat(),
+            "units": UNITS,
             "preselect_category_id": None,
             "is_service_mode": False,
             "error": message,
@@ -1642,7 +1767,7 @@ def handle_edit_manual(
             "edit_supplier_id": sid_for_view,
             "edit_supplier_name": supplier.name if supplier else "—",
             "edit_description": description or "",
-            "edit_amount": amount,
+            "edit_amount": _plain(amount),
             "edit_amount_paid": None,
             "edit_debt": None,
             "edit_due_date": due_date or "",
@@ -1670,11 +1795,19 @@ def handle_edit_manual(
             amount_paid_val = None
     due_date_val = date.fromisoformat(due_date) if due_date else None
 
-    resolved_items, item_error = resolve_manual_items(
+    # Свои же старые приходы в «обычную цену» не считаем — правят как раз их.
+    own_tx_ids = [
+        rt.transaction_id for rt in
+        db.query(ReceiptTransaction).filter(ReceiptTransaction.receipt_id == receipt_id).all()
+    ]
+    resolved_items, item_error, price_hints = resolve_manual_items(
         db, item_name, item_qty, item_unit_price, item_unit, item_product_id,
+        item_price_ok, tx_date, exclude_tx_ids=own_tx_ids,
     )
     if item_error:
         return _error_response(item_error)
+    if price_hints:
+        return _error_response(PRICE_QUESTION_MESSAGE, price_hints)  # без commit
 
     # Старые Transaction этого чека — мягко удалить (не потерять историю), затем
     # снять старые связки/позиции и создать всё заново той же логикой, что и ввод.

@@ -105,8 +105,8 @@
                 <td style="padding:6px 4px">{{ item.display_name }}</td>
                 <td style="padding:6px 4px">{{ item.unit or '—' }}</td>
                 <td style="padding:6px 4px;text-align:right">{{ item.qty or '—' }}</td>
-                <td style="padding:6px 4px;text-align:right">{{ "{:,.0f}".format(item.unit_price) if item.unit_price else '—' }}</td>
-                <td style="padding:6px 4px;text-align:right"><strong>{{ "{:,.0f}".format(item.total_price) if item.total_price else '—' }}</strong></td>
+                <td style="padding:6px 4px;text-align:right">{{ "{:,.0f}".format(item.unit_price) if item.unit_price is number and item.unit_price else '—' }}</td>
+                <td style="padding:6px 4px;text-align:right"><strong>{{ "{:,.0f}".format(item.total_price) if item.total_price is number and item.total_price else '—' }}</strong></td>
               </tr>
               {% endfor %}
             </tbody>
@@ -187,17 +187,24 @@
                 {% else %}
                 <div class="product-hint" style="font-size:10px;color:#b45309;margin-top:2px">{{ item.check_hint or "проверь — новая позиция" }}</div>
                 {% endif %}
+                {% if item.price_hint %}
+                <div class="price-hint" style="font-size:11px;color:#b45309;margin-top:3px;white-space:normal">{{ item.price_hint }}
+                  <label style="display:inline-flex;align-items:center;gap:4px;margin-left:4px;cursor:pointer;font-weight:600"><input type="checkbox" {% if item.price_ok %}checked{% endif %} onchange="setPriceOk(this)" style="width:16px;height:16px"> да, так</label>
+                </div>
+                {% endif %}
               </td>
               <td style="padding:4px">
-                <select name="item_unit" class="form-control" style="font-size:12px;padding:3px 4px" required>
+                <select name="item_unit" class="form-control item-unit" style="font-size:12px;padding:3px 4px"{% if item.display_product_id %} hidden{% endif %}>
                   <option value="">—</option>
-                  {% for u in ['кг','л','шт','уп','г','бут'] %}
+                  {% for u in units %}
                   <option value="{{ u }}" {% if item.unit == u %}selected{% endif %}>{{ u }}</option>
                   {% endfor %}
+                  {% if item.unit and item.unit not in units %}<option value="{{ item.unit }}" selected>{{ item.unit }}</option>{% endif %}
                 </select>
+                <span class="item-unit-lock" title="Единица из карточки товара" style="font-size:12px;padding:4px 2px;display:{% if item.display_product_id %}inline-block{% else %}none{% endif %}">{{ item.unit }}</span>
               </td>
               <td style="padding:4px"><input type="text" name="item_qty" value="{{ item.qty or '' }}" class="form-control item-qty" style="font-size:12px;padding:4px 6px;text-align:right" oninput="recalcRow(this)"></td>
-              <td style="padding:4px"><input type="text" name="item_unit_price" value="{{ item.unit_price or '' }}" class="form-control item-price" style="font-size:12px;padding:4px 6px;text-align:right" oninput="recalcRow(this)"></td>
+              <td style="padding:4px"><input type="text" name="item_unit_price" value="{{ item.unit_price or '' }}" class="form-control item-price" style="font-size:12px;padding:4px 6px;text-align:right{% if item.price_hint %};border-color:#f59e0b{% endif %}" oninput="recalcRow(this)"><input type="hidden" name="item_price_ok" value="{{ '1' if item.price_ok else '' }}"></td>
               <td style="padding:4px"><input type="text" name="item_total_price" value="{{ item.total_price or '' }}" class="form-control item-total" readonly style="font-size:12px;padding:4px 6px;text-align:right;background:var(--bg-secondary,#f3f4f6);color:var(--text-muted)" title="Считается автоматически из количества и цены"></td>
               <td style="padding:4px;text-align:center"><button type="button" onclick="this.closest('tr').remove();updateGrandTotal();updateCheckCounter()" style="background:none;border:none;color:var(--text-muted);cursor:pointer;font-size:16px">×</button></td>
             </tr>
@@ -235,7 +242,8 @@
           <div id="ocr-mismatch-hint" style="display:none;font-size:12px;color:#b45309;background:#fef3c7;border:1px solid #fcd34d;border-radius:6px;padding:6px 10px;margin-top:6px;text-align:center"></div>
         </div>
 
-        {% set has_debt = is_confirmed and confirmed_tx and confirmed_tx.amount_paid is not none %}
+        {% set pf = form_prefill or (confirmed_tx if is_confirmed else none) %}
+        {% set has_debt = pf and pf.amount_paid is not none %}
         <div class="form-group">
           <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
             <input type="checkbox" name="paid_full" value="1" id="paid-full-checkbox" {% if not has_debt %}checked{% endif %} onchange="togglePaidFull()" style="width:16px;height:16px">
@@ -244,7 +252,7 @@
           <div id="paid-partial-block" style="{% if not has_debt %}display:none;{% endif %}margin-top:8px">
             <label>Оплачено сейчас (сом)</label>
             <input type="number" name="amount_paid" id="amount-paid" class="form-control" step="0.01"
-                   inputmode="decimal" value="{{ confirmed_tx.amount_paid if has_debt else '' }}" oninput="updateDebtHint()">
+                   inputmode="decimal" value="{{ pf.amount_paid if has_debt else '' }}" oninput="updateDebtHint()">
             <div style="font-size:11px;color:var(--text-muted);margin-top:4px">
               Уменьши сумму до того, что реально отдали продавцу — остаток система посчитает как долг.
             </div>
@@ -252,7 +260,7 @@
               <div style="font-size:13px;font-weight:600;color:#b45309">Долг поставщику: <span id="debt-amount">0</span> сом</div>
               <div style="margin-top:6px">
                 <label style="font-size:11px;color:var(--text-muted)">Когда планируете погасить (необязательно)</label>
-                <input type="date" name="due_date" class="form-control" style="font-size:12px;padding:4px 6px" value="{{ confirmed_tx.due_date if is_confirmed and confirmed_tx else '' }}">
+                <input type="date" name="due_date" class="form-control" style="font-size:12px;padding:4px 6px" value="{{ pf.due_date if pf else '' }}">
               </div>
             </div>
           </div>
@@ -260,7 +268,7 @@
 
         <div class="form-group">
           <label>Дата</label>
-          <input type="date" name="date" class="form-control" value="{{ confirmed_tx.date_iso if is_confirmed and confirmed_tx else today }}" required>
+          <input type="date" name="date" class="form-control" value="{{ pf.date_iso if pf else today }}" required>
         </div>
 
         <div id="warehouse-block" style="display:none;margin-bottom:18px">
@@ -283,7 +291,7 @@
           <select name="supplier_id" id="supplier-select" class="form-control" required>
             <option value="">Выбери поставщика...</option>
             {% for s in suppliers %}
-            <option value="{{ s.id }}" {% if is_confirmed and confirmed_tx and s.id == confirmed_tx.supplier_id %}selected{% endif %}>{{ s.name }}{% if s.phone %} ({{ s.phone }}){% endif %}</option>
+            <option value="{{ s.id }}" {% if pf and s.id == pf.supplier_id %}selected{% endif %}>{{ s.name }}{% if s.phone %} ({{ s.phone }}){% endif %}</option>
             {% endfor %}
           </select>
           <div style="font-size:11px;color:var(--text-muted);margin-top:4px">
@@ -294,12 +302,12 @@
 
         <div class="form-group">
           <label>Описание (необязательно)</label>
-          <input type="text" name="description" class="form-control" value="{{ confirmed_tx.description if is_confirmed and confirmed_tx else '' }}" placeholder="Комментарий...">
+          <input type="text" name="description" class="form-control" value="{{ pf.description if pf else '' }}" placeholder="Комментарий...">
         </div>
 
         <div class="form-group" style="border:1.5px dashed var(--primary);border-radius:10px;padding:12px 14px;background:#eef2ff">
           <label style="display:flex;align-items:center;gap:8px;cursor:pointer;margin-bottom:0">
-            <input type="checkbox" name="paid_directly" value="1" {% if is_confirmed and confirmed_tx and confirmed_tx.paid_directly %}checked{% endif %} style="width:16px;height:16px">
+            <input type="checkbox" name="paid_directly" value="1" {% if pf and pf.paid_directly %}checked{% endif %} style="width:16px;height:16px">
             <span>Оплачено напрямую со счёта (без снятия)</span>
           </label>
           <div style="font-size:11px;color:var(--text-muted);margin-top:6px">
@@ -328,6 +336,9 @@
 
 {% block scripts %}
 <script>
+// Единицы для новой карточки (защита единиц, 15.09). Первой строкой:
+// addItemRow зовётся при загрузке, объявление должно быть раньше.
+var UNITS = {{ units | tojson }};
 function toggleBlock(name, editing) {
   const view = document.getElementById(name + '-view');
   const form = document.getElementById(name + '-form');
@@ -344,6 +355,7 @@ function _num(v) {
 
 function recalcRow(input) {
   const row = input.closest('tr');
+  if (input.classList.contains('item-price')) clearPriceHint(row);
   const qtyInput   = row.querySelector('.item-qty');
   const priceInput = row.querySelector('.item-price');
   const totalInput = row.querySelector('.item-total');
@@ -452,14 +464,14 @@ function addItemRow() {
       <div class="autocomplete-dropdown" style="display:none;position:absolute;z-index:100;left:4px;right:4px;top:100%;background:#fff;border:1px solid var(--border);border-radius:6px;box-shadow:0 4px 12px rgba(0,0,0,.1);max-height:180px;overflow-y:auto"></div>
     </td>
     <td style="padding:4px">
-      <select name="item_unit" class="form-control" style="font-size:12px;padding:3px 4px" required>
+      <select name="item_unit" class="form-control item-unit" style="font-size:12px;padding:3px 4px">
         <option value="">—</option>
-        <option value="кг">кг</option><option value="л">л</option><option value="шт">шт</option>
-        <option value="уп">уп</option><option value="г">г</option><option value="бут">бут</option><option value="пуч.">пуч.</option>
+        ${UNITS.map(u => `<option value="${u}">${u}</option>`).join('')}
       </select>
+      <span class="item-unit-lock" title="Единица из карточки товара" style="font-size:12px;padding:4px 2px;display:none"></span>
     </td>
     <td style="padding:4px"><input type="text" name="item_qty" value="" class="form-control item-qty" style="font-size:12px;padding:4px 6px;text-align:right" oninput="recalcRow(this)"></td>
-    <td style="padding:4px"><input type="text" name="item_unit_price" value="" class="form-control item-price" style="font-size:12px;padding:4px 6px;text-align:right" oninput="recalcRow(this)"></td>
+    <td style="padding:4px"><input type="text" name="item_unit_price" value="" class="form-control item-price" style="font-size:12px;padding:4px 6px;text-align:right" oninput="recalcRow(this)"><input type="hidden" name="item_price_ok" value=""></td>
     <td style="padding:4px"><input type="text" name="item_total_price" value="" class="form-control item-total" readonly style="font-size:12px;padding:4px 6px;text-align:right;background:var(--bg-secondary,#f3f4f6);color:var(--text-muted)" title="Считается автоматически из количества и цены"></td>
     <td style="padding:4px;text-align:center"><button type="button" onclick="this.closest('tr').remove();updateGrandTotal();updateCheckCounter()" style="background:none;border:none;color:var(--text-muted);cursor:pointer;font-size:16px">×</button></td>
   `;
@@ -494,6 +506,42 @@ updateGrandTotal();
 updateCheckCounter();
 updateDebtHint();
 
+
+// ── Защита единиц (15.09): у товара из каталога единица берётся из карточки
+// и не вводится — селект прячется, рядом текст. Единицу выбирают только для
+// нового товара. Цена сверяется с обычной на сервере; аномальная строка
+// возвращается с вопросом и галочкой «да, так».
+function lockUnit(row, unit) {
+  const sel = row.querySelector('.item-unit');
+  const span = row.querySelector('.item-unit-lock');
+  if (!sel || !span) return;
+  if (!unit) { unlockUnit(row); return; }
+  if (![...sel.options].some(o => o.value === unit)) sel.add(new Option(unit, unit));
+  sel.value = unit;
+  sel.hidden = true;
+  span.textContent = unit;
+  span.style.display = 'inline-block';
+}
+function unlockUnit(row) {
+  const sel = row.querySelector('.item-unit');
+  const span = row.querySelector('.item-unit-lock');
+  if (!sel || !span) return;
+  if (sel.hidden) { sel.hidden = false; sel.value = ''; }
+  span.style.display = 'none';
+}
+function clearPriceHint(row) {
+  const hint = row.querySelector('.price-hint');
+  if (hint) hint.remove();
+  const ok = row.querySelector('[name=item_price_ok]');
+  if (ok) ok.value = '';
+  const price = row.querySelector('.item-price');
+  if (price) price.style.borderColor = '';
+}
+function setPriceOk(cb) {
+  const ok = cb.closest('tr').querySelector('[name=item_price_ok]');
+  if (ok) ok.value = cb.checked ? '1' : '';
+}
+
 // ── Autocomplete для позиций ────────────────────────────────────────
 function initAutocomplete(input) {
   const dropdown = input.parentElement.querySelector('.autocomplete-dropdown');
@@ -503,16 +551,16 @@ function initAutocomplete(input) {
   function renderDropdown(items) {
     if (!items.length) { dropdown.style.display = 'none'; return; }
     dropdown.innerHTML = items.map(c => `
-      <div class="ac-item" data-id="${c.id}" data-name="${c.name.replace(/"/g,'&quot;')}"
+      <div class="ac-item" data-id="${c.id}" data-name="${c.name.replace(/"/g,'&quot;')}" data-unit="${c.unit || ''}"
            style="padding:7px 10px;cursor:pointer;font-size:13px;display:flex;justify-content:space-between;align-items:center;gap:6px">
         <span>${c.name}</span>
-        <span style="font-size:10px;color:var(--text-muted);flex-shrink:0">${c.score < 100 ? '~' + Math.round(c.score) + '%' : '✓'}</span>
+        <span style="font-size:10px;color:var(--text-muted);flex-shrink:0">${c.unit || ''} ${c.score < 100 ? '~' + Math.round(c.score) + '%' : '✓'}</span>
       </div>`).join('');
     dropdown.style.display = '';
     dropdown.querySelectorAll('.ac-item').forEach(item => {
       item.addEventListener('mousedown', e => {
         e.preventDefault();
-        selectCandidate(item.dataset.id, item.dataset.name);
+        selectCandidate(item.dataset.id, item.dataset.name, item.dataset.unit);
       });
       item.addEventListener('mouseover', () => item.style.background = '#f3f4f6');
       item.addEventListener('mouseout',  () => item.style.background = '');
@@ -527,7 +575,7 @@ function initAutocomplete(input) {
       .catch(() => { dropdown.style.display = 'none'; });
   }
 
-  function selectCandidate(id, name) {
+  function selectCandidate(id, name, unit) {
     input.value = name;
     const hiddenId = input.closest('td').querySelector('[name=item_product_id]');
     if (hiddenId) hiddenId.value = id;
@@ -538,13 +586,26 @@ function initAutocomplete(input) {
     }
     input.style.borderColor = '#16a34a';
     const row = input.closest('tr');
-    if (row) row.dataset.checked = '1';
+    if (row) { row.dataset.checked = '1'; lockUnit(row, unit); }
     updateCheckCounter();
     dropdown.style.display = 'none';
   }
 
   input.addEventListener('focus', () => fetchCandidates(input.value));
   input.addEventListener('input', () => {
+    // Имя набрано руками — прежняя карточка больше не гарантирована: снимаем
+    // product_id и замок единицы, строка снова «проверь». Сервер найдёт карточку
+    // по имени сам, а несовпадение единицы с ней вернёт ошибкой, не запишет.
+    const hiddenId = input.closest('td').querySelector('[name=item_product_id]');
+    if (hiddenId && hiddenId.value) {
+      hiddenId.value = '';
+      const hint = input.closest('td').querySelector('.product-hint');
+      if (hint) { hint.textContent = 'проверь — имя изменено'; hint.style.color = '#b45309'; }
+      input.style.borderColor = '#f59e0b';
+      const row = input.closest('tr');
+      if (row) { row.dataset.checked = '0'; unlockUnit(row); }
+      updateCheckCounter();
+    }
     clearTimeout(debounceTimer);
     debounceTimer = setTimeout(() => fetchCandidates(input.value), 180);
   });
