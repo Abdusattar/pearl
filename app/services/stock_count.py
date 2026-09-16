@@ -144,6 +144,17 @@ def category_sort_key(category: str) -> tuple:
         return (1, 0, category)
 
 
+def last_applied(db: Session, organization_id: int):
+    """Дата последнего применённого пересчёта — для «Сегодня» (16.09)."""
+    row = (
+        db.query(StockCount.count_date)
+        .filter(StockCount.organization_id == organization_id, StockCount.status == "applied")
+        .order_by(StockCount.count_date.desc())
+        .first()
+    )
+    return row[0] if row else None
+
+
 def get_active(db: Session, organization_id: int) -> StockCount | None:
     return (
         db.query(StockCount)

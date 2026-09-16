@@ -43,10 +43,10 @@ def human_date(d: date | None, with_weekday: bool = False) -> str:
     if d is None:
         return ""
     s = f"{d.day} {MONTHS[d.month - 1]}"
+    if with_weekday:
+        return f"{WEEKDAYS[d.weekday()]}, {s}"
     if d == date.today():
-        s = f"сегодня, {s}"
-    elif with_weekday:
-        s = f"{WEEKDAYS[d.weekday()]}, {s}"
+        return f"сегодня, {s}"
     return s
 
 
@@ -100,7 +100,7 @@ def _form_ctx(request: Request, user: User, site: Organization, db: Session, *,
 
 @router.get("/", response_class=HTMLResponse)
 def new_root():
-    return RedirectResponse("/new/buy", status_code=302)
+    return RedirectResponse("/new/today", status_code=302)
 
 
 @router.get("/products/search")

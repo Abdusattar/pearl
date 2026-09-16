@@ -19,11 +19,12 @@ app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
 templates = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
 
-from app.routers import expenses, students, optima, auth, income, warehouse, suppliers, services, reports, assets, attendance, menu, employees, dashboard, podotchet, settings, stock_count, new_buy, new_kitchen
+from app.routers import expenses, students, optima, auth, income, warehouse, suppliers, services, reports, assets, attendance, menu, employees, dashboard, podotchet, settings, stock_count, new_buy, new_kitchen, new_today
 app.include_router(auth.router)
 # Новый вход (16.09): та же база, другая поверхность, по другой ссылке.
 app.include_router(new_buy.router)
 app.include_router(new_kitchen.router)
+app.include_router(new_today.router)
 app.include_router(expenses.router)
 app.include_router(students.router)
 app.include_router(income.router)
