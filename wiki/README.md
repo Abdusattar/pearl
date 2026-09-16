@@ -12,13 +12,14 @@
 - [menu_module.md](architecture/menu_module.md) — Меню/приёмы пищи, dish_id на списании (10.07)
 - [unit_economics_module.md](architecture/unit_economics_module.md) — Сотрудники/ФОТ, Амортизация (живой расчёт, не Transaction), роль founder (10.07)
 - [revision_2026_09.md](architecture/revision_2026_09.md) — ревизия и пересборка (14.09): одна касса Сокулука, принципы, судьба модулей
+- [new_entry.md](architecture/new_entry.md) — новый вход `/new` как построен (16.09): добавки к базе, карманы, Купили, Лист кухни, Дети, бот, уроки
 
 ### payments/
 - [strategy.md](payments/strategy.md) — стратегия оплат: ручной ввод → автоматика, два банка
 - [optima.md](payments/optima.md) — Optima API, callback, PIN-модель, открытые вопросы
 
 ### ocr/
-- [decision.md](ocr/decision.md) — история выбора OCR: EasyOCR → OpenRouter Vision, следующие шаги
+- [decision.md](ocr/decision.md) — история выбора OCR, единый конвейер с контекстом (16.09) и его оценка на 28 чеках прода
 
 ### stakeholders/
 - [roles.md](stakeholders/roles.md) — роли, доступ, масштаб, как принимаются решения
