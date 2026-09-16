@@ -120,6 +120,18 @@ def now_figures(db: Session, site_org_id: int) -> dict:
     }
 
 
+def week_cash_spent(db: Session, site_org_id: int, since: date) -> dict:
+    """Расходы из кассы и снятия со счёта с даты — для сигнала «тратили, а снятий нет»."""
+    from sqlalchemy import func
+    from app.models import CashFunding, Transaction
+    spent = db.query(func.coalesce(func.sum(func.coalesce(Transaction.amount_paid, Transaction.amount)), 0)).filter(
+        Transaction.organization_id == site_org_id, Transaction.type == "expense", Transaction.paid_directly.is_(False),
+        Transaction.deleted_at.is_(None), Transaction.date >= since).scalar()
+    withdrawn = db.query(func.coalesce(func.sum(CashFunding.amount), 0)).filter(
+        CashFunding.organization_id == site_org_id, CashFunding.deleted_at.is_(None), CashFunding.date >= since).scalar()
+    return {"spent": Decimal(spent), "withdrawn": Decimal(withdrawn)}
+
+
 def buy_subtitle(db: Session, site_org_id: int) -> str:
     names = [s.name for s in suggest_suppliers(db, site_org_id, limit=5)]
     return (", ".join(names) + ". " if names else "") + "Фото чека по желанию"

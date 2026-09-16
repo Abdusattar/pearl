@@ -1,5 +1,5 @@
 from sqlalchemy import (
-    Column, Integer, String, Numeric, Date, DateTime, Text, Boolean,
+    BigInteger, Column, Integer, String, Numeric, Date, DateTime, Text, Boolean,
     ForeignKey, CheckConstraint, UniqueConstraint, Index, func, text
 )
 from sqlalchemy.dialects.postgresql import JSONB
@@ -63,7 +63,7 @@ class Organization(Base):
 class User(Base):
     __tablename__ = "users"
     id              = Column(Integer, primary_key=True)
-    tg_id           = Column(Integer, unique=True)
+    tg_id           = Column(BigInteger, unique=True)
     name            = Column(String(100), nullable=False)
     role            = Column(String(20), nullable=False)  # owner|director|manager|staff
     organization_id = Column(Integer, ForeignKey("organizations.id"))
@@ -819,6 +819,23 @@ class Reconciliation(Base):
     cancelled_at    = Column(DateTime)
     cancelled_by    = Column(Integer, ForeignKey("users.id"))
     cancel_reason   = Column(Text)
+
+
+class BotMessage(Base):
+    """Журнал бота (16.09, блок 7): отправленное и полученное. job_key держит
+    расписание от повторов, status — сводку учредителям в ожидании «ок»
+    владельца, payload — контекст вопроса (чей карман, ожидаемая сумма)."""
+    __tablename__ = "bot_messages"
+    id         = Column(Integer, primary_key=True)
+    kind       = Column(String(40), nullable=False)
+    job_key    = Column(String(60), unique=True)
+    chat_id    = Column(BigInteger)
+    user_id    = Column(Integer, ForeignKey("users.id"))
+    direction  = Column(String(3), nullable=False, default="out", server_default="out")
+    text       = Column(Text)
+    status     = Column(String(20), nullable=False, default="sent", server_default="sent")
+    payload    = Column(JSONB)
+    created_at = Column(DateTime, server_default=func.now())
 
 
 class OptimaLog(Base):

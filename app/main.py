@@ -19,9 +19,19 @@ app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
 templates = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
 
-from app.routers import expenses, students, optima, auth, income, warehouse, suppliers, services, reports, assets, attendance, menu, employees, dashboard, podotchet, settings, stock_count, new_buy, new_kitchen, new_today, new_expenses, new_cash, new_children, new_overview
+from app.routers import expenses, students, optima, auth, income, warehouse, suppliers, services, reports, assets, attendance, menu, employees, dashboard, podotchet, settings, stock_count, new_buy, new_kitchen, new_today, new_expenses, new_cash, new_children, new_overview, new_bot
 app.include_router(auth.router)
 app.include_router(new_overview.router)
+app.include_router(new_bot.router)
+
+
+@app.on_event("startup")
+async def _start_bot_scheduler():
+    # Расписание бота (блок 7): раз в минуту смотрит, что пора отправить.
+    # Без токена всё пишется только в журнал. Выключается BOT_SCHEDULER=0.
+    import asyncio
+    if os.getenv("BOT_SCHEDULER", "1") == "1":
+        asyncio.create_task(new_bot.scheduler_loop())
 # Новый вход (16.09): та же база, другая поверхность, по другой ссылке.
 app.include_router(new_buy.router)
 app.include_router(new_kitchen.router)

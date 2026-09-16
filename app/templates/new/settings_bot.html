@@ -1,0 +1,42 @@
+{% extends "new/base.html" %}
+{% block title %}Бот — Жемчужина{% endblock %}
+{% block head %}<style>
+  .tbl td .in { height: 36px; width: 180px; }
+  .msg { font-size: 13px; padding: 6px 0; border-top: 1px solid var(--line); }
+  .msg .k { color: var(--muted); }
+  pre { white-space: pre-wrap; font: inherit; background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 12px; font-size: 14px; }
+</style>{% endblock %}
+{% block content %}
+<h3 class="title">Бот «Жемчужина»</h3>
+{% if sent %}<div class="alert ok">Сделано, смотрите журнал внизу.</div>{% endif %}
+<p class="sub">Токен: {% if has_token %}<b style="color:var(--ok)">есть</b>{% else %}<b style="color:var(--bad)">нет</b> — задайте TELEGRAM_TOKEN в переменных сервера{% endif %}.
+  Группа: {% if group_id %}<b>{{ group_id }}</b>{% else %}<b style="color:var(--bad)">не задана</b> — TELEGRAM_GROUP_CHAT_ID{% endif %}.
+  Вебхук: <code>{{ base_url }}/bot/webhook/{{ secret }}</code></p>
+
+<form method="post" action="/new/settings/bot">
+  <h4>Люди и их Telegram</h4>
+  <p class="sub">Человек пишет боту в личку любое слово, бот отвечает его номером. Номер сюда.</p>
+  <table class="tbl" style="max-width:520px">
+    <thead><tr><th>Кто</th><th>Роль</th><th>Telegram id</th></tr></thead>
+    {% for u in users %}<tr><td>{{ u.name }}</td><td class="q">{{ u.role }}</td><td><input class="in" name="tg_{{ u.id }}" value="{{ u.tg_id or '' }}" inputmode="numeric" placeholder="номер"></td></tr>{% endfor %}
+  </table>
+  <div class="chips" style="margin-top:12px">
+    <button class="btn" name="action" value="save">Сохранить</button>
+    <button class="btn ghost" name="action" value="webhook">Подключить вебхук</button>
+    <button class="btn ghost" name="action" value="test_me">Тест мне в личку</button>
+    <button class="btn ghost" name="action" value="test_group">Тест в группу</button>
+    <button class="btn ghost" name="action" value="send_group_now">Сигналы в группу сейчас</button>
+    <button class="btn ghost" name="action" value="run_now">Прогнать расписание</button>
+  </div>
+</form>
+
+<h4 style="margin-top:22px">Что бот сказал бы сейчас</h4>
+<p class="sub">В группу (понедельник 9:00 и по порогам ежедневно):</p>
+<pre>{{ preview_group or 'Сигналов нет.' }}</pre>
+<p class="sub">Учредителям (понедельник 9:00, сначала вам на «ок»):</p>
+<pre>{{ preview_summary }}</pre>
+<p class="after">Держателям карманов — пятница 17:00, каждому его карман: «верно? ответьте «да» или своей цифрой». Ответ «да» или сумма записывает пересчёт кармана; при заметной разнице бот просит причину. Фото чека или листа кухни в личку попадает в «Ждёт вас».</p>
+
+<h4 style="margin-top:22px">Журнал</h4>
+{% for m in last %}<div class="msg"><span class="k">{{ m.created_at.strftime('%d.%m %H:%M') if m.created_at else '' }} · {{ m.kind }} · {{ m.status }}{% if m.chat_id %} · {{ m.chat_id }}{% endif %}</span><br>{{ (m.text or '')[:300] }}</div>{% else %}<p class="sub">Пока пусто.</p>{% endfor %}
+{% endblock %}
