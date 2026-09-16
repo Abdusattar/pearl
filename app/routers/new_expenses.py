@@ -72,7 +72,7 @@ def pay_form(request: Request, supplier: int | None = None, saved: int | None = 
     sup = db.get(Supplier, supplier) if supplier else None
     ctx = _pay_ctx(request, user, site, db, sup, saved=saved)
     if sup:
-        ctx["amount"] = ("%g" % ctx["balance"]).replace(".", ",") if ctx["balance"] > 0 else ""
+        ctx["amount"] = (f"{ctx['balance']:.2f}".rstrip("0").rstrip(".").replace(".", ",")) if ctx["balance"] > 0 else ""
     return templates.TemplateResponse("new/pay.html", ctx)
 
 
