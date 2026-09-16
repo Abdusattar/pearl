@@ -300,8 +300,12 @@ def get_expected_balance(db: Session, organization_id: int, as_of: date_cls) -> 
         Transaction.id.notin_(cash_income_txn_ids),
     ).scalar()
 
+    # Чей счёт: явный account_org_id (новый вход, 16.09) либо, для старых
+    # записей, объект самого пополнения.
     withdrawals = db.query(func.coalesce(func.sum(CashFunding.amount), 0)).filter(
-        CashFunding.organization_id == organization_id, CashFunding.source_type == "withdrawal",
+        or_(CashFunding.account_org_id == organization_id,
+            and_(CashFunding.account_org_id.is_(None), CashFunding.organization_id == organization_id)),
+        CashFunding.source_type == "withdrawal",
         CashFunding.date > since, CashFunding.date <= as_of, CashFunding.deleted_at.is_(None),
     ).scalar()
 

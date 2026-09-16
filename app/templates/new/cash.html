@@ -1,0 +1,63 @@
+{% extends "new/base.html" %}
+{% block title %}Касса — Жемчужина{% endblock %}
+
+{% block head %}
+<style>
+  .head { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 6px; }
+  .links { display: flex; flex-wrap: wrap; gap: 8px 18px; margin: 0 0 18px; font-size: 14px; }
+  .links a { text-decoration: none; }
+  .cols { display: grid; grid-template-columns: 1fr 300px; gap: 30px; }
+  @media (max-width: 760px) { .cols { grid-template-columns: 1fr; } }
+  .fig { padding: 10px 0; border-top: 1px solid var(--line); }
+  .fig:first-of-type { border-top: 0; }
+  .fig .l { font-size: 13px; color: var(--muted); }
+  .fig .v { font-size: 19px; font-weight: 600; font-variant-numeric: tabular-nums; }
+  .fig .v span { font-size: 13px; color: var(--muted); font-weight: 400; margin-left: 3px; }
+  .fig .v.bad { color: var(--bad); }
+  .fig .w { font-size: 13px; color: var(--muted); }
+  .tag { display: inline-block; font-size: 12px; padding: 2px 8px; border-radius: 999px; background: var(--field); color: var(--muted); margin-left: 6px; vertical-align: middle; }
+  .tag.warn { background: var(--warn-soft); color: var(--warn); }
+  .tag.bad { background: var(--bad-soft); color: var(--bad); }
+  .row { display: grid; grid-template-columns: 1fr auto; gap: 4px 16px; align-items: baseline; padding: 9px 0; border-top: 1px solid var(--line); }
+  .row:first-of-type { border-top: 0; }
+  .row .t { font-size: 15px; } .row .s { font-size: 13px; color: var(--muted); }
+  .n { font-size: 15px; font-weight: 500; font-variant-numeric: tabular-nums; text-align: right; white-space: nowrap; }
+</style>
+{% endblock %}
+
+{% block content %}
+{% if saved %}<div class="alert ok">{% if saved == 'withdraw' %}Снятие записано, деньги в вашем кармане.{% elif saved == 'transfer' %}Передача записана, видна обеим сторонам.{% elif saved == 'recount' %}Пересчёт записан: насчитанное стало новой базой кармана.{% else %}Записано.{% endif %}</div>{% endif %}
+<div class="head"><h3 class="title" style="margin:0">Касса</h3>{% if can_write %}<a class="btn" href="/new/cash/recount">Пересчёт кармана</a>{% endif %}</div>
+<div class="links">
+  {% if can_write %}<a href="/new/cash/withdraw">Снятие со счёта</a><a href="/new/cash/transfer">Передать деньги</a><a href="/new/cash/founder">Учредители</a>{% endif %}
+  <a href="/employees/payroll">Зарплата</a><a href="/podotchet/corrections">Корректировки</a>
+</div>
+<div class="cols">
+  <section>
+    <h4>Наличные, {{ pockets.total | money }}</h4>
+    {% for p in pockets.rows %}
+    <div class="fig"><div class="l">У {{ p.user.name }}</div>
+      <div class="v {% if p.balance < -1 %}bad{% endif %}">{{ p.balance | money }}<span>сом</span></div>
+      <div class="w">{% if p.start.own %}пересчитано {{ p.start.date | human_date }}{% if p.days and p.days > 7 %}<span class="tag warn">не подтверждали {{ p.days }} дн.</span>{% endif %}{% else %}карман ни разу не пересчитывали<span class="tag warn">нужен пересчёт</span>{% endif %}{% if p.balance < -1 %}<span class="tag bad">в минусе</span>{% endif %}</div>
+    </div>
+    {% endfor %}
+    {% if pockets.unassigned|abs >= 1 %}
+    <div class="fig"><div class="l">Не разнесено по карманам</div><div class="v">{{ pockets.unassigned | money }}<span>сом</span></div><div class="w">разница между кассой объекта и суммой карманов; уйдёт после пересчёта карманов</div></div>
+    {% endif %}
+    <h4 style="margin-top:22px">На счетах, {{ accounts | sum(attribute='expected') | money }}</h4>
+    {% for a in accounts %}
+    <div class="fig"><div class="l">Счёт {{ a.org.name }}</div><div class="v {% if a.expected < 0 %}bad{% endif %}">{{ a.expected | money }}<span>сом</span></div>
+      <div class="w">{% if a.since %}сверка {{ a.since | human_date }} + платежи Optima − снятия − переводы со счёта{% else %}счёт ещё не сверяли{% endif %}</div></div>
+    {% endfor %}
+    <p class="after">Расход без указания кармана (старый вход) считается из кармана того, кто его завёл. Поэтому до первого пересчёта карманов цифры показывают историю, а не факт: пересчёт с Мунарой, Махабат и Айжан — точка отсчёта.</p>
+  </section>
+  <aside>
+    <h4>Последнее</h4>
+    {% for r in recent %}
+    <div class="row"><span><span class="t">{{ r.title }}</span><br><span class="s">{{ r.date | human_date(true) }}{% if r.sub %} · {{ r.sub }}{% endif %}</span></span><span class="n">{% if r.amount is not none %}{% if r.amount < 0 %}−{{ (-r.amount) | money }}{% else %}{{ r.amount | money }}{% endif %}{% endif %}</span></div>
+    {% else %}
+    <div class="row"><span class="s">Движений пока нет.</span></div>
+    {% endfor %}
+  </aside>
+</div>
+{% endblock %}

@@ -708,6 +708,10 @@ class CashFunding(Base):
     # с оплатой на странице «Услуги» (иначе доход останется, а деньги из
     # подотчёта исчезнут) — см. защиту в POST /podotchet/fund/{id}/delete.
     source_transaction_id   = Column(Integer, ForeignKey("transactions.id"), nullable=True)
+    # С какого счёта снято (16.09): на площадке Сокулук два счёта и одна касса,
+    # organization_id — чья касса (площадка), account_org_id — чей счёт. NULL —
+    # старая запись, счёт = organization_id.
+    account_org_id          = Column(Integer, ForeignKey("organizations.id"), nullable=True)
     comment                 = Column(Text)
     created_by              = Column(Integer, ForeignKey("users.id"))
     created_at              = Column(DateTime, server_default=func.now())
@@ -716,6 +720,28 @@ class CashFunding(Base):
     organization        = relationship("Organization", foreign_keys=[organization_id])
     source_organization  = relationship("Organization", foreign_keys=[source_organization_id])
     source_founder       = relationship("User", foreign_keys=[source_founder_id])
+    accountable         = relationship("User", foreign_keys=[accountable_user_id])
+    account_org         = relationship("Organization", foreign_keys=[account_org_id])
+
+
+class CashTransfer(Base):
+    """Передача наличных между карманами площадки (новый вход, блок 4, 16.09):
+    Мунара сняла — передала Махабат. Одна запись, два эффекта: минус у одного,
+    плюс у другого; видна второй стороне."""
+    __tablename__ = "cash_transfers"
+    id           = Column(Integer, primary_key=True)
+    site_org_id  = Column(Integer, ForeignKey("organizations.id"), nullable=False)
+    from_user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    to_user_id   = Column(Integer, ForeignKey("users.id"), nullable=False)
+    amount       = Column(Numeric(12, 2), nullable=False)
+    date         = Column(Date, nullable=False)
+    comment      = Column(Text)
+    created_by   = Column(Integer, ForeignKey("users.id"))
+    created_at   = Column(DateTime, server_default=func.now())
+    deleted_at   = Column(DateTime)
+
+    from_user = relationship("User", foreign_keys=[from_user_id])
+    to_user   = relationship("User", foreign_keys=[to_user_id])
 
 
 class CapitalWithdrawal(Base):
@@ -732,6 +758,8 @@ class CapitalWithdrawal(Base):
     founder_user_id   = Column(Integer, ForeignKey("users.id"), nullable=False)
     amount            = Column(Numeric(12, 2), nullable=False)
     date              = Column(Date, nullable=False)
+    # Из чьего кармана взял (16.09). NULL — старая запись, карман держателя кассы.
+    from_user_id      = Column(Integer, ForeignKey("users.id"), nullable=True)
     comment           = Column(Text)
     created_by        = Column(Integer, ForeignKey("users.id"))
     created_at        = Column(DateTime, server_default=func.now())
@@ -739,6 +767,7 @@ class CapitalWithdrawal(Base):
 
     organization  = relationship("Organization", foreign_keys=[organization_id])
     founder       = relationship("User", foreign_keys=[founder_user_id])
+    from_user     = relationship("User", foreign_keys=[from_user_id])
 
 
 class AccountBalanceSnapshot(Base):
