@@ -150,12 +150,13 @@ def test_add_asks_then_writes(client, db, org, supplier, egg, owner):
     assert "да, так" in html
     assert 'value="420.0"' in html or 'value="420"' in html     # введённое не потеряно
     assert db.query(Transaction).count() == before
-    assert db.query(WarehouseReceipt).filter_by(price_per_unit=420).count() == 0
+    # по тестовому товару, не по всей базе: на копии прода яйцо по 420 уже есть
+    assert db.query(WarehouseReceipt).filter_by(product_id=egg.id, price_per_unit=420).count() == 0
 
     r = _post_add(client, org, supplier, egg, 420, price_ok="1")
     assert r.status_code == 303
     assert db.query(Transaction).count() == before + 1
-    assert db.query(WarehouseReceipt).filter_by(price_per_unit=420).count() == 1
+    assert db.query(WarehouseReceipt).filter_by(product_id=egg.id, price_per_unit=420).count() == 1
 
 
 def test_add_rejects_foreign_unit(client, db, org, supplier, egg, owner):
