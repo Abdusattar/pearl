@@ -1,0 +1,65 @@
+{% extends "new/base.html" %}
+{% block title %}Оплатить поставщику — Жемчужина{% endblock %}
+
+{% block head %}
+<style>
+  .form { display: grid; grid-template-columns: 130px 1fr; gap: 12px 14px; align-items: center; max-width: 560px; }
+  .form .lb { font-size: 14px; color: var(--muted); }
+  @media (max-width: 520px) { .form { grid-template-columns: 1fr; } }
+  .pay label.opt { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 8px; margin-bottom: 8px; font-size: 15px; cursor: pointer; min-height: 48px; flex-wrap: wrap; }
+  .pay label.opt.on { border-color: var(--accent); background: var(--accent-soft); }
+  .pay label.opt input[type=radio] { width: 18px; height: 18px; margin: 0; accent-color: var(--accent); }
+  .pay .more { flex-basis: 100%; padding-left: 28px; display: none; font-size: 14px; }
+  .pay label.opt.on .more { display: block; }
+  .in.num { width: 140px; text-align: right; font-variant-numeric: tabular-nums; }
+  .chip.on { background: var(--accent); color: var(--on-accent); border-color: var(--accent); }
+</style>
+{% endblock %}
+
+{% block content %}
+<h3 class="title">Оплатить поставщику</h3>
+{% if saved %}<div class="alert ok">Оплата записана. Долг уменьшился, касса тоже.</div>{% endif %}
+{% if error %}<div class="alert bad">{{ error }}</div>{% endif %}
+
+<p class="sub">Кому?</p>
+<div class="chips">
+  {% for d in debts %}<a class="chip {% if supplier and d.id == supplier.id %}on{% endif %}" href="/new/pay?supplier={{ d.id }}">{{ d.name }} · {{ d.debt | money }}</a>{% endfor %}
+  {% if not debts %}<span class="sub">Долгов нет.</span>{% endif %}
+</div>
+
+{% if supplier %}
+<form method="post" action="/new/pay" id="pay" autocomplete="off">
+  <input type="hidden" name="supplier_id" value="{{ supplier.id }}">
+  <p class="sub">Долг {{ supplier.name }} сейчас <b>{{ balance | money }} сом</b>.</p>
+  <div class="form">
+    <span class="lb">Сколько</span><span><input class="in num" name="amount" value="{{ amount }}" inputmode="decimal" placeholder="0"> <span class="u">сом</span></span>
+    <span class="lb">Когда</span><span><input class="in" type="date" name="pay_date" value="{{ pay_date.isoformat() }}" max="{{ today.isoformat() }}"></span>
+    <span class="lb">За что</span><span><input class="in wide" name="comment" value="{{ comment }}" placeholder="необязательно"></span>
+  </div>
+  <h4 style="margin-top:18px">Откуда</h4>
+  <div class="pay" id="src">
+    <label class="opt {% if source == 'cash' %}on{% endif %}"><input type="radio" name="source" value="cash" {% if source == 'cash' %}checked{% endif %}>Из кассы
+      <span class="more">карман: <select class="in" name="payer_id">{% for u in pockets %}<option value="{{ u.id }}" {% if u.id == payer_id %}selected{% endif %}>{{ u.name }}</option>{% endfor %}{% if current_user.id not in pockets|map(attribute='id')|list %}<option value="{{ current_user.id }}" {% if payer_id == current_user.id %}selected{% endif %}>{{ current_user.name }}</option>{% endif %}</select></span></label>
+    <label class="opt {% if source == 'account' %}on{% endif %}"><input type="radio" name="source" value="account" {% if source == 'account' %}checked{% endif %}>Перевели со счёта
+      <span class="more"><span class="chips" style="margin:6px 0 0">{% for o in site_orgs %}<label class="chip {% if account_org_id == o.id %}on{% endif %}"><input type="radio" name="account_org_id" value="{{ o.id }}" {% if account_org_id == o.id %}checked{% endif %}>{{ o.name }}</label>{% endfor %}</span></span></label>
+  </div>
+  {% if can_write %}<button type="submit" class="btn" style="margin-top:8px">Записать оплату</button>{% endif %}
+  <p class="after">Долг уменьшится, касса или счёт тоже, в ленте появится строка «Оплата». В сумму месяца она не входит: покупка уже посчитана в день привоза.</p>
+</form>
+{% endif %}
+{% endblock %}
+
+{% block scripts %}
+<script>
+document.querySelectorAll('#src input[name=source]').forEach(function (r) {
+  r.addEventListener('change', function () {
+    document.querySelectorAll('#src label.opt').forEach(function (l) { l.classList.toggle('on', l.querySelector('input[name=source]').checked); });
+  });
+});
+document.querySelectorAll('label.chip input[type=radio]').forEach(function (r) {
+  r.addEventListener('change', function () {
+    document.querySelectorAll('input[name="' + r.name + '"]').forEach(function (o) { o.closest('label.chip').classList.toggle('on', o.checked); });
+  });
+});
+</script>
+{% endblock %}

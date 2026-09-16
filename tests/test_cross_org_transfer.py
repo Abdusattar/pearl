@@ -227,5 +227,7 @@ def test_flows_panel_still_shows_the_transfer(db, orgs):
     _fund(db, school, "260000", START + timedelta(days=2), source_org=sadik)
 
     flows = podotchet.get_cross_org_flows(db, START, START + timedelta(days=30))
-    assert flows == [{"from_org_id": sadik.id, "to_org_id": school.id,
-                      "amount": Decimal("260000")}]
+    # только свои объекты: на копии прода лежат настоящие перетоки (16.09)
+    own = [f for f in flows if f["from_org_id"] in (sadik.id, school.id)]
+    assert own == [{"from_org_id": sadik.id, "to_org_id": school.id,
+                    "amount": Decimal("260000")}]

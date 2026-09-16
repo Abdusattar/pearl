@@ -1,0 +1,69 @@
+{% extends "new/base.html" %}
+{% block title %}Сегодня — Жемчужина{% endblock %}
+
+{% block head %}
+<style>
+  .head { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 6px; }
+  .head .s { font-size: 13px; color: var(--muted); }
+  .actions { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin: 14px 0 26px; }
+  @media (max-width: 520px) { .actions { grid-template-columns: 1fr; } }
+  .big { display: block; padding: 20px; border-radius: 8px; background: var(--accent); color: var(--on-accent); text-decoration: none; min-height: 44px; }
+  .big:hover { background: var(--accent-hover); }
+  .big .t { font-size: 18px; font-weight: 600; display: block; }
+  .big .s { font-size: 13px; color: var(--on-accent); opacity: .9; display: block; margin-top: 4px; }
+  .cols { display: grid; grid-template-columns: 1fr 250px; gap: 30px; }
+  @media (max-width: 760px) { .cols { grid-template-columns: 1fr; } }
+  .todo a { display: grid; grid-template-columns: 10px 1fr auto; gap: 4px 16px; align-items: center; padding: 10px 0; border-top: 1px solid var(--line); color: inherit; text-decoration: none; min-height: 48px; }
+  .todo a:first-of-type { border-top: 0; }
+  .todo .d { width: 10px; height: 10px; border-radius: 50%; background: var(--warn); }
+  .todo .d.bad { background: var(--bad); } .todo .d.info { background: var(--accent); }
+  .todo .t { font-size: 15px; } .todo .s { font-size: 13px; color: var(--muted); }
+  .go { font-size: 14px; color: var(--accent); font-weight: 500; white-space: nowrap; }
+  .done { padding: 12px 0; font-size: 15px; color: var(--ok); }
+  .fig { padding: 10px 0; border-top: 1px solid var(--line); }
+  .fig:first-of-type { border-top: 0; }
+  .fig .l { font-size: 13px; color: var(--muted); }
+  .fig .v { font-size: 19px; font-weight: 600; font-variant-numeric: tabular-nums; }
+  .fig .v span { font-size: 13px; color: var(--muted); font-weight: 400; margin-left: 3px; }
+  .fig .v.bad { color: var(--bad); }
+  .fig .w { font-size: 13px; color: var(--muted); }
+  .links { display: flex; flex-wrap: wrap; gap: 8px 18px; margin-top: 22px; font-size: 14px; }
+  .links a { text-decoration: none; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="head"><h3 class="title" style="margin:0">{{ today | human_date(true) | capitalize }}</h3><span class="s">{{ site_line }}</span></div>
+{% if can_write %}
+<div class="actions">
+  <a class="big" href="/new/buy"><span class="t">Купили</span><span class="s">{{ buy_sub }}</span></a>
+  <a class="big" href="/new/kitchen"><span class="t">Лист кухни за сегодня</span><span class="s">Что повара взяли на готовку</span></a>
+</div>
+{% endif %}
+<div class="cols">
+  <section>
+    <h4>Ждёт вас</h4>
+    {% if todo %}
+    <div class="todo">
+      {% for it in todo %}
+      <a href="{{ it.url }}"><span class="d {{ it.kind }}"></span><span><span class="t">{{ it.title }}</span><br><span class="s">{{ it.sub }}</span></span><span class="go">{{ it.go }}</span></a>
+      {% endfor %}
+    </div>
+    {% else %}
+    <div class="done">На сегодня всё. Листы кухни внесены, чеки проверены, долги свежие.</div>
+    {% endif %}
+    <div class="links">
+      <a href="/suppliers/">Оплатить поставщику</a>
+      <a href="/podotchet/">Касса и снятия</a>
+      <a href="/warehouse/">Склад</a>
+    </div>
+    <p class="after">Ссылки внизу пока ведут в старый вход: экраны Кассы и Склада нового входа ещё впереди.</p>
+  </section>
+  <aside>
+    <h4>Сейчас</h4>
+    <div class="fig"><div class="l">В кассе Сокулука</div><div class="v {% if figures.cash < 0 %}bad{% endif %}">{{ figures.cash | money }}<span>сом</span></div><div class="w">{{ figures.cash_when }}</div></div>
+    <div class="fig"><div class="l">Продуктов на складе</div><div class="v">{{ figures.stock | money }}<span>сом</span></div><div class="w">{{ figures.stock_when }}</div></div>
+    <div class="fig"><div class="l">Должны поставщикам</div><div class="v">{{ figures.debt | money }}<span>сом</span></div><div class="w">{{ figures.debt_who }}</div></div>
+  </aside>
+</div>
+{% endblock %}

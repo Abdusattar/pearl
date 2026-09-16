@@ -167,12 +167,16 @@ def test_price_question_then_write(client, db, site, staff, halima, egg):
     assert float(p.total) == 1260
 
 
-def test_similar_product_is_a_question_not_a_new_card(client, db, site, staff, halima, carrot):
+def test_similar_product_is_a_question_not_a_new_card(client, db, site, staff, halima, cats):
+    # имя, которого нет в реальном каталоге: на копии прода «морков» нашёл бы настоящую Морковь
+    odd = Product(name="Зюзюблик тест-нб", unit="кг", is_standard=True, category_id=cats["овощи и фрукты"].id)
+    db.add(odd)
+    db.flush()
     before = db.query(Product).count()
-    r = _post(client, halima, [{"name": "морков", "qty": "5", "price": "30"}])
-    assert r.status_code == 200 and f"Это {carrot.name}?" in r.text
+    r = _post(client, halima, [{"name": "зюзюбл", "qty": "5", "price": "30"}])
+    assert r.status_code == 200 and f"Это {odd.name}?" in r.text
     assert db.query(Product).count() == before
-    p = _purchase(db, _post(client, halima, [{"name": carrot.name, "pid": carrot.id, "qty": "5", "price": "30"}]))
+    p = _purchase(db, _post(client, halima, [{"name": odd.name, "pid": odd.id, "qty": "5", "price": "30"}]))
     assert db.query(Product).count() == before and float(p.total) == 150
 
 

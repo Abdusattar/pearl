@@ -48,45 +48,8 @@ def _base_ctx(request: Request, db: Session, org_id_str: str | None) -> dict:
     }
 
 
-def _get_balance_map(db: Session, org_ids: set) -> dict:
-    """Текущий остаток и средняя цена по ВСЕМ продуктам (не только тем, что были в приходе) —
-    нужно для актуализации, где корректировать можно и то, чего ещё не было."""
-    recv = (
-        db.query(
-            WarehouseReceipt.product_id.label("pid"),
-            func.sum(WarehouseReceipt.quantity).label("qty"),
-            func.sum(WarehouseReceipt.total_cost).label("cost"),
-        )
-        .filter(WarehouseReceipt.organization_id.in_(org_ids), WarehouseReceipt.deleted_at.is_(None))
-        .group_by(WarehouseReceipt.product_id)
-        .subquery()
-    )
-    woff = (
-        db.query(WriteOff.product_id.label("pid"), func.sum(WriteOff.quantity).label("qty"))
-        .filter(WriteOff.organization_id.in_(org_ids), WriteOff.deleted_at.is_(None))
-        .group_by(WriteOff.product_id)
-        .subquery()
-    )
-    rows = (
-        db.query(
-            Product.id,
-            func.coalesce(recv.c.qty, 0),
-            func.coalesce(recv.c.cost, 0),
-            func.coalesce(woff.c.qty, 0),
-        )
-        .outerjoin(recv, Product.id == recv.c.pid)
-        .outerjoin(woff, Product.id == woff.c.pid)
-        .all()
-    )
-    result = {}
-    for pid, received, total_cost, written in rows:
-        received, total_cost, written = float(received), float(total_cost), float(written)
-        balance = received - written
-        result[pid] = {
-            "balance": balance,
-            "avg_price": (total_cost / received) if received > 0 else 0,
-        }
-    return result
+# Переехало в services/warehouse.py (16.09), здесь остаётся имя для роутов ниже.
+from app.services.warehouse import get_balance_map as _get_balance_map  # noqa: E402
 
 
 def _writeoff_days(db: Session, org_ids: set, limit_days: int = 14) -> list:

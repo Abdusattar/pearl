@@ -27,6 +27,8 @@ from app.services.supplier_ledger import get_supplier_balance
 router = APIRouter(prefix="/new", tags=["new"])
 templates = Jinja2Templates(directory=str(Path(__file__).parent.parent / "templates"))
 templates.env.filters["money"] = lambda v: fmt_money(float(v or 0))
+# количество: 5.0 → «5», 0.2 → «0,2»
+templates.env.filters["qty"] = lambda v: fmt_money(float(v)) if v is not None else ""
 
 MEDIA_DIR = Path(__file__).parent.parent.parent / "media" / "receipts"
 MEDIA_DIR.mkdir(parents=True, exist_ok=True)
@@ -41,10 +43,10 @@ def human_date(d: date | None, with_weekday: bool = False) -> str:
     if d is None:
         return ""
     s = f"{d.day} {MONTHS[d.month - 1]}"
+    if with_weekday:
+        return f"{WEEKDAYS[d.weekday()]}, {s}"
     if d == date.today():
-        s = f"сегодня, {s}"
-    elif with_weekday:
-        s = f"{WEEKDAYS[d.weekday()]}, {s}"
+        return f"сегодня, {s}"
     return s
 
 
@@ -98,7 +100,7 @@ def _form_ctx(request: Request, user: User, site: Organization, db: Session, *,
 
 @router.get("/", response_class=HTMLResponse)
 def new_root():
-    return RedirectResponse("/new/buy", status_code=302)
+    return RedirectResponse("/new/today", status_code=302)
 
 
 @router.get("/products/search")

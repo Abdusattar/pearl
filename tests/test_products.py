@@ -37,8 +37,9 @@ def test_ensure_alias_links_raw_to_product(db):
 
     found = match_product(db, "__test_piyas__")
     assert found is not None
+    # только id: get_or_create_product ищет нечётко и на реальной базе может
+    # вернуть существующий «Лук», а не карточку с тестовым именем
     assert found.id == product.id
-    assert found.name == "__Тест_Лук__"
 
 
 def test_ensure_alias_case_insensitive(db):
@@ -56,9 +57,9 @@ def test_ensure_alias_idempotent(db):
     ensure_alias(db, "__test_dill__", product.id)
     ensure_alias(db, "__test_dill__", product.id)  # повторно
 
-    count = db.query(ProductAlias).filter(
-        ProductAlias.product_id == product.id
-    ).count()
+    # считаем алиасы с этим текстом, а не все алиасы карточки: на реальной
+    # базе «Укроп» нечётко находится и у него свои алиасы
+    count = db.query(ProductAlias).filter(ProductAlias.raw_text == "__test_dill__").count()
     assert count == 1
 
 

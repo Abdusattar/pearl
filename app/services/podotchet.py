@@ -21,7 +21,7 @@ from sqlalchemy import and_, func, or_
 from sqlalchemy.orm import Session
 
 from app.models import (
-    CapitalWithdrawal, CashFunding, Organization, Reconciliation, Transaction,
+    CapitalWithdrawal, CashFunding, Organization, Reconciliation, SupplierPayment, Transaction,
 )
 
 ZERO = Decimal("0")
@@ -154,11 +154,21 @@ def _spent_pool(db: Session, organization_id: int, baseline: dict | None = None)
         CapitalWithdrawal.date >= PODOTCHET_START_DATE,
         CapitalWithdrawal.deleted_at.is_(None),
     )
+    # Оплата долга поставщику из кассы (новый вход, 16.09): только платежи с
+    # площадкой, старые (organization_id NULL) касс не трогали и не трогают.
+    q_pay = db.query(func.coalesce(func.sum(SupplierPayment.amount), 0)).filter(
+        SupplierPayment.organization_id == organization_id,
+        SupplierPayment.paid_directly.is_(False),
+        SupplierPayment.date >= PODOTCHET_START_DATE,
+        SupplierPayment.deleted_at.is_(None),
+    )
     if baseline["date"] is not None:
         q_txn = q_txn.filter(_not_yet_counted(Transaction, baseline))
         q_cap = q_cap.filter(_not_yet_counted(CapitalWithdrawal, baseline))
+        q_pay = q_pay.filter(_not_yet_counted(SupplierPayment, baseline))
 
-    return Decimal(q_txn.scalar()) + Decimal(q_cap.scalar()) + _lent_out(db, organization_id, baseline)
+    return (Decimal(q_txn.scalar()) + Decimal(q_cap.scalar()) + Decimal(q_pay.scalar())
+            + _lent_out(db, organization_id, baseline))
 
 
 def get_podotchet_ledger(db: Session, organization_id: int,
@@ -303,7 +313,13 @@ def get_expected_balance(db: Session, organization_id: int, as_of: date_cls) -> 
         Transaction.date > since, Transaction.date <= as_of, Transaction.deleted_at.is_(None),
     ).scalar()
 
-    income, withdrawals, direct = Decimal(income), Decimal(withdrawals), Decimal(direct)
+    # Оплата долга поставщику переводом со счёта этого объекта (новый вход, 16.09)
+    direct_pay = db.query(func.coalesce(func.sum(SupplierPayment.amount), 0)).filter(
+        SupplierPayment.account_org_id == organization_id, SupplierPayment.paid_directly.is_(True),
+        SupplierPayment.date > since, SupplierPayment.date <= as_of, SupplierPayment.deleted_at.is_(None),
+    ).scalar()
+
+    income, withdrawals, direct = Decimal(income), Decimal(withdrawals), Decimal(direct) + Decimal(direct_pay)
     return {
         "expected": base + income - withdrawals - direct,
         "base": base, "since": snapshot.date if snapshot else None,

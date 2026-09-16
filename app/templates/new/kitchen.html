@@ -1,0 +1,163 @@
+{% extends "new/base.html" %}
+{% block title %}Лист кухни, {{ d | human_date }} — Жемчужина{% endblock %}
+
+{% block head %}
+<style>
+  .ac { position: relative; }
+  .ac .dd { display: none; position: absolute; z-index: 20; left: 0; right: 0; top: 100%; background: var(--surface);
+            border: 1px solid var(--line); border-radius: 8px; box-shadow: 0 6px 18px rgba(0,0,0,.08); max-height: 240px; overflow-y: auto; }
+  .ac .dd div { padding: 10px 12px; cursor: pointer; font-size: 14px; display: flex; justify-content: space-between; gap: 8px; min-height: 44px; align-items: center; }
+  .ac .dd div:hover { background: var(--accent-soft); }
+  .ac .dd small { color: var(--muted); white-space: nowrap; }
+  .hint { display: block; font-size: 13px; color: var(--warn); margin-top: 2px; }
+  .hint.bad { color: var(--bad); }
+  .hint.mute { color: var(--muted); }
+  .x { width: 40px; height: 40px; border: 1px solid var(--line); border-radius: 8px; background: transparent; color: var(--muted); cursor: pointer; font-size: 18px; }
+  .x:hover { color: var(--bad); border-color: var(--bad); }
+  .head { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 6px; }
+  .meta { color: var(--muted); font-size: 14px; margin: 0 0 12px; display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; }
+  .in.kids { width: 72px; height: 36px; text-align: right; }
+  .in.qty { width: 92px; text-align: right; font-variant-numeric: tabular-nums; }
+  select.in.unit { width: auto; min-width: 64px; height: 40px; padding: 0 6px; }
+  .tbl td.r .in.qty { margin-right: 4px; }
+  .missing { font-size: 13px; color: var(--muted); margin: 0 0 14px; }
+  .missing a { margin-right: 10px; }
+  .foot { display: grid; grid-template-columns: 1fr 280px; gap: 30px; margin-top: 20px; align-items: start; }
+  @media (max-width: 760px) { .foot { grid-template-columns: 1fr; } .in.qty { width: 80px; } }
+</style>
+{% endblock %}
+
+{% block content %}
+{% if saved %}
+<div class="alert ok">Лист за {{ saved | human_date }} внесён.
+  {% if saved != d %} Следующий невнесённый день — {{ d | human_date(true) }}, он уже открыт.{% endif %}
+  {% if shortfalls %}<br>Расхождения: {% for s in shortfalls %}{{ s.name }} — взяли {{ s.taken | qty }} {{ s.unit }}, на складе было {{ s.had | qty }} {{ s.unit }}{% if not loop.last %}; {% endif %}{% endfor %}. Списано что было, разница записана.{% endif %}
+</div>
+{% endif %}
+{% if error %}<div class="alert bad">{{ error }}</div>{% endif %}
+
+<form method="post" action="/new/kitchen" enctype="multipart/form-data" id="sheet" autocomplete="off">
+  <input type="hidden" name="date" id="date" value="{{ d.isoformat() }}">
+  <div class="head">
+    <h3 class="title" style="margin:0">Лист кухни, {{ d | human_date(true) }}
+      <a href="#" id="otherday" style="font-size:14px;font-weight:400" onclick="document.getElementById('datepick').hidden=false;this.hidden=true;document.getElementById('datepick').focus();return false">другой день</a>
+      <input class="in" type="date" id="datepick" value="{{ d.isoformat() }}" max="{{ today.isoformat() }}" hidden onchange="location='/new/kitchen?date='+this.value">
+    </h3>
+    {% if can_write %}<button type="submit" class="btn">Внести лист кухни</button>{% endif %}
+  </div>
+  <div class="meta">
+    {% if sheet %}<span>Внесён {% if sheet.creator %}{{ sheet.creator.name }}{% endif %}{% if sheet.created_at %} {{ sheet.created_at.strftime('%d.%m в %H:%M') }}{% endif %}. Поправьте строки и нажмите «Внести», лист заменится.</span>
+    {% elif like_date %}<span>Строки с листа за {{ like_date | human_date }}. Поправьте числа, лишнее уберите.</span>
+    {% else %}<span>Что повара взяли на готовку за день. Одна строка — один продукт, взятия за день можно сложить: «0,5 + 3,5».</span>{% endif %}
+    <span>Едоков <input class="in kids" name="children" value="{{ children }}" inputmode="numeric" placeholder="—"></span>
+    {% if not sheet and not like_date %}<a href="/new/kitchen?date={{ d.isoformat() }}&like=1">Как вчера</a>{% endif %}
+    <span>Фото листа <input type="file" name="photo" accept="image/*" capture="environment" style="font-size:14px">{% if photo_path %}<a href="/media/{{ photo_path }}" target="_blank">приложено</a>{% endif %}</span>
+  </div>
+  {% if missing %}
+  <p class="missing">Не внесены ещё: {% for m in missing %}<a href="/new/kitchen?date={{ m.isoformat() }}">{{ m | human_date(true) }}</a>{% endfor %}{% if missing_total > missing|length %}и ещё {{ missing_total - missing|length }}{% endif %}</p>
+  {% endif %}
+
+  <table class="tbl" id="items">
+    <thead><tr><th>Продукт</th><th class="r">Взяли</th><th class="r">На складе</th><th></th></tr></thead>
+    <tbody>
+    {% for r in rows %}
+    <tr class="row {% if r.minor %}minor{% endif %}">
+      <td class="ac">
+        <input type="hidden" name="item_product_id" value="{{ r.product_id or '' }}">
+        <input class="in wide name" name="item_name" value="{{ r.name }}" placeholder="{% if loop.last %}Ещё продукт…{% else %}Продукт{% endif %}">
+        <div class="dd"></div>
+        <span class="hint mute minor-hint" {% if not r.minor %}hidden{% endif %}>мелочь, не на складе</span>
+        <span class="hint bad err" {% if not r.error %}hidden{% endif %}>{{ r.error or '' }}</span>
+        <span class="hint over" hidden></span>
+      </td>
+      <td class="r">
+        <input class="in qty" name="item_qty" value="{{ r.qty }}" inputmode="decimal" placeholder="0">
+        <select class="in unit" name="item_unit" {% if not r.sub_unit %}hidden{% endif %} data-factor="{{ r.sub_factor or '' }}">
+          {% if r.unit %}<option value="{{ r.unit }}" {% if r.chosen_unit == r.unit %}selected{% endif %}>{{ r.unit }}</option>{% else %}<option value=""></option>{% endif %}
+          {% if r.sub_unit %}<option value="{{ r.sub_unit }}" {% if r.chosen_unit == r.sub_unit %}selected{% endif %}>{{ r.sub_unit }}</option>{% endif %}
+        </select>
+        <span class="u utext" {% if r.sub_unit %}hidden{% endif %}>{{ r.unit }}</span>
+      </td>
+      <td class="r q bal" data-balance="{{ r.balance if r.balance is not none else '' }}">{{ r.balance_text }}</td>
+      <td class="r"><button type="button" class="x" aria-label="Убрать строку" onclick="removeRow(this)">×</button></td>
+    </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+
+  <div class="foot">
+    <p class="after">Списывается с одного склада Сокулука. Взяли больше, чем числится, — спишется что есть, разница запишется расхождением. Мелочь (зелень, специи, хлеб) остаток не трогает, но на листе остаётся.</p>
+    {% if can_write %}<aside><button type="submit" class="btn full">Внести лист кухни</button></aside>{% endif %}
+  </div>
+</form>
+{% endblock %}
+
+{% block scripts %}
+<script>
+function num(v) { var t = 0, ok = true; String(v || '').split('+').forEach(function (p) { p = p.replace(/\s/g, '').replace(',', '.'); if (!p) return; var n = parseFloat(p); if (isNaN(n)) ok = false; else t += n; }); return ok ? t : null; }
+function fmt(n) { return n.toLocaleString('ru-RU', { maximumFractionDigits: 3 }); }
+
+function setUnit(tr, unit, sub, factor) {
+  var sel = tr.querySelector('.unit'), txt = tr.querySelector('.utext');
+  sel.innerHTML = '';
+  sel.add(new Option(unit || '', unit || ''));
+  if (sub) { sel.add(new Option(sub, sub)); sel.dataset.factor = factor; sel.hidden = false; txt.hidden = true; }
+  else { sel.dataset.factor = ''; sel.hidden = true; txt.textContent = unit || ''; txt.hidden = false; }
+}
+function checkRow(tr) {
+  var over = tr.querySelector('.over'), bal = tr.querySelector('.bal'), sel = tr.querySelector('.unit');
+  var q = num(tr.querySelector('.qty').value); var b = bal.dataset.balance === '' ? null : parseFloat(bal.dataset.balance);
+  if (q !== null && sel.options.length > 1 && sel.selectedIndex === 1 && sel.dataset.factor) q = q / parseFloat(sel.dataset.factor);
+  var unit = sel.options.length ? sel.options[0].value : '';
+  if (q === null && tr.querySelector('.qty').value.trim()) { over.textContent = 'Число или сумма чисел, например 0,5 + 3,5'; over.className = 'hint bad over'; over.hidden = false; return; }
+  if (q !== null && b !== null && q > b + 0.0005) {
+    over.textContent = 'На складе только ' + fmt(Math.max(b, 0)) + ' ' + unit + '. Спишется ' + fmt(Math.max(b, 0)) + ', остальное запишется расхождением';
+    over.className = 'hint bad over'; over.hidden = false;
+  } else if (q !== null && sel.options.length > 1 && sel.selectedIndex === 1) {
+    over.textContent = '= ' + fmt(q) + ' ' + unit; over.className = 'hint mute over'; over.hidden = false;
+  } else { over.hidden = true; }
+}
+function pick(tr, c) {
+  tr.querySelector('[name=item_product_id]').value = c.id;
+  tr.querySelector('.name').value = c.name;
+  setUnit(tr, c.unit, c.sub_unit, c.sub_unit ? 1000 : '');
+  var bal = tr.querySelector('.bal'); bal.textContent = c.balance_text || ''; bal.dataset.balance = c.balance === null || c.balance === undefined ? '' : c.balance;
+  tr.querySelector('.minor-hint').hidden = !c.minor;
+  tr.querySelector('.err').hidden = true;
+  tr.querySelector('.dd').style.display = 'none';
+  ensureEmptyRow(); checkRow(tr);
+  tr.querySelector('.qty').focus();
+}
+function initRow(tr) {
+  var input = tr.querySelector('.name'), dd = tr.querySelector('.dd'), timer = null;
+  function show(items) {
+    if (!items.length) { dd.style.display = 'none'; return; }
+    dd.innerHTML = items.map(function (c, i) { return '<div data-i="' + i + '"><span>' + c.name + (c.minor ? ' <small>· мелочь</small>' : '') + '</span><small>' + (c.minor ? c.unit : (c.balance_text || ('0 ' + c.unit))) + '</small></div>'; }).join('');
+    dd.style.display = 'block';
+    dd.querySelectorAll('div').forEach(function (el) { el.addEventListener('mousedown', function (e) { e.preventDefault(); pick(tr, items[+el.dataset.i]); }); });
+  }
+  function fetchC(q) { if (!q.trim()) { dd.style.display = 'none'; return; } fetch('/new/kitchen/search?q=' + encodeURIComponent(q)).then(function (r) { return r.json(); }).then(show).catch(function () { dd.style.display = 'none'; }); }
+  input.addEventListener('input', function () {
+    tr.querySelector('[name=item_product_id]').value = ''; setUnit(tr, '', null, ''); tr.querySelector('.bal').textContent = ''; tr.querySelector('.bal').dataset.balance = '';
+    tr.querySelector('.minor-hint').hidden = true; tr.querySelector('.over').hidden = true;
+    clearTimeout(timer); timer = setTimeout(function () { fetchC(input.value); }, 160); ensureEmptyRow();
+  });
+  input.addEventListener('focus', function () { if (input.value && !tr.querySelector('[name=item_product_id]').value) fetchC(input.value); });
+  input.addEventListener('blur', function () { setTimeout(function () { dd.style.display = 'none'; }, 180); });
+  input.addEventListener('keydown', function (e) { if (e.key === 'Enter' && dd.style.display === 'block') { e.preventDefault(); var f = dd.querySelector('div'); if (f) f.dispatchEvent(new Event('mousedown')); } });
+  tr.querySelector('.qty').addEventListener('input', function () { checkRow(tr); });
+  tr.querySelector('.unit').addEventListener('change', function () { checkRow(tr); });
+}
+function rowHtml() {
+  return '<td class="ac"><input type="hidden" name="item_product_id" value=""><input class="in wide name" name="item_name" value="" placeholder="Ещё продукт…"><div class="dd"></div>' +
+    '<span class="hint mute minor-hint" hidden>мелочь, не на складе</span><span class="hint bad err" hidden></span><span class="hint over" hidden></span></td>' +
+    '<td class="r"><input class="in qty" name="item_qty" value="" inputmode="decimal" placeholder="0"><select class="in unit" name="item_unit" hidden data-factor=""><option value=""></option></select><span class="u utext"></span></td>' +
+    '<td class="r q bal" data-balance=""></td><td class="r"><button type="button" class="x" aria-label="Убрать строку" onclick="removeRow(this)">×</button></td>';
+}
+function addRow() { var tr = document.createElement('tr'); tr.className = 'row'; tr.innerHTML = rowHtml(); document.querySelector('#items tbody').appendChild(tr); initRow(tr); return tr; }
+function ensureEmptyRow() { var rows = document.querySelectorAll('#items tr.row'); var last = rows[rows.length - 1]; if (!last || last.querySelector('.name').value.trim()) addRow(); }
+function removeRow(btn) { btn.closest('tr').remove(); ensureEmptyRow(); }
+document.querySelectorAll('#items tr.row').forEach(function (tr) { initRow(tr); checkRow(tr); });
+ensureEmptyRow();
+</script>
+{% endblock %}
