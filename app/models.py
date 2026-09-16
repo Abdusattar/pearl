@@ -488,6 +488,8 @@ class WriteOff(Base):
     reason          = Column(String(100), default="питание детей")
     meal_type       = Column(String(20))  # завтрак/обед/полдник/ужин — заполняется через /warehouse/writeoff/meal
     dish_id         = Column(Integer, ForeignKey("dishes.id"), nullable=True)  # nullable — списание должно проходить и без выбранного блюда
+    # Строка листа кухни нового входа (16.09): один лист на день, см. KitchenSheet.
+    sheet_id        = Column(Integer, ForeignKey("kitchen_sheets.id"), nullable=True)
     created_by      = Column(Integer, ForeignKey("users.id"))
     created_at      = Column(DateTime, server_default=func.now())
     deleted_at      = Column(DateTime)
@@ -495,6 +497,27 @@ class WriteOff(Base):
     product      = relationship("Product")
     organization = relationship("Organization")
     dish         = relationship("Dish")
+
+
+class KitchenSheet(Base):
+    """Лист кухни за день (новый вход, макет 3б, 16.09): что повара взяли на
+    готовку. Строки — обычные WriteOff с sheet_id; шапка держит едоков, фото,
+    расхождения (взяли больше, чем числилось) и сам факт «день внесён»."""
+    __tablename__ = "kitchen_sheets"
+    __table_args__ = (UniqueConstraint("site_org_id", "date", name="uq_kitchen_sheet_site_date"),)
+    id             = Column(Integer, primary_key=True)
+    site_org_id    = Column(Integer, ForeignKey("organizations.id"), nullable=False)
+    date           = Column(Date, nullable=False)
+    children_count = Column(Integer)
+    photo_path     = Column(String(500))
+    note           = Column(Text)
+    shortfalls     = Column(JSONB)
+    created_by     = Column(Integer, ForeignKey("users.id"))
+    created_at     = Column(DateTime, server_default=func.now())
+    updated_at     = Column(DateTime, server_default=func.now(), onupdate=func.now())
+    deleted_at     = Column(DateTime)
+
+    creator = relationship("User", foreign_keys=[created_by])
 
 
 class Asset(Base):

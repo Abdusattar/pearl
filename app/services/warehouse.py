@@ -71,6 +71,47 @@ def get_product_balances(db: Session, org_ids: set) -> list[dict]:
     return result
 
 
+def get_balance_map(db: Session, org_ids: set) -> dict[int, dict]:
+    """Остаток и средняя цена по ВСЕМ карточкам (не только приходовавшим) —
+    для пересчёта и листа кухни, где нужен остаток любого товара, включая
+    нулевой. Переехало из routers/warehouse.py (16.09), логика та же."""
+    recv = (
+        db.query(
+            WarehouseReceipt.product_id.label("pid"),
+            func.sum(WarehouseReceipt.quantity).label("qty"),
+            func.sum(WarehouseReceipt.total_cost).label("cost"),
+        )
+        .filter(WarehouseReceipt.organization_id.in_(org_ids), WarehouseReceipt.deleted_at.is_(None))
+        .group_by(WarehouseReceipt.product_id)
+        .subquery()
+    )
+    woff = (
+        db.query(WriteOff.product_id.label("pid"), func.sum(WriteOff.quantity).label("qty"))
+        .filter(WriteOff.organization_id.in_(org_ids), WriteOff.deleted_at.is_(None))
+        .group_by(WriteOff.product_id)
+        .subquery()
+    )
+    rows = (
+        db.query(
+            Product.id,
+            func.coalesce(recv.c.qty, 0),
+            func.coalesce(recv.c.cost, 0),
+            func.coalesce(woff.c.qty, 0),
+        )
+        .outerjoin(recv, Product.id == recv.c.pid)
+        .outerjoin(woff, Product.id == woff.c.pid)
+        .all()
+    )
+    result = {}
+    for pid, received, total_cost, written in rows:
+        received, total_cost, written = float(received), float(total_cost), float(written)
+        result[pid] = {
+            "balance": received - written,
+            "avg_price": (total_cost / received) if received > 0 else 0,
+        }
+    return result
+
+
 def get_inventory_summary(db: Session, org_ids: set) -> dict:
     """Стоимость товарного остатка на складе объекта — по средней цене закупки
     (WAC), не текущей рыночной. Считается на лету, ничего не хранится (тот же

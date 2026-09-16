@@ -1,0 +1,165 @@
+"""Новый вход `/new/kitchen`: лист кухни за день (макет 3б, план 08)."""
+from __future__ import annotations
+
+from datetime import date, datetime
+from pathlib import Path
+
+from fastapi import APIRouter, Depends, File, Request, UploadFile
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
+from sqlalchemy.orm import Session
+
+from app.database import get_db
+from app.dependencies import get_current_user
+from app.models import Organization, Product
+from app.routers.new_buy import WRITE_ROLES, _base_ctx, _site, templates
+from app.services import kitchen as svc
+from app.services.ocr import compute_hash
+from app.services.products import rank_candidates
+
+router = APIRouter(prefix="/new", tags=["new"])
+
+MEDIA_DIR = Path(__file__).parent.parent.parent / "media" / "kitchen"
+MEDIA_DIR.mkdir(parents=True, exist_ok=True)
+
+
+def _parse_date(s: str | None) -> date:
+    s = (s or "").strip()
+    try:
+        return date.fromisoformat(s) if s else None
+    except ValueError:
+        return None
+
+
+def _ctx(request: Request, user, site: Organization, db: Session, *, d: date, rows: list[dict],
+         sheet, children: str, like_date: date | None, saved: date | None, next_day: date | None,
+         error: str | None, photo_path: str | None) -> dict:
+    ctx = _base_ctx(request, user, site, db, "warehouse")
+    missing = svc.missing_days(db, site.id)
+    if not rows or rows[-1]["name"]:
+        rows = rows + [{"product_id": None, "name": "", "unit": "", "sub_unit": None, "sub_factor": None,
+                        "chosen_unit": "", "qty": "", "minor": False, "balance": None, "balance_text": "", "error": None}]
+    ctx.update({
+        "d": d, "today": date.today(), "rows": rows, "sheet": sheet, "children": children,
+        "like_date": like_date, "saved": saved, "next_day": next_day, "error": error,
+        "missing": [x for x in missing if x != d][:6], "missing_total": len([x for x in missing if x != d]),
+        "photo_path": photo_path, "can_write": user.role in WRITE_ROLES,
+        "shortfalls": (sheet.shortfalls if sheet else None) if saved else None,
+    })
+    return ctx
+
+
+@router.get("/kitchen/search")
+def kitchen_search(request: Request, q: str = "", db: Session = Depends(get_db)):
+    """Подсказка продукта для листа: имя, единица, дробная единица, остаток, мелочь."""
+    user = get_current_user(request, db)
+    if not user or not q.strip():
+        return JSONResponse([])
+    site = _site(user, db)
+    balances = svc.stock_map(db, site.id) if site else {}
+    cands = rank_candidates(db, q.strip(), limit=8, standard_only=False)
+    ids = [c["id"] for c in cands]
+    products = {p.id: p for p in db.query(Product).filter(Product.id.in_(ids)).all()} if ids else {}
+    out = []
+    for c in cands:
+        p = products.get(c["id"])
+        if not p:
+            continue
+        minor = svc.is_minor(p)
+        bal = balances.get(p.id, 0.0)
+        sub = svc.sub_unit(p)
+        out.append({"id": p.id, "name": p.name, "unit": p.unit or "", "minor": minor,
+                    "sub_unit": sub[0] if sub else None,
+                    "balance": None if minor else round(bal, 3),
+                    "balance_text": "" if minor else f"{svc.fmt_qty(bal)} {p.unit or ''}",
+                    "score": c["score"]})
+    # основные с остатком первыми, потом по релевантности
+    out.sort(key=lambda r: (r["minor"] or (r["balance"] or 0) <= 0, -r["score"]))
+    return JSONResponse(out)
+
+
+@router.get("/kitchen", response_class=HTMLResponse)
+def kitchen_form(request: Request, date_: str | None = None, like: int = 0, saved: str | None = None,
+                 db: Session = Depends(get_db)):
+    user = get_current_user(request, db)
+    if not user:
+        return RedirectResponse("/login", status_code=302)
+    site = _site(user, db)
+    if site is None:
+        return HTMLResponse("Объект не найден", status_code=404)
+    d = _parse_date(request.query_params.get("date")) or svc.default_day(db, site.id)
+    balances = svc.stock_map(db, site.id)
+    sheet = svc.sheet_for(db, site.id, d)
+    like_date = None
+    if like:
+        like_date, rows = svc.like_last_rows(db, site.id, d, balances)
+    elif sheet:
+        rows = svc.sheet_rows(db, sheet, balances)
+    else:
+        rows = []
+    saved_d = _parse_date(saved)
+    saved_sheet = svc.sheet_for(db, site.id, saved_d) if saved_d else None
+    ctx = _ctx(request, user, site, db, d=d, rows=rows, sheet=sheet,
+               children=str(sheet.children_count) if sheet and sheet.children_count else "",
+               like_date=like_date, saved=saved_d, next_day=None, error=None,
+               photo_path=sheet.photo_path if sheet else None)
+    if saved_sheet:
+        ctx["saved_sheet"] = saved_sheet
+        ctx["shortfalls"] = saved_sheet.shortfalls
+    return templates.TemplateResponse("new/kitchen.html", ctx)
+
+
+@router.post("/kitchen", response_class=HTMLResponse)
+async def kitchen_submit(request: Request, photo: UploadFile | None = File(None), db: Session = Depends(get_db)):
+    user = get_current_user(request, db)
+    if not user:
+        return RedirectResponse("/login", status_code=302)
+    if user.role not in WRITE_ROLES:
+        return HTMLResponse("Лист кухни вносят сотрудники площадки", status_code=403)
+    site = _site(user, db)
+    if site is None:
+        return HTMLResponse("Объект не найден", status_code=404)
+
+    form = await request.form()
+    lists = {k: form.getlist(k) for k in ("item_product_id", "item_name", "item_qty", "item_unit")}
+    d = _parse_date(form.get("date"))
+    children_raw = (form.get("children") or "").strip()
+    balances = svc.stock_map(db, site.id)
+    sheet = svc.sheet_for(db, site.id, d) if d else None
+
+    def render(error: str | None, errors: dict | None = None):
+        rows = svc.rows_as_submitted(db, lists, balances, errors)
+        ctx = _ctx(request, user, site, db, d=d or date.today(), rows=rows, sheet=sheet, children=children_raw,
+                   like_date=None, saved=None, next_day=None, error=error,
+                   photo_path=sheet.photo_path if sheet else None)
+        return templates.TemplateResponse("new/kitchen.html", ctx)
+
+    if d is None or d > date.today():
+        return render("Выберите день, не позже сегодняшнего")
+    children = int(children_raw) if children_raw.isdigit() else None
+    if children_raw and children is None:
+        return render("Едоков — целое число")
+
+    items, errors = svc.resolve_rows(db, lists)
+    if errors:
+        return render("Поправьте отмеченные строки", errors)
+    if not items:
+        return render("Добавьте хотя бы одну строку")
+
+    photo_path = None
+    if photo is not None and photo.filename:
+        data = await photo.read()
+        if data:
+            h = compute_hash(data)
+            month_dir = MEDIA_DIR / datetime.now().strftime("%Y-%m")
+            month_dir.mkdir(parents=True, exist_ok=True)
+            suffix = Path(photo.filename).suffix or ".jpg"
+            fname = f"{d.isoformat()}_{h[:10]}{suffix}"
+            (month_dir / fname).write_bytes(data)
+            photo_path = f"kitchen/{datetime.now().strftime('%Y-%m')}/{fname}"
+
+    saved = svc.save_sheet(db, user=user, site_org_id=site.id, d=d, items=items,
+                           children_count=children, photo_path=photo_path)
+    db.commit()
+    nxt = svc.next_missing_day(db, site.id, d)
+    target = nxt.isoformat() if nxt else d.isoformat()
+    return RedirectResponse(f"/new/kitchen?date={target}&saved={d.isoformat()}", status_code=303)

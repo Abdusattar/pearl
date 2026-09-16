@@ -27,6 +27,8 @@ from app.services.supplier_ledger import get_supplier_balance
 router = APIRouter(prefix="/new", tags=["new"])
 templates = Jinja2Templates(directory=str(Path(__file__).parent.parent / "templates"))
 templates.env.filters["money"] = lambda v: fmt_money(float(v or 0))
+# количество: 5.0 → «5», 0.2 → «0,2»
+templates.env.filters["qty"] = lambda v: fmt_money(float(v)) if v is not None else ""
 
 MEDIA_DIR = Path(__file__).parent.parent.parent / "media" / "receipts"
 MEDIA_DIR.mkdir(parents=True, exist_ok=True)
