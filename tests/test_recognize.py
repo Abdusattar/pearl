@@ -50,6 +50,19 @@ def carrot(db):
     return p
 
 
+def test_post_process_skips_numeric_rows_and_short_prefixes(db, carrot):
+    melissa = Product(name="Мелисса сушёная тест-рз", unit="г", is_standard=True)
+    db.add(melissa)
+    db.flush()
+    result = {"lines": [
+        {"raw": "6908", "product_id": None, "qty": None, "unit": None, "price": None, "total": 6908},
+        {"raw": "мел", "product_id": None, "qty": 4, "unit": None, "price": 120, "total": 480},
+    ]}
+    rows = rz.post_process(db, rz.RECEIPT, result, [])
+    assert len(rows) == 1                                    # числовая строка выброшена
+    assert rows[0]["product_id"] is None and rows[0]["question"] is not None   # «мел» ≠ Мелисса молча
+
+
 def test_post_process_uses_candidate_and_fuzzy_fallback(db, carrot):
     cands = [{"id": carrot.id, "name": carrot.name, "unit": "кг", "usual": 30, "pack_name": None, "pack_qty": None, "minor": False, "balance": None}]
     result = {"lines": [

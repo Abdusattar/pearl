@@ -202,14 +202,28 @@ def call_model(image_bytes: bytes, kind: str, candidates: list[dict], mime: str 
                                                      "HTTP-Referer": "https://pearl.local", "X-Title": "Pearl recognize"},
                       timeout=90)
     resp.raise_for_status()
-    text = resp.json()["choices"][0]["message"]["content"].strip()
-    text = re.sub(r"^```(?:json)?\s*|\s*```$", "", text, flags=re.DOTALL).strip()
-    idx = text.find("{")
-    if idx == -1:
-        raise ValueError("В ответе нет JSON")
-    data, _ = json.JSONDecoder().raw_decode(text, idx)
+    text = (resp.json()["choices"][0]["message"]["content"] or "").strip()
+    data = _parse_json(text)
     return {"amount": _num(data.get("amount")), "lines": data.get("lines") or [], "raw": text,
             "usage": resp.json().get("usage", {})}
+
+
+def _parse_json(text: str) -> dict:
+    """JSON из ответа модели: снимает ```-обёртку, берёт первый объект, терпит
+    висячие запятые и одинарные кавычки — модели иногда так отвечают, а
+    один кривой ответ не должен ронять разбор."""
+    text = re.sub(r"^```(?:json)?\s*|\s*```$", "", text, flags=re.DOTALL).strip()
+    start, end = text.find("{"), text.rfind("}")
+    if start == -1:
+        raise ValueError("В ответе нет JSON")
+    body = text[start:end + 1] if end > start else text[start:]
+    for attempt in (body, re.sub(r",\s*([}\]])", r"\1", body), re.sub(r",\s*([}\]])", r"\1", body).replace("'", '"')):
+        try:
+            return json.loads(attempt)
+        except json.JSONDecodeError:
+            continue
+    data, _ = json.JSONDecoder().raw_decode(text, start)
+    return data
 
 
 def _num(v) -> float | None:
@@ -306,11 +320,17 @@ def post_process(db: Session, kind: str, result: dict, candidates: list[dict]) -
         cand = by_id.get(int(pid)) if isinstance(pid, (int, float, str)) and str(pid).isdigit() else None
         notes: list[str] = []
         question = None
+        if cand is None and not re.search(r"[А-Яа-яЁёA-Za-z]{2,}", raw):
+            continue  # строка из одних цифр («6908», «260») — итог или мусор, не товар
         if cand is None and raw:
             fuzzy = [c for c in rank_candidates(db, raw, limit=1, standard_only=False) if c["score"] >= FUZZY_THRESHOLD]
             if fuzzy:
                 p = db.get(Product, fuzzy[0]["id"])
-                if p is not None and fuzzy[0]["score"] >= SURE_SCORE:
+                # молча подставляем только точное имя/алиас или почти полное совпадение по
+                # длине: «мел» начинает «Мелисса», «Луг» похоже на «Лук» — это вопрос, не ответ
+                sure = fuzzy[0]["score"] >= SURE_SCORE and (
+                    fuzzy[0]["score"] >= 100 or len(raw.strip()) >= 0.75 * len(p.name if p else raw))
+                if p is not None and sure:
                     cand = by_id.get(p.id) or _cand(db, p, usual_price(db, p.id) if kind == RECEIPT else None)
                 elif p is not None:
                     # похоже, но не уверены: товар не подставляем, спрашиваем
