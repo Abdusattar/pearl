@@ -157,6 +157,82 @@ def find_similar(db: Session, org_id: int, name: str, inn: str | None = None) ->
     return q.filter(or_(*conds)).all()
 
 
+def similar_children(db: Session, org_id: int, last_name: str, first_name: str, inn: str | None = None) -> list[dict]:
+    """Похожие карточки: те же фамилия и имя в объекте (любой статус) или тот же ИНН.
+    Решение владельца 15.09: вторая карточка только после «это другой ребёнок»."""
+    from rapidfuzz import fuzz
+    out = []
+    key = f"{last_name.strip()} {first_name.strip()}".lower()
+    for s in db.query(Student).filter(Student.organization_id == org_id, Student.deleted_at.is_(None)).all():
+        s_key = f"{(s.last_name or '')} {(s.first_name or '')}".strip().lower() or (s.name or "").lower()
+        same_inn = bool(inn and s.extra and s.extra.get("inn") == inn.strip())
+        score = fuzz.ratio(key, s_key)
+        if same_inn or score >= 88:
+            group = (db.query(Group.name).join(Enrollment, Enrollment.group_id == Group.id)
+                     .filter(Enrollment.student_id == s.id, Enrollment.end_date.is_(None)).first())
+            out.append({"s": s, "group": group[0] if group else None, "why": "тот же ИНН" if same_inn else "похожее имя"})
+    return out
+
+
+def add_child(db: Session, *, user: User, org_id: int, last_name: str, first_name: str, patronymic: str,
+              group_id: int | None, parent_name: str, parent_contact: str, inn: str | None,
+              start: date | None = None) -> Student:
+    from app.services.students import compose_name, get_next_free_pin
+    student = Student(organization_id=org_id, name=compose_name(last_name, first_name, patronymic),
+                      last_name=last_name.strip(), first_name=first_name.strip(),
+                      patronymic=(patronymic or "").strip() or None, pin=get_next_free_pin(db), status="active",
+                      parent_name=(parent_name or "").strip() or None, parent_contact=(parent_contact or "").strip() or None,
+                      extra={"inn": inn.strip()} if inn and inn.strip() else None)
+    db.add(student)
+    db.flush()
+    if group_id:
+        db.add(Enrollment(student_id=student.id, group_id=group_id, start_date=start or date.today()))
+    audit(db, "student", student.id, "insert", user.id, {"from": "new/children", "org": org_id, "group": group_id})
+    return student
+
+
+def set_discount(db: Session, *, user: User, student: Student, amount: float, reason: str) -> None:
+    base = billing.tuition_base_price(db, student)
+    if not (0 <= amount <= base):
+        raise ValueError(f"Скидка от 0 до {base:,.0f} сом".replace(",", " "))
+    if amount > 0 and not reason.strip():
+        raise ValueError("Скидка без причины не ставится")
+    old = float(student.discount_amount or 0)
+    if amount != old or (amount > 0 and reason.strip() != (student.discount_reason or "")):
+        audit(db, "student_discount", student.id, "update", user.id,
+              {"old": {"amount": old, "reason": student.discount_reason}, "new": {"amount": amount, "reason": reason.strip() or None}})
+        student.discount_set_by = user.id
+        student.discount_set_at = datetime.now()
+    student.discount_amount = amount
+    student.discount_reason = reason.strip() or None
+
+
+def set_status(db: Session, *, user: User, student: Student, status: str, d: date, reason: str | None) -> None:
+    """active | frozen | inactive. Выбыл закрывает группу; заморозка группу держит.
+    Начисление за текущий месяц не трогается: вышел хоть 15-го — платит месяц
+    (правило владельца 09.09), прошлые месяцы неявки — заморозка."""
+    if status not in ("active", "frozen", "inactive"):
+        raise ValueError("Неизвестный статус")
+    old = student.status
+    student.status = status
+    current = db.query(Enrollment).filter(Enrollment.student_id == student.id, Enrollment.end_date.is_(None)).first()
+    if status == "inactive" and current:
+        current.end_date = d
+    audit(db, "student_status", student.id, "update", user.id,
+          {"old": old, "new": status, "date": d.isoformat(), "reason": reason})
+
+
+def move_group(db: Session, *, user: User, student: Student, group_id: int, d: date) -> None:
+    current = db.query(Enrollment).filter(Enrollment.student_id == student.id, Enrollment.end_date.is_(None)).first()
+    if current and current.group_id == group_id:
+        return
+    if current:
+        current.end_date = d
+    db.add(Enrollment(student_id=student.id, group_id=group_id, start_date=d))
+    audit(db, "student_group", student.id, "update", user.id,
+          {"old": current.group_id if current else None, "new": group_id, "date": d.isoformat()})
+
+
 def accept_cash(db: Session, *, user: User, site_org_id: int, student: Student, amount: Decimal, d: date,
                 what: str | None, pocket_user_id: int | None = None) -> Transaction:
     """Наличные от родителя: событие у ребёнка + деньги в карман принявшего."""

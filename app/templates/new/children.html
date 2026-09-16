@@ -25,7 +25,7 @@
   <a class="chip {% if debt %}on{% endif %}" href="/new/children?org={{ current.id }}&debt={{ 0 if debt else 1 }}">Только с долгом</a>
   <form class="find" method="get" action="/new/children"><input type="hidden" name="org" value="{{ current.id }}"><input class="in" name="q" value="{{ q }}" placeholder="Найти по имени или PIN"></form>
 </div>
-<div class="links" style="display:flex;gap:18px;flex-wrap:wrap;font-size:14px;margin-bottom:6px"><a href="/income/">Оплаты через банк</a><a href="/students/add">Добавить ребёнка</a></div>
+<div class="links" style="display:flex;gap:18px;flex-wrap:wrap;font-size:14px;margin-bottom:6px"><a href="/income/">Оплаты через банк</a><a href="/new/children/add?org={{ current.id }}">Добавить ребёнка</a></div>
 
 {% for g in data.groups %}
 <div class="day">{{ g.name }}, {{ g.total }}</div>
@@ -35,5 +35,5 @@
 {% else %}
 <p class="sub" style="margin-top:14px">Никого не нашлось.</p>
 {% endfor %}
-<p class="after">Оплата ложится на самый старый долг; «август и сентябрь» значит, что не закрыты оба. Добавление ребёнка, скидки и заморозка пока в старом входе.</p>
+<p class="after">Оплата ложится на самый старый долг; «август и сентябрь» значит, что не закрыты оба. Имя и родителя пока правят в старом входе.</p>
 {% endblock %}

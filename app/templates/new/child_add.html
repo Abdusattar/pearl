@@ -1,0 +1,38 @@
+{% extends "new/base.html" %}
+{% block title %}Добавить ребёнка — Жемчужина{% endblock %}
+{% block head %}<style>
+  .form { display: grid; grid-template-columns: 150px 1fr; gap: 12px 14px; align-items: center; max-width: 560px; }
+  .form .lb { font-size: 14px; color: var(--muted); }
+  @media (max-width: 520px) { .form { grid-template-columns: 1fr; } }
+  .form .in { width: 100%; height: 44px; font-size: 16px; }
+  .dup { background: var(--warn-soft); border: 1px solid #e8d7ad; border-radius: 8px; padding: 12px 14px; margin: 0 0 14px; max-width: 560px; font-size: 14px; }
+  .chip.on { background: var(--accent); color: var(--on-accent); border-color: var(--accent); }
+</style>{% endblock %}
+{% block content %}
+<p style="margin:0 0 10px"><a href="/new/children?org={{ current.id }}">← Дети</a></p>
+<h3 class="title">Добавить ребёнка</h3>
+{% if error %}<div class="alert bad">{{ error }}</div>{% endif %}
+<div class="chips">{% for o in orgs %}<a class="chip {% if o.id == current.id %}on{% endif %}" href="/new/children/add?org={{ o.id }}">{{ o.name }}</a>{% endfor %}</div>
+{% if similar %}
+<div class="dup">
+  {% for x in similar %}<div>{{ x.s.name }} уже есть{% if x.group %} в группе {{ x.group }}{% endif %} ({{ x.why }}{% if x.s.status != 'active' %}, {{ 'выбыл' if x.s.status == 'inactive' else 'заморожен' }}{% endif %}). <a href="/new/children/{{ x.s.id }}">Открыть карточку</a></div>{% endfor %}
+  <div style="margin-top:8px">Это другой ребёнок? <button type="submit" form="add" name="dup_ok" value="1" class="chip">Да, другой — завести</button></div>
+</div>
+{% endif %}
+<form id="add" method="post" action="/new/children/add" autocomplete="off">
+  <input type="hidden" name="org_id" value="{{ current.id }}">
+  <div class="form">
+    <span class="lb">Фамилия</span><input class="in" name="last_name" value="{{ form.last_name or '' }}" required>
+    <span class="lb">Имя</span><input class="in" name="first_name" value="{{ form.first_name or '' }}" required>
+    <span class="lb">Отчество</span><input class="in" name="patronymic" value="{{ form.patronymic or '' }}">
+    <span class="lb">Группа / класс</span>
+    <select class="in" name="group_id"><option value="">без группы</option>{% for g in groups %}<option value="{{ g.id }}" {% if form.group_id == g.id|string %}selected{% endif %}>{{ g.name }}</option>{% endfor %}</select>
+    <span class="lb">Зачислен с</span><input class="in" type="date" name="start" value="{{ form.start or today.isoformat() }}" max="{{ today.isoformat() }}">
+    <span class="lb">Родитель</span><input class="in" name="parent_name" value="{{ form.parent_name or '' }}">
+    <span class="lb">Телефон родителя</span><input class="in" name="parent_contact" value="{{ form.parent_contact or '' }}" inputmode="tel">
+    <span class="lb">ИНН ребёнка</span><input class="in" name="inn" value="{{ form.inn or '' }}" inputmode="numeric" placeholder="для реестров, необязательно">
+  </div>
+  {% if can_write %}<button type="submit" class="btn" style="margin-top:16px">Завести</button>{% endif %}
+  <p class="after">PIN для оплаты через банк выдаётся сам. Похожего ребёнка система покажет до записи: вторая карточка заводится только после «да, другой».</p>
+</form>
+{% endblock %}
