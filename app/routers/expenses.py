@@ -21,6 +21,12 @@ from app.services.products import (
     UNITS, CATEGORIES, UNITS_NEED_GRAMS_PER_UNIT, DUPLICATE_SCORE_THRESHOLD,
 )
 from app.services.price_check import price_anomaly_hint
+# Разбор строк, проводки и приход на склад живут в services/purchases.py (16.09) —
+# общие для старого входа и экрана «Купили», деньги считаются одинаково.
+from app.services.purchases import (  # noqa: F401 — реэкспорт для тестов и соседних модулей
+    PRICE_QUESTION_MESSAGE, audit, create_split_transactions, create_warehouse_receipts,
+    resolve_item_product, resolve_manual_items, submitted_rows, _num_at, _str_at, _plain,
+)
 from app.services.normalize import normalize_items
 from app.services import recurring_expenses
 from app.services import supplier_ledger
@@ -63,14 +69,6 @@ def get_service_category_id(db: Session) -> int | None:
     return cat.id if cat else None
 
 
-def audit(db: Session, entity_type: str, entity_id: int, action: str,
-          user_id: int, new_data: dict = None):
-    db.add(AuditLog(
-        entity_type=entity_type, entity_id=entity_id,
-        action=action, user_id=user_id, new_data=new_data,
-    ))
-
-
 def resolve_supplier(db: Session, supplier_id_raw: str, new_name: str, new_phone: str) -> int | None:
     """Возвращает supplier_id: из существующего или создаёт нового."""
     if not supplier_id_raw:
@@ -91,196 +89,6 @@ def resolve_supplier(db: Session, supplier_id_raw: str, new_name: str, new_phone
     db.add(s)
     db.flush()
     return s.id
-
-
-def create_split_transactions(
-    db: Session, resolved_items: list[dict], amount: float, amount_paid_val: float | None,
-    due_date_val, organization_id: int, supplier_id: int | None, description: str | None,
-    tx_date, user_id: int, receipt_id: int | None = None, paid_directly: bool = False,
-) -> dict[int | None, int]:
-    """Группирует позиции по expense_category_id их товара, создаёт по Transaction на
-    каждую получившуюся категорию с пропорциональным делением суммы/оплаты/долга (последней
-    группе — остаток, без ошибок округления). Нет позиций — вся сумма уходит в категорию
-    None («без категории»). Общая логика для confirm (фото чека) и add (закуп без фото) —
-    не дублировать, деньги в проводке должны считаться одинаково независимо от источника.
-    receipt_id=None — proводка без связанной квитанции (закуп без позиций)."""
-    group_totals: dict = {}
-    for it in resolved_items:
-        cat_id = it["product"].expense_category_id
-        group_totals[cat_id] = group_totals.get(cat_id, 0) + it["total"]
-
-    if not group_totals:
-        group_totals[None] = amount
-
-    items_sum = sum(group_totals.values())
-    scale = (amount / items_sum) if items_sum else 1.0
-
-    cat_ids = list(group_totals.keys())
-    running_amount = 0.0
-    running_paid = 0.0
-    tx_by_cat: dict[int | None, int] = {}
-    for idx, cat_id in enumerate(cat_ids):
-        is_last = idx == len(cat_ids) - 1
-        if is_last:
-            cat_amount = round(amount - running_amount, 2)
-        else:
-            cat_amount = round(group_totals[cat_id] * scale, 2)
-            running_amount += cat_amount
-        if cat_amount <= 0:
-            continue
-
-        cat_amount_paid = None
-        if amount_paid_val is not None:
-            if is_last:
-                cat_amount_paid = round(amount_paid_val - running_paid, 2)
-            else:
-                cat_amount_paid = round(cat_amount / amount * amount_paid_val, 2) if amount else 0.0
-                running_paid += cat_amount_paid
-            if cat_amount_paid >= cat_amount:
-                cat_amount_paid = None
-
-        tx = Transaction(
-            organization_id=organization_id, type="expense", amount=cat_amount,
-            amount_paid=cat_amount_paid, due_date=due_date_val if cat_amount_paid is not None else None,
-            category_id=cat_id, supplier_id=supplier_id, description=description, date=tx_date,
-            created_by=user_id, paid_directly=paid_directly,
-        )
-        db.add(tx)
-        db.flush()
-        if receipt_id is not None:
-            db.add(ReceiptTransaction(receipt_id=receipt_id, transaction_id=tx.id, amount=cat_amount))
-        audit(db, "transaction", tx.id, "insert", user_id, {"org_id": organization_id, "amount": cat_amount})
-        tx_by_cat[cat_id] = tx.id
-    return tx_by_cat
-
-
-PRICE_QUESTION_MESSAGE = "Проверь цену в отмеченных строках: поправь или отметь «да, так» и запиши снова"
-
-
-def _num_at(vals, i):
-    try:
-        v = vals[i].strip() if i < len(vals) else ""
-        return float(v.replace(",", ".")) if v else None
-    except (ValueError, AttributeError):
-        return None
-
-
-def _str_at(vals, i):
-    return vals[i].strip() if i < len(vals) and vals[i] else ""
-
-
-def _plain(v):
-    """1260.0 → 1260 для поля type=number (иначе браузер показывает «1260,0»)."""
-    return int(v) if isinstance(v, float) and v == int(v) else v
-
-
-def resolve_item_product(db: Session, name: str, pid_str: str, unit_val: str) -> tuple[Product | None, str | None]:
-    """Карточка для позиции формы + защита единиц (15.09).
-
-    У существующей карточки единица не вводится: она из карточки. Если форма
-    всё же прислала другую (имя набрано руками и сервер сам нашёл карточку) —
-    это не «поменять единицу», а «человек считает не в том»: возвращаем ошибку,
-    ничего не пишем. Единица вводится только для новой карточки.
-    Возвращает (product, error_message)."""
-    product = db.get(Product, int(pid_str)) if pid_str.isdigit() else None
-    if not product:
-        product = find_product(db, name)
-    if product:
-        if unit_val and product.unit and unit_val != product.unit:
-            return None, (f"«{product.name}» считается в {product.unit}, а в строке выбрано {unit_val}. "
-                          f"Введи количество в {product.unit}; единицу карточки меняет только собственник.")
-        return product, None
-    if not unit_val:
-        return None, f"«{name}» — новый товар, выбери для него единицу"
-    return get_or_create_product(db, name, unit=unit_val), None
-
-
-def submitted_rows(db: Session, item_name, item_unit, item_qty, item_unit_price, item_product_id,
-                   item_price_ok, hints: dict | None = None) -> list[dict]:
-    """Строки формы как их прислал человек — чтобы при ошибке или вопросе о
-    цене форма вернулась с теми же данными, а не с пустой таблицей.
-    Количество и цена — строками, как набраны (не «3.0» вместо «3»)."""
-    hints = hints or {}
-    rows = []
-    for i, raw_name in enumerate(item_name):
-        qty_val = _num_at(item_qty, i)
-        price_val = _num_at(item_unit_price, i)
-        pid = _str_at(item_product_id, i)
-        product = db.get(Product, int(pid)) if pid.isdigit() else None
-        total = round(qty_val * price_val, 2) if qty_val is not None and price_val is not None else None
-        rows.append({
-            "name": raw_name.strip(),
-            # у карточки единица своя, что бы ни прислала форма
-            "unit": (product.unit or "") if product else _str_at(item_unit, i),
-            "qty": _str_at(item_qty, i),
-            "unit_price": _str_at(item_unit_price, i),
-            "total_price": f"{total:.2f}".rstrip("0").rstrip(".") if total is not None else None,
-            "product_id": product.id if product else None,
-            "price_ok": _str_at(item_price_ok, i) == "1",
-            "price_hint": hints.get(i),
-        })
-    return rows
-
-
-def resolve_manual_items(
-    db: Session, item_name: list[str], item_qty: list[str], item_unit_price: list[str],
-    item_unit: list[str], item_product_id: list[str],
-    item_price_ok: list[str] | None = None, tx_date: date | None = None,
-    exclude_tx_ids: list[int] | None = None,
-) -> tuple[list[dict], str | None, dict]:
-    """Резолвит позиции закупа (add / edit-manual) в формат для create_split_transactions.
-    Позиции в целом необязательны, но если названа позиция — количество и цена
-    обязательны (иначе её доля денег была бы либо потеряна, либо размазана по
-    чужим категориям — см. wiki про 07.07); единица — только для нового товара,
-    у существующего она из карточки. Цена сверяется с обычной: аномальная
-    строка без «да, так» попадает в price_hints по индексу строки.
-    Возвращает (items, error_message, price_hints)."""
-    item_price_ok = item_price_ok or []
-    resolved_items = []
-    price_hints: dict[int, str] = {}
-    for i, raw_name in enumerate(item_name):
-        name = raw_name.strip()
-        if not name:
-            continue
-        qty_val = _num_at(item_qty, i)
-        price_val = _num_at(item_unit_price, i)
-        if qty_val is None or price_val is None:
-            return [], "Заполни количество и цену для каждой введённой позиции", {}
-
-        product, err = resolve_item_product(db, name, _str_at(item_product_id, i), _str_at(item_unit, i))
-        if err:
-            return [], err, {}
-        if _str_at(item_price_ok, i) != "1":
-            hint = price_anomaly_hint(db, product, price_val, tx_date, exclude_tx_ids)
-            if hint:
-                price_hints[i] = hint
-
-        resolved_items.append({
-            "name": name, "product": product, "qty": qty_val,
-            "unit_price": price_val, "total": round(qty_val * price_val, 2),
-        })
-    return resolved_items, None, price_hints
-
-
-def create_warehouse_receipts(
-    db: Session, resolved_items: list[dict], tx_by_cat: dict, organization_id: int,
-    tx_date, user_id: int,
-) -> None:
-    """Кладёт позиции с количеством и ценой на склад, привязывая каждую к своей
-    Transaction по категории товара — та же группировка, что и в проводках."""
-    main_tx_id = next(iter(tx_by_cat.values()), None)
-    for it in resolved_items:
-        if it["qty"] and it["qty"] > 0 and it["unit_price"] and it["unit_price"] > 0:
-            db.add(WarehouseReceipt(
-                date=tx_date,
-                product_id=it["product"].id,
-                quantity=it["qty"],
-                price_per_unit=it["unit_price"],
-                total_cost=it["total"],
-                organization_id=organization_id,
-                transaction_id=tx_by_cat.get(it["product"].expense_category_id, main_tx_id),
-                created_by=user_id,
-            ))
 
 
 # ── PRODUCT SEARCH API ────────────────────────────────────────────────────────

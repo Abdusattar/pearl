@@ -1,0 +1,334 @@
+{% extends "new/base.html" %}
+{% block title %}Купили — Жемчужина{% endblock %}
+
+{% block head %}
+<style>
+  .ac { position: relative; }
+  .ac .dd { display: none; position: absolute; z-index: 20; left: 0; right: 0; top: 100%; background: var(--surface);
+            border: 1px solid var(--line); border-radius: 8px; box-shadow: 0 6px 18px rgba(0,0,0,.08); max-height: 220px; overflow-y: auto; }
+  .ac .dd div { padding: 10px 12px; cursor: pointer; font-size: 14px; display: flex; justify-content: space-between; gap: 8px; min-height: 44px; align-items: center; }
+  .ac .dd div:hover, .ac .dd div.hi { background: var(--accent-soft); }
+  .ac .dd small { color: var(--muted); white-space: nowrap; }
+  tr.ask td { background: var(--warn-soft); padding: 10px 12px; font-size: 14px; }
+  tr.ask .chips { display: inline-flex; margin: 0 0 0 10px; vertical-align: middle; gap: 6px; }
+  tr.ask .chip { padding: 8px 12px; min-height: 40px; }
+  .newbox { display: flex; gap: 6px; margin-top: 6px; flex-wrap: wrap; }
+  .newbox[hidden] { display: none; }
+  .x { width: 40px; height: 40px; border: 1px solid var(--line); border-radius: 8px; background: transparent; color: var(--muted); cursor: pointer; font-size: 18px; }
+  .x:hover { color: var(--bad); border-color: var(--bad); }
+  .foot { display: grid; grid-template-columns: 1fr 280px; gap: 30px; margin-top: 24px; align-items: start; }
+  .line { display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: center; margin: 0 0 14px; font-size: 14px; }
+  .line .lb { color: var(--muted); }
+  .pay label.opt { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 8px; margin-bottom: 8px; font-size: 15px; cursor: pointer; min-height: 48px; flex-wrap: wrap; }
+  .pay label.opt.on { border-color: var(--accent); background: var(--accent-soft); }
+  .pay label.opt input[type=radio] { width: 18px; height: 18px; margin: 0; accent-color: var(--accent); }
+  .pay .s { margin-left: auto; font-size: 13px; color: var(--muted); }
+  .pay .more { flex-basis: 100%; padding-left: 28px; display: none; font-size: 14px; }
+  .pay label.opt.on .more { display: block; }
+  .pay .more[hidden] { display: none !important; }
+  .total .v { font-size: 26px; font-weight: 600; font-variant-numeric: tabular-nums; }
+  .total .v .unit { font-size: 14px; color: var(--muted); font-weight: 400; margin-left: 4px; }
+  .total .w { font-size: 13px; color: var(--muted); margin: 2px 0 14px; }
+  .dup { background: var(--warn-soft); border: 1px solid #e8d7ad; border-radius: 8px; padding: 12px 14px; margin-bottom: 14px; font-size: 14px; }
+  .dup .chips { margin: 8px 0 0; }
+  .price-usual { font-size: 12px; color: var(--muted); display: block; text-align: right; }
+  @media (max-width: 760px) { .foot { grid-template-columns: 1fr; } }
+</style>
+{% endblock %}
+
+{% block content %}
+<h3 class="title">Купили</h3>
+{% if error %}<div class="alert bad">{{ error }}</div>{% endif %}
+
+<p class="sub">У кого?</p>
+<div class="chips">
+  {% for s in chips %}
+  <a class="chip {% if supplier and s.id == supplier.id and not other %}on{% endif %}" href="/new/buy?supplier={{ s.id }}">{{ s.name }}</a>
+  {% endfor %}
+  <a class="chip {% if other %}on{% endif %}" href="/new/buy?other=1">Кто-то другой</a>
+</div>
+
+<form method="post" action="/new/buy" enctype="multipart/form-data" id="buy" autocomplete="off">
+  <input type="hidden" name="other" value="{{ '1' if other else '' }}">
+  <input type="hidden" name="photo_receipt_id" value="{{ photo_receipt_id or '' }}">
+  <input type="hidden" name="dup_ok" id="dup_ok" value="">
+  <input type="hidden" name="for_org_confirmed" id="for_org_confirmed" value="{{ '1' if ask_for_org else '' }}">
+
+  {% if other %}
+  <div class="line">
+    <select class="in" name="supplier_id" style="min-width:220px">
+      <option value="">Выберите поставщика…</option>
+      {% for s in all_suppliers %}<option value="{{ s.id }}" {% if supplier and s.id == supplier.id %}selected{% endif %}>{{ s.name }}</option>{% endfor %}
+    </select>
+    <span class="lb">или новый:</span>
+    <input class="in" name="new_supplier_name" placeholder="Имя поставщика" style="min-width:200px">
+  </div>
+  {% else %}
+  <input type="hidden" name="supplier_id" value="{{ supplier.id if supplier else '' }}">
+  {% endif %}
+
+  {% if supplier or other %}
+  <p class="sub">
+    {% if last_date %}Список с прошлого привоза, <b>{{ last_date | human_date }}</b>. Поправьте количество и цену, лишнее уберите.
+    {% else %}Начните печатать название, подставится из каталога. Единица берётся из карточки.{% endif %}
+  </p>
+
+  <table class="tbl" id="items">
+    <thead><tr><th>Товар</th><th class="r">Сколько</th><th class="r">Цена</th><th class="r">Сумма</th><th></th></tr></thead>
+    <tbody>
+    {% for r in rows %}
+    <tr class="row">
+      <td class="ac">
+        <input type="hidden" name="item_product_id" value="{{ r.product_id or '' }}">
+        <input type="hidden" name="item_new" value="{{ '1' if r.is_new else '' }}">
+        <input type="hidden" name="item_price_ok" value="{{ '1' if r.price_ok else '' }}">
+        <input class="in wide name" name="item_name" value="{{ r.name }}" placeholder="{% if loop.last %}Ещё товар…{% else %}Товар{% endif %}"
+               data-unit="{{ r.unit }}" data-pack="{{ r.pack_name or '' }}" data-packqty="{{ r.pack_qty or '' }}">
+        <div class="dd"></div>
+        <div class="newbox" {% if not (r.is_new or (r.question and r.question.kind == 'new')) %}hidden{% endif %}>
+          <select class="in cat" name="item_category_id">
+            <option value="">Категория…</option>
+            {% for c in categories %}<option value="{{ c.id }}" {% if r.category_id == c.id %}selected{% endif %}>{{ c.name }}{% if c.is_minor %} · мелочь{% endif %}</option>{% endfor %}
+          </select>
+        </div>
+      </td>
+      <td class="r">
+        <input class="in num qty" name="item_qty" value="{{ r.qty }}" inputmode="decimal" placeholder="0">
+        <select class="in unit" name="item_unit" {% if not (r.pack_name or r.is_new or (r.question and r.question.kind == 'new')) %}hidden{% endif %}>
+          {% if r.is_new or (r.question and r.question.kind == 'new') %}
+            <option value="">ед.</option>
+            {% for u in units %}<option value="{{ u }}" {% if r.chosen_unit == u %}selected{% endif %}>{{ u }}</option>{% endfor %}
+          {% elif r.pack_name %}
+            <option value="{{ r.unit }}" {% if r.chosen_unit == r.unit %}selected{% endif %}>{{ r.unit }}</option>
+            <option value="{{ r.pack_name }}" {% if r.chosen_unit == r.pack_name %}selected{% endif %}>{{ r.pack_name }} = {{ r.pack_qty }} {{ r.unit }}</option>
+          {% else %}
+            <option value="{{ r.unit }}" selected>{{ r.unit }}</option>
+          {% endif %}
+        </select>
+        <span class="u utext" {% if r.pack_name or r.is_new or (r.question and r.question.kind == 'new') %}hidden{% endif %}>{{ r.unit }}</span>
+      </td>
+      <td class="r"><input class="in num price {% if r.question and r.question.kind == 'price' %}ask{% endif %}" name="item_unit_price" value="{{ r.unit_price }}" inputmode="decimal" placeholder="0"><span class="price-usual"></span></td>
+      <td class="r sum">{{ r.total_price }}</td>
+      <td class="r"><button type="button" class="x" aria-label="Убрать строку" onclick="removeRow(this)">×</button></td>
+    </tr>
+    {% if r.question %}
+    <tr class="ask"><td colspan="5">{{ r.question.text }}
+      {% if r.question.kind == 'price' %}
+      <span class="chips"><button type="button" class="chip" onclick="answerPrice(this, true)">Да, так</button><button type="button" class="chip" onclick="answerPrice(this, false)">Поправлю</button></span>
+      {% elif r.question.kind == 'similar' %}
+      <span class="chips"><button type="button" class="chip" data-id="{{ r.question.candidate.id }}" data-name="{{ r.question.candidate.name }}" data-unit="{{ r.question.candidate.unit }}" onclick="answerSimilar(this)">Да, {{ r.question.candidate.name }}</button><button type="button" class="chip" onclick="answerNew(this)">Новый товар: категория, единица</button></span>
+      {% else %}
+      <span class="chips"><button type="button" class="chip" onclick="answerNew(this)">Понятно</button></span>
+      {% endif %}
+    </td></tr>
+    {% endif %}
+    {% endfor %}
+    </tbody>
+  </table>
+
+  <div class="foot">
+    <section>
+      <div class="line" id="forwho" {% if ask_for_org %}style="padding:10px;border-radius:8px;background:var(--warn-soft)"{% endif %}>
+        <span class="lb">Для кого</span>
+        <span class="chips" style="margin:0">
+          <label class="chip {% if for_org == 'shared' and not ask_for_org %}on{% endif %}"><input type="radio" name="for_org" value="shared" {% if for_org == 'shared' and not ask_for_org %}checked{% endif %}>Общее</label>
+          {% for o in site_orgs %}
+          <label class="chip {% if for_org == o.id|string %}on{% endif %}"><input type="radio" name="for_org" value="{{ o.id }}" {% if for_org == o.id|string %}checked{% endif %}>{{ o.name }}</label>
+          {% endfor %}
+        </span>
+      </div>
+      <div class="line">
+        <span class="lb">Привезли</span>
+        <b id="datetext" style="font-weight:500">{{ tx_date | human_date }}</b>
+        <a href="#" id="otherday" onclick="document.getElementById('date').hidden=false;this.hidden=true;document.getElementById('date').focus();return false">другой день</a>
+        <input class="in" type="date" name="date" id="date" value="{{ tx_date.isoformat() }}" max="{{ today.isoformat() }}" hidden onchange="document.getElementById('datetext').hidden=true">
+      </div>
+      <div class="line">
+        <span class="lb">Фото чека</span>
+        {% if photo_receipt_id %}<span>приложено</span>{% endif %}
+        <input type="file" name="photo" accept="image/*" capture="environment" style="font-size:14px">
+      </div>
+
+      <h4>Оплата</h4>
+      <div class="pay" id="pay">
+        <label class="opt {% if payment == 'debt' %}on{% endif %}"><input type="radio" name="payment" value="debt" {% if payment == 'debt' %}checked{% endif %}>В долг {{ supplier.name if supplier else '' }}<span class="s">долг станет <b id="debt-after">{{ supplier_debt | money }}</b></span></label>
+        <label class="opt {% if payment == 'cash' %}on{% endif %}"><input type="radio" name="payment" value="cash" {% if payment == 'cash' %}checked{% endif %}>Заплатили из кассы<span class="s">из кармана · <a href="#" onclick="document.getElementById('payer').hidden=false;this.hidden=true;return false">платил другой</a></span>
+          <span class="more" id="payer" {% if payer_id == current_user.id %}hidden{% endif %}>
+            <select class="in" name="payer_id">{% for u in pockets %}<option value="{{ u.id }}" {% if u.id == payer_id %}selected{% endif %}>{{ u.name }}</option>{% endfor %}{% if current_user.id not in pockets|map(attribute='id')|list %}<option value="{{ current_user.id }}" {% if payer_id == current_user.id %}selected{% endif %}>{{ current_user.name }}</option>{% endif %}</select>
+          </span></label>
+        <label class="opt {% if payment == 'account' %}on{% endif %}"><input type="radio" name="payment" value="account" {% if payment == 'account' %}checked{% endif %}>Перевели со счёта<span class="s">выбрать обязательно</span>
+          <span class="more"><span class="chips" style="margin:6px 0 0">{% for o in site_orgs %}<label class="chip {% if account_org_id == o.id %}on{% endif %}"><input type="radio" name="account_org_id" value="{{ o.id }}" {% if account_org_id == o.id %}checked{% endif %}>{{ o.name }}</label>{% endfor %}</span></span></label>
+        <label class="opt {% if payment == 'part' %}on{% endif %}"><input type="radio" name="payment" value="part" {% if payment == 'part' %}checked{% endif %}>Часть<span class="s">остальное в долг</span>
+          <span class="more">заплатили <input class="in num" name="paid_amount" value="{{ paid_amount }}" inputmode="decimal" placeholder="0"> сом</span></label>
+        <label class="opt {% if payment == 'founder' %}on{% endif %}"><input type="radio" name="payment" value="founder" {% if payment == 'founder' %}checked{% endif %}>Заплатил учредитель<span class="s">своими деньгами</span>
+          <span class="more"><select class="in" name="founder_id"><option value="">Кто…</option>{% for u in founders %}<option value="{{ u.id }}" {% if u.id == founder_id %}selected{% endif %}>{{ u.name }}</option>{% endfor %}</select></span></label>
+      </div>
+    </section>
+
+    <aside class="total">
+      <h4>Итого</h4>
+      <div class="v"><span id="total">{{ total | money }}</span><span class="unit">сом</span></div>
+      <div class="w"><span id="count">0</span> позиций</div>
+      {% if dup %}
+      <div class="dup">
+        {% if dup.kind == 'photo' %}Это фото уже прикладывали{% if dup.date %} {{ dup.date | human_date }}{% endif %}{% if dup.total %}, чек на {{ dup.total | money }}{% endif %}.
+        {% else %}Похоже на покупку у {{ supplier.name }} от {{ dup.date | human_date }}, {{ dup.total | money }}{% if dup.count %}, {{ dup.count }} позиций{% endif %}.{% endif %}
+        Это другая покупка?
+        <div class="chips"><button type="button" class="chip" onclick="document.getElementById('dup_ok').value='1';document.getElementById('buy').requestSubmit()">Да, другая</button>
+          {% if dup.purchase_id %}<a class="chip" href="/new/buy/{{ dup.purchase_id }}">Нет, это она</a>{% else %}<a class="chip" href="/new/buy">Нет, это она</a>{% endif %}</div>
+      </div>
+      {% endif %}
+      <button type="submit" class="btn full">Записать</button>
+      <div class="after">Склад пополнится, долг или касса изменятся, покупка появится в ленте. Поправить можно в любой момент.</div>
+    </aside>
+  </div>
+  {% endif %}
+</form>
+{% endblock %}
+
+{% block scripts %}
+<script>
+var UNITS = {{ units | tojson }};
+var DEBT_NOW = {{ supplier_debt }};
+
+function num(v) { var n = parseFloat(String(v || '').replace(/\s/g, '').replace(',', '.')); return isNaN(n) ? null : n; }
+function fmt(n) { return n.toLocaleString('ru-RU', { maximumFractionDigits: 2 }); }
+
+function recalc() {
+  var total = 0, count = 0;
+  document.querySelectorAll('#items tr.row').forEach(function (tr) {
+    var q = num(tr.querySelector('.qty').value), p = num(tr.querySelector('.price').value);
+    var s = (q !== null && p !== null) ? q * p : null;
+    tr.querySelector('.sum').textContent = s === null ? '' : fmt(Math.round(s * 100) / 100);
+    if (s !== null) { total += s; }
+    if (tr.querySelector('.name').value.trim()) count++;
+  });
+  var t = document.getElementById('total'); if (t) t.textContent = fmt(Math.round(total * 100) / 100);
+  var c = document.getElementById('count'); if (c) c.textContent = count;
+  var d = document.getElementById('debt-after'); if (d) d.textContent = fmt(Math.round((DEBT_NOW + total) * 100) / 100);
+}
+
+function setUnitMode(tr, mode, unit, pack, packQty) {
+  var sel = tr.querySelector('.unit'), txt = tr.querySelector('.utext'), nb = tr.querySelector('.newbox');
+  sel.innerHTML = '';
+  if (mode === 'new') {
+    sel.add(new Option('ед.', ''));
+    UNITS.forEach(function (u) { sel.add(new Option(u, u)); });
+    sel.hidden = false; txt.hidden = true; nb.hidden = false;
+  } else if (mode === 'pack') {
+    sel.add(new Option(unit, unit));
+    sel.add(new Option(pack + ' = ' + packQty + ' ' + unit, pack));
+    sel.hidden = false; txt.hidden = true; nb.hidden = true;
+  } else if (mode === 'card') {
+    sel.add(new Option(unit, unit)); sel.hidden = true; txt.textContent = unit; txt.hidden = false; nb.hidden = true;
+  } else {
+    sel.add(new Option('', '')); sel.hidden = true; txt.textContent = ''; txt.hidden = false; nb.hidden = true;
+  }
+}
+
+function removeAsk(tr) { var n = tr.nextElementSibling; if (n && n.classList.contains('ask')) n.remove(); }
+
+function pick(tr, c) {
+  tr.querySelector('[name=item_product_id]').value = c.id;
+  tr.querySelector('[name=item_new]').value = '';
+  tr.querySelector('.name').value = c.name;
+  if (c.pack_name) setUnitMode(tr, 'pack', c.unit, c.pack_name, c.pack_qty); else setUnitMode(tr, 'card', c.unit);
+  var pu = tr.querySelector('.price-usual'); if (pu) pu.textContent = c.usual ? 'обычно ' + c.usual : '';
+  tr.querySelector('.dd').style.display = 'none';
+  removeAsk(tr);
+  ensureEmptyRow();
+  tr.querySelector('.qty').focus();
+}
+
+function initRow(tr) {
+  var input = tr.querySelector('.name'), dd = tr.querySelector('.dd'), timer = null;
+  function show(items) {
+    if (!items.length) { dd.style.display = 'none'; return; }
+    dd.innerHTML = items.map(function (c, i) {
+      return '<div data-i="' + i + '"><span>' + c.name + (c.minor ? ' <small>· мелочь</small>' : '') + '</span><small>' + c.unit + (c.usual ? ' · ' + c.usual : '') + '</small></div>';
+    }).join('');
+    dd.style.display = 'block';
+    dd.querySelectorAll('div').forEach(function (el) {
+      el.addEventListener('mousedown', function (e) { e.preventDefault(); pick(tr, items[+el.dataset.i]); });
+    });
+  }
+  function fetchC(q) {
+    if (!q.trim()) { dd.style.display = 'none'; return; }
+    fetch('/new/products/search?q=' + encodeURIComponent(q)).then(function (r) { return r.json(); }).then(show).catch(function () { dd.style.display = 'none'; });
+  }
+  input.addEventListener('input', function () {
+    tr.querySelector('[name=item_product_id]').value = '';
+    tr.querySelector('[name=item_price_ok]').value = '';
+    if (tr.querySelector('[name=item_new]').value !== '1') setUnitMode(tr, 'none');
+    removeAsk(tr);
+    clearTimeout(timer); timer = setTimeout(function () { fetchC(input.value); }, 160);
+    ensureEmptyRow(); recalc();
+  });
+  input.addEventListener('focus', function () { if (input.value && !tr.querySelector('[name=item_product_id]').value) fetchC(input.value); });
+  input.addEventListener('blur', function () { setTimeout(function () { dd.style.display = 'none'; }, 180); });
+  input.addEventListener('keydown', function (e) {
+    if (e.key === 'Enter' && dd.style.display === 'block') { e.preventDefault(); var f = dd.querySelector('div'); if (f) f.dispatchEvent(new Event('mousedown')); }
+  });
+  tr.querySelector('.qty').addEventListener('input', recalc);
+  tr.querySelector('.price').addEventListener('input', function () {
+    tr.querySelector('[name=item_price_ok]').value = ''; this.classList.remove('ask'); removeAsk(tr); recalc();
+  });
+}
+
+function rowHtml() {
+  var cats = document.querySelector('#items .cat');
+  return '<td class="ac"><input type="hidden" name="item_product_id" value=""><input type="hidden" name="item_new" value=""><input type="hidden" name="item_price_ok" value="">' +
+    '<input class="in wide name" name="item_name" value="" placeholder="Ещё товар…"><div class="dd"></div>' +
+    '<div class="newbox" hidden>' + (cats ? cats.outerHTML.replace(/selected/g, '') : '') + '</div></td>' +
+    '<td class="r"><input class="in num qty" name="item_qty" value="" inputmode="decimal" placeholder="0"><select class="in unit" name="item_unit" hidden><option value=""></option></select><span class="u utext"></span></td>' +
+    '<td class="r"><input class="in num price" name="item_unit_price" value="" inputmode="decimal" placeholder="0"><span class="price-usual"></span></td>' +
+    '<td class="r sum"></td><td class="r"><button type="button" class="x" aria-label="Убрать строку" onclick="removeRow(this)">×</button></td>';
+}
+function addRow() {
+  var tr = document.createElement('tr'); tr.className = 'row'; tr.innerHTML = rowHtml();
+  document.querySelector('#items tbody').appendChild(tr); initRow(tr); return tr;
+}
+function ensureEmptyRow() {
+  var rows = document.querySelectorAll('#items tr.row');
+  var last = rows[rows.length - 1];
+  if (!last || last.querySelector('.name').value.trim()) addRow();
+}
+function removeRow(btn) {
+  var tr = btn.closest('tr'); removeAsk(tr); tr.remove(); ensureEmptyRow(); recalc();
+}
+
+function answerPrice(btn, ok) {
+  var ask = btn.closest('tr.ask'), tr = ask.previousElementSibling;
+  if (ok) { tr.querySelector('[name=item_price_ok]').value = '1'; tr.querySelector('.price').classList.remove('ask'); ask.remove(); }
+  else { ask.remove(); tr.querySelector('.price').classList.remove('ask'); tr.querySelector('.price').focus(); tr.querySelector('.price').select(); }
+}
+function answerSimilar(btn) {
+  var tr = btn.closest('tr.ask').previousElementSibling;
+  pick(tr, { id: btn.dataset.id, name: btn.dataset.name, unit: btn.dataset.unit });
+}
+function answerNew(btn) {
+  var ask = btn.closest('tr.ask'), tr = ask.previousElementSibling;
+  tr.querySelector('[name=item_new]').value = '1';
+  tr.querySelector('[name=item_product_id]').value = '';
+  setUnitMode(tr, 'new');
+  ask.remove();
+  tr.querySelector('.cat').focus();
+}
+
+// оплата: подсветка выбранного и раскрытие его строки
+document.querySelectorAll('#pay input[name=payment]').forEach(function (r) {
+  r.addEventListener('change', function () {
+    document.querySelectorAll('#pay label.opt').forEach(function (l) { l.classList.toggle('on', l.querySelector('input[name=payment]').checked); });
+  });
+});
+// чипы-радио («для кого», счёт)
+document.querySelectorAll('label.chip input[type=radio]').forEach(function (r) {
+  r.addEventListener('change', function () {
+    document.querySelectorAll('input[name="' + r.name + '"]').forEach(function (o) { o.closest('label.chip').classList.toggle('on', o.checked); });
+  });
+});
+
+document.querySelectorAll('#items tr.row').forEach(initRow);
+ensureEmptyRow(); recalc();
+</script>
+{% endblock %}

@@ -1,0 +1,46 @@
+{% extends "new/base.html" %}
+{% block title %}{{ p.supplier.name }}, {{ p.date | human_date }} — Жемчужина{% endblock %}
+
+{% block content %}
+{% if saved %}<div class="alert ok">Записано. Склад пополнился, покупка появится в ленте.</div>{% endif %}
+{% if p.deleted_at %}<div class="alert warn">Покупка убрана {{ p.deleted_at.strftime('%d.%m %H:%M') }}. Склад и долг откатились, запись осталась в истории.</div>{% endif %}
+
+<div class="card">
+  <h3>{{ p.supplier.name }}, {{ p.date | human_date }}</h3>
+  <div class="meta">
+    Покупка, {{ lines | length }} {% if lines | length == 1 %}позиция{% elif lines | length < 5 %}позиции{% else %}позиций{% endif %},
+    {% if p.for_org %}для: {{ p.for_org.name }}{% else %}общее{% endif %}.
+    {% if p.payment == 'debt' %}<b>В долг, не оплачено.</b> Долг {{ p.supplier.name }} сейчас {{ supplier_debt | money }}.
+    {% elif p.payment == 'cash' %}Заплатили из кассы{% if p.paid_from_user %}, карман: {{ p.paid_from_user.name }}{% endif %}.
+    {% elif p.payment == 'account' %}Перевели со счёта{% if p.account_org %} {{ p.account_org.name }}{% endif %}.
+    {% elif p.payment == 'part' %}Заплатили {{ p.paid_amount | money }}{% if p.paid_from_user %} из кармана {{ p.paid_from_user.name }}{% endif %}, <b>остальное в долг</b>. Долг {{ p.supplier.name }} сейчас {{ supplier_debt | money }}.
+    {% elif p.payment == 'founder' %}Заплатил учредитель{% if p.founder %} {{ p.founder.name }}{% endif %} своими деньгами: взнос и расход одной записью.
+    {% endif %}
+    {% if p.creator %}Завёл(а) {{ p.creator.name }}{% if p.created_at %} {{ p.created_at.strftime('%d.%m в %H:%M') }}{% endif %}.{% endif %}
+  </div>
+  <div class="acts">
+    <a class="btn" href="/new/buy">Ещё покупка</a>
+    {% if photo %}<a class="btn ghost" href="/media/{{ photo }}" target="_blank">Фото чека</a>{% endif %}
+    {% if can_write and not p.deleted_at %}
+    <button type="button" class="btn quiet right" onclick="document.getElementById('rm').hidden=false;this.hidden=true">Убрать покупку</button>
+    {% endif %}
+  </div>
+  {% if can_write and not p.deleted_at %}
+  <form id="rm" method="post" action="/new/buy/{{ p.id }}/remove" hidden style="margin:-6px 0 16px">
+    <div class="alert warn" style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin:0">
+      <span>Точно убрать? Покупка уйдёт из ленты, склад и долг откатятся.</span>
+      <button type="submit" class="btn quiet">Да, убрать</button>
+      <button type="button" class="btn ghost" onclick="this.closest('form').hidden=true;document.querySelector('.acts .quiet').hidden=false">Оставить</button>
+    </div>
+  </form>
+  {% endif %}
+
+  <table class="tbl">
+    {% for l in lines %}
+    <tr><td>{{ l.name }}</td><td class="r q">{{ l.qty }} {{ l.unit }} × {{ l.price }}</td><td class="r">{{ l.total }}</td></tr>
+    {% endfor %}
+    <tr class="tot"><td>Итого</td><td></td><td class="r">{{ p.total | money }}</td></tr>
+  </table>
+  {% if p.note %}<p class="after">{{ p.note }}</p>{% endif %}
+</div>
+{% endblock %}

@@ -265,10 +265,53 @@ class Transaction(Base):
     # окладу (аванс, часть, неполный месяц). Вместе с `period` — месяц, за
     # который выдано, — даёт полную картину по каждому человеку.
     employee_id     = Column(Integer, ForeignKey("employees.id"), nullable=True)
+    # Новый вход (16.09, экран «Купили»): проводки одной покупки смотрят на
+    # шапку `purchases`; карман плательщика и счёт объекта — на проводке, чтобы
+    # новая Касса считала карманы по любому расходу, не только по покупкам.
+    purchase_id       = Column(Integer, ForeignKey("purchases.id"), nullable=True)
+    paid_from_user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    account_org_id    = Column(Integer, ForeignKey("organizations.id"), nullable=True)
     created_by      = Column(Integer, ForeignKey("users.id"))
     created_at      = Column(DateTime, server_default=func.now())
     updated_at      = Column(DateTime, server_default=func.now(), onupdate=func.now())
     deleted_at      = Column(DateTime)
+
+
+class Purchase(Base):
+    """Покупка одной записью (новый вход, макет 2б, 16.09): у кого, когда,
+    итог, как оплачено, из чьего кармана, для кого. Деньги и склад по-прежнему
+    живут в Transaction / WarehouseReceipt / supplier_ledger — шапка их
+    связывает, а не дублирует. `for_org_id` NULL — «общее», делится правилом
+    из Настроек только для показа раздельной экономики."""
+    __tablename__ = "purchases"
+    id                = Column(Integer, primary_key=True)
+    site_org_id       = Column(Integer, ForeignKey("organizations.id"), nullable=False)
+    supplier_id       = Column(Integer, ForeignKey("suppliers.id"), nullable=False)
+    date              = Column(Date, nullable=False)
+    total             = Column(Numeric(12, 2), nullable=False)
+    payment           = Column(String(10), nullable=False)  # debt|cash|account|part|founder
+    paid_amount       = Column(Numeric(12, 2), nullable=False, default=0, server_default='0')
+    paid_from_user_id = Column(Integer, ForeignKey("users.id"))
+    account_org_id    = Column(Integer, ForeignKey("organizations.id"))
+    founder_id        = Column(Integer, ForeignKey("users.id"))
+    funding_id        = Column(Integer, ForeignKey("cash_fundings.id"))
+    for_org_id        = Column(Integer, ForeignKey("organizations.id"))
+    receipt_id        = Column(Integer, ForeignKey("receipts.id"))
+    note              = Column(Text)
+    dup_confirmed     = Column(Boolean, nullable=False, default=False, server_default='false')
+    created_by        = Column(Integer, ForeignKey("users.id"))
+    created_at        = Column(DateTime, server_default=func.now())
+    deleted_at        = Column(DateTime)
+    deleted_by        = Column(Integer, ForeignKey("users.id"))
+
+    supplier       = relationship("Supplier")
+    for_org        = relationship("Organization", foreign_keys=[for_org_id])
+    account_org    = relationship("Organization", foreign_keys=[account_org_id])
+    paid_from_user = relationship("User", foreign_keys=[paid_from_user_id])
+    founder        = relationship("User", foreign_keys=[founder_id])
+    creator        = relationship("User", foreign_keys=[created_by])
+    transactions   = relationship("Transaction", primaryjoin="Purchase.id == Transaction.purchase_id",
+                                  foreign_keys="Transaction.purchase_id")
 
 
 class ReceiptTransaction(Base):
@@ -316,6 +359,10 @@ class Product(Base):
     # взвешивания на инвентаризации (27.07). NULL = не заполнено, авто-списание для
     # этого товара не считается, а ждёт ручного ввода количества.
     grams_per_unit      = Column(Numeric(10, 2), nullable=True)
+    # Фасовка (макет 3г, 16.09): «лоток» = 30 шт, «мешок» = 25 кг. При покупке
+    # можно ввести количество в фасовке, форма переведёт в единицу карточки.
+    pack_name           = Column(String(20), nullable=True)
+    pack_qty            = Column(Numeric(10, 3), nullable=True)
     created_at          = Column(DateTime, server_default=func.now())
 
     aliases = relationship("ProductAlias", back_populates="product")
