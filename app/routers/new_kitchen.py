@@ -13,6 +13,7 @@ from app.dependencies import get_current_user
 from app.models import Organization, Product
 from app.routers.new_buy import WRITE_ROLES, _base_ctx, _site, templates
 from app.services import kitchen as svc
+from app.services import recognize as rz
 from app.services.ocr import compute_hash
 from app.services.products import rank_candidates
 
@@ -138,6 +139,33 @@ async def kitchen_submit(request: Request, photo: UploadFile | None = File(None)
     children = int(children_raw) if children_raw.isdigit() else None
     if children_raw and children is None:
         return render("Едоков — целое число")
+
+    if form.get("action") == "recognize":
+        if photo is None or not photo.filename:
+            return render("Сначала выберите фото листа")
+        data = await photo.read()
+        if not data:
+            return render("Файл пустой")
+        try:
+            out = rz.recognize(db, data, rz.KITCHEN, site.id,
+                               mime="image/png" if photo.filename.lower().endswith(".png") else "image/jpeg")
+        except Exception as e:  # noqa: BLE001
+            return render(f"Не удалось разобрать фото: {e}")
+        lists = {"item_product_id": [], "item_name": [], "item_qty": [], "item_unit": []}
+        errors = {}
+        for i, r in enumerate(out["rows"]):
+            lists["item_product_id"].append(str(r["product_id"]) if r["product_id"] else "")
+            lists["item_name"].append(r["name"] or r["raw"])
+            lists["item_qty"].append(svc.fmt_qty(r["qty"]) if r["qty"] is not None else "")
+            lists["item_unit"].append(r["unit"] if r["product_id"] else "")
+            note = "; ".join(r.get("notes") or [])
+            if r.get("question"):
+                errors[i] = r["question"]["text"]
+            elif note:
+                errors[i] = note
+        if not out["rows"]:
+            return render("На фото не нашлось строк. Заполните руками.")
+        return render("Строки заполнены с фото: проверьте каждую и нажмите «Внести»", errors)
 
     items, errors = svc.resolve_rows(db, lists)
     if errors:

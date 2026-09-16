@@ -51,7 +51,7 @@
     {% else %}<span>Что повара взяли на готовку за день. Одна строка — один продукт, взятия за день можно сложить: «0,5 + 3,5».</span>{% endif %}
     <span>Едоков <input class="in kids" name="children" value="{{ children }}" inputmode="numeric" placeholder="—"></span>
     {% if not sheet and not like_date %}<a href="/new/kitchen?date={{ d.isoformat() }}&like=1">Как вчера</a>{% endif %}
-    <span>Фото листа <input type="file" name="photo" accept="image/*" capture="environment" style="font-size:14px">{% if photo_path %}<a href="/media/{{ photo_path }}" target="_blank">приложено</a>{% endif %}</span>
+    <span>Фото листа <input type="file" name="photo" accept="image/*" capture="environment" style="font-size:14px">{% if photo_path %}<a href="/media/{{ photo_path }}" target="_blank">приложено</a>{% endif %} {% if can_write %}<button type="submit" class="btn ghost" name="action" value="recognize" style="min-height:36px;padding:6px 12px">Разобрать фото</button>{% endif %}</span>
   </div>
   {% if missing %}
   <p class="missing">Не внесены ещё: {% for m in missing %}<a href="/new/kitchen?date={{ m.isoformat() }}">{{ m | human_date(true) }}</a>{% endfor %}{% if missing_total > missing|length %}и ещё {{ missing_total - missing|length }}{% endif %}</p>

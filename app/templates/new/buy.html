@@ -85,6 +85,7 @@
         <input class="in wide name" name="item_name" value="{{ r.name }}" placeholder="{% if loop.last %}Ещё товар…{% else %}Товар{% endif %}"
                data-unit="{{ r.unit }}" data-pack="{{ r.pack_name or '' }}" data-packqty="{{ r.pack_qty or '' }}">
         <div class="dd"></div>
+        {% if r.hint %}<span style="display:block;font-size:13px;color:var(--warn);margin-top:2px">{{ r.hint }}</span>{% endif %}
         <div class="newbox" {% if not (r.is_new or (r.question and r.question.kind == 'new')) %}hidden{% endif %}>
           <select class="in cat" name="item_category_id">
             <option value="">Категория…</option>
@@ -147,7 +148,9 @@
         <span class="lb">Фото чека</span>
         {% if photo_receipt_id %}<span>приложено</span>{% endif %}
         <input type="file" name="photo" accept="image/*" capture="environment" style="font-size:14px">
+        <button type="submit" class="btn ghost" name="action" value="recognize" style="min-height:40px;padding:8px 14px">Заполнить с фото</button>
       </div>
+      {% if recognized_amount %}<p class="sub">По чеку итог <b>{{ recognized_amount | money }}</b>. Строки заполнены с фото, проверьте каждую.</p>{% endif %}
 
       <h4>Оплата</h4>
       <div class="pay" id="pay">

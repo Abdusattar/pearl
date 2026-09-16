@@ -14,7 +14,7 @@ from app.models import Organization, Student
 from app.routers.new_buy import WRITE_ROLES, _base_ctx, _site, templates
 from app.services import children as svc
 from app.services.billing import generate_monthly_charges
-from app.services.purchases import pocket_users, site_orgs
+from app.services.purchases import default_pocket, pocket_users, site_orgs
 
 router = APIRouter(prefix="/new", tags=["new"])
 
@@ -57,7 +57,7 @@ def child_page(student_id: int, request: Request, saved: int = 0, cash: int = 0,
     ctx.update({"s": student, "card": svc.child_card(db, student), "saved": bool(saved), "cash_open": bool(cash),
                 "org": db.get(Organization, student.organization_id), "pockets": pocket_users(db, site.id),
                 "can_write": user.role in WRITE_ROLES, "today": date.today(), "error": None, "month": svc.month_name(date.today()),
-                "amount": "", "what": "", "pay_date": date.today(), "pocket_user_id": user.id})
+                "amount": "", "what": "", "pay_date": date.today(), "pocket_user_id": default_pocket(db, site.id, user)})
     return templates.TemplateResponse("new/child.html", ctx)
 
 
@@ -81,7 +81,7 @@ def child_cash(student_id: int, request: Request, amount: str = Form(""), what: 
         d = date.fromisoformat(pay_date) if pay_date else date.today()
     except ValueError:
         d = date.today()
-    pocket = int(pocket_user_id) if pocket_user_id.isdigit() else user.id
+    pocket = int(pocket_user_id) if pocket_user_id.isdigit() else default_pocket(db, site.id, user)
     error = None
     if amt is None or amt <= 0:
         error = "Укажите сумму"

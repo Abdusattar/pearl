@@ -375,9 +375,10 @@ def _row_dict(product: Product | None, qty=None, price=None, name: str | None = 
     }
 
 
-def buy_rows_as_submitted(db: Session, form: dict, questions: dict | None = None) -> list[dict]:
-    """Строки формы «Купили» как их прислал человек, плюс вопросы по индексу."""
+def buy_rows_as_submitted(db: Session, form: dict, questions: dict | None = None, hints: dict | None = None) -> list[dict]:
+    """Строки формы «Купили» как их прислал человек, плюс вопросы и пометки по индексу."""
     questions = questions or {}
+    hints = hints or {}
     rows = []
     n = len(form.get("item_name", []))
     for i in range(n):
@@ -396,8 +397,31 @@ def buy_rows_as_submitted(db: Session, form: dict, questions: dict | None = None
         row["is_new"] = _str_at(form.get("item_new", []), i) == "1"
         row["category_id"] = int(cat) if cat.isdigit() else None
         row["question"] = questions.get(i)
+        row["hint"] = hints.get(i)
         rows.append(row)
     return rows
+
+
+def rows_from_recognized(rec_rows: list[dict]) -> tuple[dict, dict, dict]:
+    """Строки распознавания → поля формы «Купили» + вопросы и пометки по индексу."""
+    from app.services.kitchen import fmt_qty
+    lists = {k: [] for k in ("item_name", "item_product_id", "item_qty", "item_unit", "item_unit_price",
+                             "item_price_ok", "item_new", "item_category_id")}
+    questions, hints = {}, {}
+    for i, r in enumerate(rec_rows):
+        lists["item_name"].append(r["name"] or r["raw"])
+        lists["item_product_id"].append(str(r["product_id"]) if r["product_id"] else "")
+        lists["item_qty"].append(fmt_qty(r["qty"]) if r["qty"] is not None else "")
+        lists["item_unit"].append(r["unit"] if r["product_id"] else "")
+        lists["item_unit_price"].append(fmt_qty(r["price"]) if r["price"] is not None else "")
+        lists["item_price_ok"].append("")
+        lists["item_new"].append("")
+        lists["item_category_id"].append("")
+        if r.get("question"):
+            questions[i] = r["question"]
+        if r.get("notes"):
+            hints[i] = "; ".join(r["notes"])
+    return lists, questions, hints
 
 
 def _expense_category_for(db: Session, category: ProductCategory | None) -> int | None:
@@ -575,6 +599,22 @@ def pocket_users(db: Session, site_org_id: int) -> list[User]:
         .order_by(User.name)
         .all()
     )
+
+
+OPERATIONAL_ROLES = ("staff", "manager", "director")
+
+
+def default_pocket(db: Session, site_org_id: int, user: User) -> int:
+    """Чей карман подставлять по умолчанию: свой у сотрудников площадки;
+    владелец и учредители своих карманов не ведут (вопрос владельца 16.09) —
+    им подставляется держатель кассы объекта, иначе первый из людей площадки."""
+    if user.role in OPERATIONAL_ROLES:
+        return user.id
+    org = db.get(Organization, site_org_id)
+    if org and org.cash_recipient_user_id:
+        return org.cash_recipient_user_id
+    people = pocket_users(db, site_org_id)
+    return people[0].id if people else user.id
 
 
 def founders(db: Session) -> list[User]:

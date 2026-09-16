@@ -19,6 +19,7 @@ from app.database import get_db
 from app.dependencies import get_current_user, resolve_org
 from app.models import Organization, Product, ProductCategory, Purchase, Receipt, Supplier, User
 from app.services import purchases as svc
+from app.services import recognize as rz
 from app.services.ocr import compute_hash
 from app.services.price_check import fmt_money, usual_price
 from app.services.products import UNITS, rank_candidates
@@ -88,7 +89,7 @@ def _form_ctx(request: Request, user: User, site: Organization, db: Session, *,
         "all_suppliers": db.query(Supplier).order_by(Supplier.name).all(),
         "rows": rows, "last_date": last_date, "tx_date": tx_date, "today": date.today(),
         "payment": payment, "for_org": for_org, "ask_for_org": ask_for_org,
-        "payer_id": payer_id or user.id, "account_org_id": account_org_id, "founder_id": founder_id,
+        "payer_id": payer_id or svc.default_pocket(db, site.id, user), "account_org_id": account_org_id, "founder_id": founder_id,
         "paid_amount": paid_amount, "note": note, "photo_receipt_id": photo_receipt_id,
         "pockets": svc.pocket_users(db, site.id), "founders": svc.founders(db),
         "categories": db.query(ProductCategory).order_by(ProductCategory.sort_order).all(),
@@ -173,7 +174,7 @@ async def buy_submit(request: Request, photo: UploadFile | None = File(None), db
     tx_date = date.fromisoformat(date_str) if date_str else date.today()
     payment = form.get("payment") or "cash"
     for_org = form.get("for_org") or "shared"
-    payer_id = _int_or_none(form.get("payer_id")) or user.id
+    payer_id = _int_or_none(form.get("payer_id")) or svc.default_pocket(db, site.id, user)
     account_org_id = _int_or_none(form.get("account_org_id"))
     founder_id = _int_or_none(form.get("founder_id"))
     paid_amount = (form.get("paid_amount") or "").strip()
@@ -191,14 +192,15 @@ async def buy_submit(request: Request, photo: UploadFile | None = File(None), db
             db.commit()
 
     def render(error: str | None = None, questions: dict | None = None, dup: dict | None = None,
-               ask_for_org: bool = False):
-        rows = svc.buy_rows_as_submitted(db, lists, questions)
+               ask_for_org: bool = False, hints: dict | None = None, recognized_amount: float | None = None):
+        rows = svc.buy_rows_as_submitted(db, lists, questions, hints)
         _, last_date = None, None
         ctx = _form_ctx(request, user, site, db, supplier=supplier, other=other or supplier is None, rows=rows,
                         last_date=last_date, tx_date=tx_date, payment=payment, for_org=for_org,
                         payer_id=payer_id, account_org_id=account_org_id, founder_id=founder_id,
                         paid_amount=paid_amount, note=note or "", photo_receipt_id=photo_receipt_id,
                         dup=dup, error=error, ask_for_org=ask_for_org)
+        ctx["recognized_amount"] = recognized_amount
         return templates.TemplateResponse("new/buy.html", ctx)
 
     if supplier is None:
@@ -227,6 +229,22 @@ async def buy_submit(request: Request, photo: UploadFile | None = File(None), db
                 db.add(receipt)
                 db.commit()
                 photo_receipt_id = receipt.id
+
+    if form.get("action") == "recognize":
+        # «Заполнить с фото»: единый конвейер (services/recognize.py), ничего не пишет
+        if not photo_receipt_id:
+            return render("Сначала выберите фото чека")
+        receipt = db.get(Receipt, photo_receipt_id)
+        path = MEDIA_DIR.parent / receipt.file_path
+        try:
+            out = rz.recognize(db, path.read_bytes(), rz.RECEIPT, site.id, supplier.id,
+                               mime="image/png" if path.suffix.lower() == ".png" else "image/jpeg")
+        except Exception as e:  # noqa: BLE001 — модель недоступна: форма остаётся рабочей
+            return render(f"Не удалось разобрать фото: {e}")
+        lists, questions, hints = svc.rows_from_recognized(out["rows"])
+        if not out["rows"]:
+            return render("На фото не нашлось строк с товарами. Заполните руками.")
+        return render(None, questions or None, hints=hints, recognized_amount=out.get("amount"))
 
     items, questions, error = svc.resolve_buy_rows(db, lists, tx_date)
     if error:

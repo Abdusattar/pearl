@@ -13,7 +13,7 @@ from app.dependencies import get_current_user
 from app.models import Supplier
 from app.routers.new_buy import WRITE_ROLES, _base_ctx, _site, templates
 from app.services import ledger as svc
-from app.services.purchases import founders, pocket_users, site_orgs
+from app.services.purchases import default_pocket, founders, pocket_users, site_orgs
 from app.services.supplier_ledger import get_supplier_balance
 from app.services.today import supplier_debts
 
@@ -54,7 +54,7 @@ def _pay_ctx(request, user, site, db, supplier: Supplier | None, **kw) -> dict:
         "balance": float(get_supplier_balance(db, supplier.id)) if supplier else 0.0,
         "pockets": pocket_users(db, site.id), "site_orgs": site_orgs(db, site.id),
         "today": date.today(), "can_write": user.role in WRITE_ROLES,
-        "amount": kw.get("amount", ""), "source": kw.get("source", "cash"), "payer_id": kw.get("payer_id", user.id),
+        "amount": kw.get("amount", ""), "source": kw.get("source", "cash"), "payer_id": kw.get("payer_id", default_pocket(db, site.id, user)),
         "account_org_id": kw.get("account_org_id"), "pay_date": kw.get("pay_date", date.today()),
         "comment": kw.get("comment", ""), "error": kw.get("error"), "saved": kw.get("saved"),
     })
@@ -89,7 +89,7 @@ def pay_submit(request: Request, supplier_id: int = Form(...), amount: str = For
     sup = db.get(Supplier, supplier_id)
     if site is None or sup is None:
         return HTMLResponse("Поставщик не найден", status_code=404)
-    payer = int(payer_id) if payer_id.isdigit() else user.id
+    payer = int(payer_id) if payer_id.isdigit() else default_pocket(db, site.id, user)
     acc = int(account_org_id) if account_org_id.isdigit() else None
     try:
         d = date.fromisoformat(pay_date) if pay_date else date.today()

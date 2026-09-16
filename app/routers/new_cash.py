@@ -14,7 +14,7 @@ from app.dependencies import get_current_user
 from app.models import User
 from app.routers.new_buy import WRITE_ROLES, _base_ctx, _site, templates
 from app.services import cash as svc
-from app.services.purchases import site_orgs
+from app.services.purchases import OPERATIONAL_ROLES, default_pocket, site_orgs
 
 router = APIRouter(prefix="/new", tags=["new"])
 
@@ -61,16 +61,17 @@ def cash_page(request: Request, saved: str | None = None, db: Session = Depends(
 def _form_ctx(request, user, site, db, kind: str, **kw) -> dict:
     ctx = _base_ctx(request, user, site, db, "cash")
     people = svc.pocket_people(db, site.id)
-    if user.id not in {p.id for p in people} and user.role != "founder":
+    if user.id not in {p.id for p in people} and user.role in OPERATIONAL_ROLES:
         people.append(user)
-    my = svc.pocket_balance(db, site.id, user.id) if user.role != "founder" else None
+    me = default_pocket(db, site.id, user)
+    my = svc.pocket_balance(db, site.id, me)
     ctx.update({
         "kind": kind, "title": FORMS[kind], "people": people, "site_orgs": site_orgs(db, site.id),
         "founders": svc.founder_list(db), "today": date.today(), "my_balance": my,
         "pocket_balances": {p.id: svc.pocket_balance(db, site.id, p.id) for p in people},
         "amount": kw.get("amount", ""), "d": kw.get("d", date.today()), "comment": kw.get("comment", ""),
-        "account_org_id": kw.get("account_org_id"), "from_user_id": kw.get("from_user_id", user.id),
-        "to_user_id": kw.get("to_user_id"), "pocket_user_id": kw.get("pocket_user_id", user.id),
+        "account_org_id": kw.get("account_org_id"), "from_user_id": kw.get("from_user_id", me),
+        "to_user_id": kw.get("to_user_id"), "pocket_user_id": kw.get("pocket_user_id", me),
         "founder_id": kw.get("founder_id"), "direction": kw.get("direction", "fund"),
         "reason": kw.get("reason", ""), "error": kw.get("error"), "can_write": user.role in WRITE_ROLES,
     })
@@ -119,13 +120,13 @@ async def cash_submit(kind: str, request: Request, db: Session = Depends(get_db)
     if kind != "recount" and amount is None:
         return render("Укажите сумму")
     orgs = {o.id for o in site_orgs(db, site.id)}
-    people = {p.id for p in svc.pocket_people(db, site.id)} | {user.id}
+    people = {p.id for p in svc.pocket_people(db, site.id)} | ({user.id} if user.role in OPERATIONAL_ROLES else set())
     try:
         if kind == "withdraw":
             if ints["account_org_id"] not in orgs:
                 return render("Со счёта садика или школы? Выберите")
             svc.withdraw(db, user=user, site_org_id=site.id, account_org_id=ints["account_org_id"], amount=amount, d=d,
-                         comment=g("comment") or None, pocket_user_id=ints["pocket_user_id"] or user.id)
+                         comment=g("comment") or None, pocket_user_id=ints["pocket_user_id"] or default_pocket(db, site.id, user))
             msg = "withdraw"
         elif kind == "transfer":
             if ints["from_user_id"] not in people or ints["to_user_id"] not in people:
