@@ -1,0 +1,43 @@
+{% extends "new/base.html" %}
+{% block title %}Расходы, {{ month_name }} — Жемчужина{% endblock %}
+
+{% block head %}
+<style>
+  .head { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 6px; }
+  .head h3 .m { color: var(--muted); font-weight: 400; }
+  .head h3 .m a { color: var(--muted); text-decoration: none; padding: 0 6px; }
+  .links { display: flex; flex-wrap: wrap; gap: 8px 18px; margin: 0 0 18px; font-size: 14px; }
+  .links a { text-decoration: none; }
+  .day { font-size: 13px; font-weight: 600; color: var(--muted); padding: 14px 0 4px; }
+  .row { display: grid; grid-template-columns: 1fr auto; gap: 4px 16px; align-items: baseline; padding: 10px 0; border-top: 1px solid var(--line); color: inherit; text-decoration: none; min-height: 48px; }
+  .day + .row { border-top: 0; }
+  .row .t { font-size: 15px; } .row .s { font-size: 13px; color: var(--muted); }
+  .n { font-size: 15px; font-weight: 500; font-variant-numeric: tabular-nums; text-align: right; white-space: nowrap; }
+  .st { font-size: 13px; color: var(--muted); text-align: right; display: block; }
+  .st.debt { color: var(--warn); }
+  .empty { color: var(--muted); padding: 20px 0; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="head">
+  <h3 class="title" style="margin:0">Расходы <span class="m"><a href="/new/expenses?month={{ prev_key }}">‹</a>{{ month_name }}{% if next_key %}<a href="/new/expenses?month={{ next_key }}">›</a>{% endif %}</span></h3>
+  {% if can_write %}<a class="btn" href="/new/buy">Купили</a>{% endif %}
+</div>
+<p class="sub">За {{ month_name }} <b>{{ totals.total | money }} сом</b>: продукты {{ totals.food | money }}, зарплата {{ totals.salary | money }}, остальное {{ totals.other | money }}. Должны поставщикам <b>{{ debt_total | money }}</b>{% if debts %}: {% for d in debts[:3] %}{{ d.name }} {{ d.debt | money }}{% if not loop.last %}, {% endif %}{% endfor %}{% endif %}.</p>
+<div class="links">
+  <a href="/expenses/add?category_id=service">Расход без чека</a>
+  <a href="/new/pay">Оплатить поставщику</a>
+  <a href="/suppliers/">Поставщики и долги</a>
+</div>
+
+{% for day in days %}
+<div class="day">{{ day.date | human_date(true) | capitalize }}</div>
+{% for r in day.rows %}
+<a class="row" href="{{ r.url }}"><span><span class="t">{{ r.title }}</span><br><span class="s">{{ r.sub }}</span></span><span><span class="n">{% if r.amount < 0 %}−{{ (-r.amount) | money }}{% else %}{{ r.amount | money }}{% endif %}</span><span class="st {{ r.status_kind }}">{{ r.status }}</span></span></a>
+{% endfor %}
+{% else %}
+<div class="empty">За {{ month_name }} расходов нет.</div>
+{% endfor %}
+<p class="after">Покупки старого входа открываются в старом входе, новые — карточкой. Расход без чека пока тоже через старый вход.</p>
+{% endblock %}

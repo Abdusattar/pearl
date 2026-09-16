@@ -19,7 +19,9 @@
     {% if p.creator %}Завёл(а) {{ p.creator.name }}{% if p.created_at %} {{ p.created_at.strftime('%d.%m в %H:%M') }}{% endif %}.{% endif %}
   </div>
   <div class="acts">
-    <a class="btn" href="/new/buy">Ещё покупка</a>
+    {% if can_write and not p.deleted_at and supplier_debt > 0 and p.payment in ('debt', 'part') %}<a class="btn" href="/new/pay?supplier={{ p.supplier_id }}">Оплатить</a>{% endif %}
+    <a class="btn {% if can_write and not p.deleted_at and supplier_debt > 0 and p.payment in ('debt', 'part') %}ghost{% endif %}" href="/new/buy">Ещё покупка</a>
+    <a class="btn ghost" href="/new/expenses">В ленту</a>
     {% if photo %}<a class="btn ghost" href="/media/{{ photo }}" target="_blank">Фото чека</a>{% endif %}
     {% if can_write and not p.deleted_at %}
     <button type="button" class="btn quiet right" onclick="document.getElementById('rm').hidden=false;this.hidden=true">Убрать покупку</button>

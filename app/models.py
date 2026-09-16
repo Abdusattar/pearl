@@ -215,9 +215,19 @@ class SupplierPayment(Base):
     amount      = Column(Numeric(12, 2), nullable=False)
     date        = Column(Date, nullable=False)
     comment     = Column(Text)
+    # Откуда деньги (новый вход, 16.09): площадка, карман плательщика либо счёт
+    # объекта. Заполнено — платёж уменьшает кассу площадки (podotchet); NULL —
+    # старый платёж, только долг.
+    organization_id   = Column(Integer, ForeignKey("organizations.id"))
+    paid_from_user_id = Column(Integer, ForeignKey("users.id"))
+    account_org_id    = Column(Integer, ForeignKey("organizations.id"))
+    paid_directly     = Column(Boolean, nullable=False, default=False, server_default='false')
     created_by  = Column(Integer, ForeignKey("users.id"))
     created_at  = Column(DateTime, server_default=func.now())
     deleted_at  = Column(DateTime)
+
+    supplier       = relationship("Supplier")
+    paid_from_user = relationship("User", foreign_keys=[paid_from_user_id])
 
 
 class Transaction(Base):
