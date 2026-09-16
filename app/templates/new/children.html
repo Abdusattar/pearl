@@ -1,0 +1,39 @@
+{% extends "new/base.html" %}
+{% block title %}Дети — Жемчужина{% endblock %}
+
+{% block head %}
+<style>
+  .head { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 6px; }
+  .tag { display: inline-block; font-size: 12px; padding: 2px 8px; border-radius: 999px; background: var(--warn-soft); color: var(--warn); margin-left: 6px; vertical-align: middle; }
+  .day { font-size: 13px; font-weight: 600; color: var(--muted); padding: 14px 0 4px; }
+  .row { display: grid; grid-template-columns: 1fr auto; gap: 4px 16px; align-items: baseline; padding: 9px 0; border-top: 1px solid var(--line); color: inherit; text-decoration: none; min-height: 44px; }
+  .day + .row { border-top: 0; }
+  .row .t { font-size: 15px; } .row .s { font-size: 13px; color: var(--muted); }
+  .n { font-size: 15px; font-weight: 500; font-variant-numeric: tabular-nums; text-align: right; white-space: nowrap; }
+  .st { font-size: 13px; color: var(--muted); text-align: right; display: block; }
+  .st.debt { color: var(--warn); } .st.bad { color: var(--bad); } .st.ok { color: var(--ok); } .st.over { color: var(--accent); }
+  form.find { display: inline-flex; gap: 6px; }
+  form.find .in { height: 40px; width: 200px; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="head"><h3 class="title" style="margin:0">Дети</h3></div>
+<p class="sub">{{ current.name }}: {{ data.count }} детей{% if data.tariff %}, должны нам <b>{{ data.debt_total | money }}</b>{% if data.old_total > 0 %}, из них старше месяца {{ data.old_total | money }}{% endif %}{% else %}<span class="tag">тариф не заведён</span> — долга нет, пока Айжан не заведёт тариф по классам{% endif %}.</p>
+<div class="chips">
+  {% for o in orgs %}<a class="chip {% if o.id == current.id and not debt %}on{% endif %}" href="/new/children?org={{ o.id }}">{{ o.name }}</a>{% endfor %}
+  <a class="chip {% if debt %}on{% endif %}" href="/new/children?org={{ current.id }}&debt={{ 0 if debt else 1 }}">Только с долгом</a>
+  <form class="find" method="get" action="/new/children"><input type="hidden" name="org" value="{{ current.id }}"><input class="in" name="q" value="{{ q }}" placeholder="Найти по имени или PIN"></form>
+</div>
+<div class="links" style="display:flex;gap:18px;flex-wrap:wrap;font-size:14px;margin-bottom:6px"><a href="/income/">Оплаты через банк</a><a href="/students/add">Добавить ребёнка</a></div>
+
+{% for g in data.groups %}
+<div class="day">{{ g.name }}, {{ g.total }}</div>
+{% for r in g.rows %}
+<a class="row" href="/new/children/{{ r.s.id }}"><span><span class="t">{{ r.s.name }}</span>{% if r.sub %}<br><span class="s">{{ r.sub }}</span>{% endif %}</span><span><span class="n">{% if data.tariff %}{{ (r.balance if r.balance > 0 else 0) | money }}{% else %}—{% endif %}</span><span class="st {{ r.kind }}">{% if data.tariff %}{{ r.status }}{% else %}тариф не заведён{% endif %}</span></span></a>
+{% endfor %}
+{% else %}
+<p class="sub" style="margin-top:14px">Никого не нашлось.</p>
+{% endfor %}
+<p class="after">Оплата ложится на самый старый долг; «август и сентябрь» значит, что не закрыты оба. Добавление ребёнка, скидки и заморозка пока в старом входе.</p>
+{% endblock %}

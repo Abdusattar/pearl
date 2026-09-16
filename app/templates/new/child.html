@@ -1,0 +1,76 @@
+{% extends "new/base.html" %}
+{% block title %}{{ s.name }} — Жемчужина{% endblock %}
+
+{% block head %}
+<style>
+  .card .meta b.debt { color: var(--warn); } .card .meta b.bad { color: var(--bad); } .card .meta b.ok { color: var(--ok); }
+  .two { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; }
+  @media (max-width: 760px) { .two { grid-template-columns: 1fr; } }
+  .ev { display: grid; grid-template-columns: 110px 1fr auto; gap: 4px 14px; padding: 8px 0; border-top: 1px solid var(--line); font-size: 14px; align-items: baseline; }
+  .ev:first-of-type { border-top: 0; }
+  .ev .dt { color: var(--muted); font-size: 13px; white-space: nowrap; }
+  .ev .n { font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .ev.payment .n { color: var(--ok); }
+  .month { width: 100%; border-collapse: collapse; font-size: 14px; font-variant-numeric: tabular-nums; }
+  .month th { text-align: right; font-weight: 500; color: var(--muted); font-size: 12px; padding: 4px 0; }
+  .month th:first-child, .month td:first-child { text-align: left; }
+  .month td { padding: 6px 0; border-top: 1px solid var(--line); text-align: right; }
+  .month td.debt { color: var(--warn); }
+  .cash { background: var(--accent-soft); border-radius: 8px; padding: 14px 16px; margin: 0 0 16px; max-width: 520px; }
+  .cash .lb { display: block; font-size: 13px; color: var(--muted); margin: 10px 0 4px; }
+  .cash .in { height: 44px; font-size: 16px; }
+  .cash .in.num { width: 140px; text-align: right; }
+</style>
+{% endblock %}
+
+{% block content %}
+{% if saved %}<div class="alert ok">Оплата записана: у ребёнка событие «оплата наличными», деньги в кармане.</div>{% endif %}
+{% if error %}<div class="alert bad">{{ error }}</div>{% endif %}
+<p style="margin:0 0 10px"><a href="/new/children?org={{ s.organization_id }}">← Дети</a></p>
+<div class="card">
+  <h3>{{ s.name }}</h3>
+  <div class="meta">{{ org.name }}{% if card.group %}, {{ card.group }}{% endif %}.
+    {% if card.tariff is not none %}Тариф {{ card.tariff | money }}{% if s.discount_amount and s.discount_amount > 0 %}, скидка {{ s.discount_amount | money }}{% if s.discount_reason %} ({{ s.discount_reason }}){% endif %}{% endif %}.{% else %}Тариф не заведён.{% endif %}
+    {% if s.parent_name %}Родитель: {{ s.parent_name }}.{% endif %} PIN {{ s.pin }}.
+    {% if s.status == 'frozen' %}Заморожен.{% endif %}
+    {% if card.balance > 0.5 %}<b class="{{ card.kind }}">Долг {{ card.balance | money }}: {{ card.status }}.</b>{% elif card.overpaid > 0.5 %}<b class="ok">Переплата {{ card.overpaid | money }}, закроет следующий месяц.</b>{% else %}<b class="ok">Долга нет.</b>{% endif %}
+  </div>
+  <div class="acts">
+    {% if can_write %}<button type="button" class="btn" onclick="document.getElementById('cash').hidden=false;this.hidden=true;document.querySelector('#cash input[name=amount]').focus()" {% if cash_open %}hidden{% endif %}>Принять наличные</button>{% endif %}
+    <a class="btn ghost" href="/students/{{ s.id }}/edit">Поправить в старом входе</a>
+    <a class="btn ghost" href="/students/{{ s.id }}/history">История</a>
+  </div>
+  {% if can_write %}
+  <form id="cash" class="cash" method="post" action="/new/children/{{ s.id }}/cash" {% if not cash_open %}hidden{% endif %}>
+    <b>Принять наличные</b>
+    <span class="lb">Сколько</span><input class="in num" name="amount" value="{{ amount }}" inputmode="decimal" placeholder="{% if card.balance > 0.5 %}{{ card.balance | money }}{% else %}0{% endif %}">
+    <span class="lb">За что</span><input class="in" name="what" value="{{ what }}" placeholder="{{ org.name | lower }} за {{ month }}, канцелярия, проезд…" style="width:100%">
+    <span class="lb">Когда</span><input class="in" type="date" name="pay_date" value="{{ pay_date.isoformat() }}" max="{{ today.isoformat() }}">
+    <span class="lb">В чей карман</span>
+    <select class="in" name="pocket_user_id">{% for u in pockets %}<option value="{{ u.id }}" {% if u.id == pocket_user_id %}selected{% endif %}>{{ u.name }}{% if u.id == current_user.id %} (вы){% endif %}</option>{% endfor %}{% if current_user.id not in pockets|map(attribute='id')|list %}<option value="{{ current_user.id }}" selected>{{ current_user.name }} (вы)</option>{% endif %}</select>
+    <div style="margin-top:12px"><button type="submit" class="btn">Записать</button> <button type="button" class="btn ghost" onclick="document.getElementById('cash').hidden=true;document.querySelector('.acts .btn').hidden=false">Отмена</button></div>
+    <p class="after">Оплата ляжет на самый старый долг. Деньги попадут в выбранный карман, на счёт они не попадали.</p>
+  </form>
+  {% endif %}
+  <div class="two">
+    <section>
+      <h4>События</h4>
+      {% for e in card.events %}
+      <div class="ev {{ e.kind }}"><span class="dt">{{ e.date | human_date }}</span><span>{{ e.text }}</span><span class="n">{% if e.amount is not none %}{% if e.kind == 'payment' %}+{% endif %}{{ e.amount | money }}{% endif %}</span></div>
+      {% else %}<div class="ev"><span class="dt"></span><span class="s">Событий пока нет.</span><span></span></div>{% endfor %}
+    </section>
+    <section>
+      <h4>По месяцам</h4>
+      {% if card.months %}
+      <table class="month">
+        <tr><th>Месяц</th><th>Начислено</th><th>Оплачено</th><th>Долг</th></tr>
+        {% for m in card.months %}
+        <tr><td>{{ m.period.strftime('%m.%Y') }}</td><td>{{ m.charged | money }}</td><td>{{ m.paid | money }}</td><td class="{% if m.left > 0.5 %}debt{% endif %}">{{ m.left | money }}</td></tr>
+        {% endfor %}
+      </table>
+      {% else %}<p class="sub">Начислений нет.</p>{% endif %}
+      <p class="after">Сумму долга руками не правят: меняется событие, долг пересчитывается сам. Скидка, заморозка и «выбыл» пока через старый вход.</p>
+    </section>
+  </div>
+</div>
+{% endblock %}
