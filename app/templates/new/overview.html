@@ -1,0 +1,62 @@
+{% extends "new/base.html" %}
+{% block title %}Обзор — Жемчужина{% endblock %}
+
+{% block head %}
+<style>
+  .phone { max-width: 520px; }
+  .status { font-size: 20px; font-weight: 600; margin: 0 0 14px; }
+  .status.ok { color: var(--ok); }
+  .sig { display: grid; grid-template-columns: 1fr auto; align-items: center; gap: 10px; min-height: 48px; padding: 10px 12px; border-radius: 8px; background: var(--warn-soft); font-size: 15px; margin-top: 10px; color: inherit; text-decoration: none; }
+  .sig.info { background: var(--accent-soft); }
+  .sig .w { display: block; font-size: 13px; color: var(--muted); margin-top: 2px; }
+  .sig::after { content: "›"; font-size: 22px; color: var(--muted); line-height: 1; }
+  .sigs { margin-bottom: 18px; }
+  .fig { padding: 10px 0; border-top: 1px solid var(--line); }
+  .fig:first-of-type { border-top: 0; }
+  .fig .l { font-size: 13px; color: var(--muted); }
+  .fig .v { font-size: 22px; font-weight: 600; font-variant-numeric: tabular-nums; }
+  .fig .v span { font-size: 13px; color: var(--muted); font-weight: 400; margin-left: 3px; }
+  .fig .pk { font-size: 13px; color: var(--muted); margin-top: 2px; }
+  .month { width: 100%; border-collapse: collapse; margin-top: 8px; font-size: 14px; font-variant-numeric: tabular-nums; }
+  .month th { text-align: right; font-weight: 500; color: var(--muted); font-size: 12px; padding: 4px 0; }
+  .month th:first-child, .month td:first-child { text-align: left; }
+  .month td { padding: 6px 0; border-top: 1px solid var(--line); text-align: right; }
+  .month tr.tot td { font-weight: 600; }
+  .month td.nd { color: var(--muted); }
+  .links { display: flex; flex-wrap: wrap; gap: 8px 18px; margin-top: 18px; font-size: 14px; }
+  .links a { text-decoration: none; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="phone">
+  <p class="status {% if status == 'Всё в порядке' %}ok{% endif %}">{{ status }}</p>
+  {% if signals %}
+  <div class="sigs">
+    {% for s in signals %}<a class="sig {{ s.kind }}" href="{{ s.url }}"><span>{{ s.text }}{% if s.sub %}<span class="w">{{ s.sub }}</span>{% endif %}</span></a>{% endfor %}
+  </div>
+  {% endif %}
+
+  <div class="fig"><div class="l">На счетах</div><div class="v">{{ figures.accounts_total | money }}<span>сом</span></div>
+    <div class="pk">{% for a in figures.accounts %}{{ a.org.name | lower }} {{ a.expected | money }}{% if not loop.last %}, {% endif %}{% endfor %}</div></div>
+  <div class="fig"><div class="l">Наличных на руках</div><div class="v">{{ figures.cash | money }}<span>сом</span></div>
+    <div class="pk">{% for p in figures.pockets %}{{ p.user.name }} {{ p.balance | money }}{% if not loop.last %}, {% endif %}{% endfor %}</div></div>
+  <div class="fig"><div class="l">Продуктов на складе</div><div class="v">{{ figures.stock | money }}<span>сом</span></div><div class="pk">основные товары по цене закупки</div></div>
+  <div class="fig"><div class="l">Должны нам родители</div><div class="v">{{ figures.parents_total | money }}<span>сом</span></div>
+    <div class="pk">{% for p in figures.parents %}{{ p.org.name | lower }}: {% if p.tariff %}{{ p.debt | money }}{% else %}тариф не заведён{% endif %}{% if not loop.last %}; {% endif %}{% endfor %}</div></div>
+  <div class="fig"><div class="l">Должны мы поставщикам</div><div class="v">{{ figures.suppliers | money }}<span>сом</span></div><div class="pk">{{ figures.supplier_names }}</div></div>
+
+  <h4 style="margin-top:22px">{{ month_name | capitalize }}, по {{ table.last.day }} число</h4>
+  <table class="month">
+    <tr><th></th>{% for o in orgs %}<th>{{ o.name }}</th>{% endfor %}</tr>
+    <tr><td>Пришло от родителей</td>{% for o in orgs %}{% set c = table.cols[o.id] %}<td class="{% if not c.tariff and c.income == 0 %}nd{% endif %}">{% if not c.tariff and c.income == 0 %}нет данных{% else %}{{ c.income | money }}{% endif %}</td>{% endfor %}</tr>
+    <tr><td>Еда</td>{% for o in orgs %}<td>{{ table.cols[o.id].food | money }}</td>{% endfor %}</tr>
+    <tr><td>Зарплата</td>{% for o in orgs %}<td>{{ table.cols[o.id].salary | money }}</td>{% endfor %}</tr>
+    <tr><td>Свет, вода, охрана</td>{% for o in orgs %}<td>{{ table.cols[o.id].util | money }}</td>{% endfor %}</tr>
+    <tr><td>Ремонт и прочее</td>{% for o in orgs %}<td>{{ table.cols[o.id].other | money }}</td>{% endfor %}</tr>
+    <tr class="tot"><td>Осталось</td>{% for o in orgs %}{% set c = table.cols[o.id] %}<td class="{% if not c.tariff and c.income == 0 %}nd{% endif %}">{% if not c.tariff and c.income == 0 %}нет данных{% else %}{{ c.left | money }}{% endif %}</td>{% endfor %}</tr>
+  </table>
+  <p class="after">Общие расходы площадки (еда, свет, общие сотрудники) пока в колонке садика: правила деления придут с Настройками. Взносы и изъятия учредителей в «Осталось» не входят.</p>
+  <div class="links"><a href="/new/expenses">Расходы</a><a href="/new/cash">Касса</a><a href="/new/children">Дети</a><a href="/new/kitchen">Лист кухни</a></div>
+</div>
+{% endblock %}
