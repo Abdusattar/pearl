@@ -91,7 +91,7 @@
     <span class="lb">За что</span><input class="in" name="what" value="{{ what }}" placeholder="{{ org.name | lower }} за {{ month }}, канцелярия, проезд…" style="width:100%">
     <span class="lb">Когда</span><input class="in" type="date" name="pay_date" value="{{ pay_date.isoformat() }}" max="{{ today.isoformat() }}">
     <span class="lb">В чей карман</span>
-    <select class="in" name="pocket_user_id">{% for u in pockets %}<option value="{{ u.id }}" {% if u.id == pocket_user_id %}selected{% endif %}>{{ u.name }}{% if u.id == current_user.id %} (вы){% endif %}</option>{% endfor %}{% if current_user.id not in pockets|map(attribute='id')|list %}<option value="{{ current_user.id }}" selected>{{ current_user.name }} (вы)</option>{% endif %}</select>
+    <select class="in" name="pocket_user_id">{% for u in pockets %}<option value="{{ u.id }}" {% if u.id == pocket_user_id %}selected{% endif %}>{{ u.name }}{% if u.id == current_user.id %} (вы){% endif %}</option>{% endfor %}{% if current_user.role in ('staff', 'manager', 'director') and current_user.id not in pockets|map(attribute='id')|list %}<option value="{{ current_user.id }}" selected>{{ current_user.name }} (вы)</option>{% endif %}</select>
     <div style="margin-top:12px"><button type="submit" class="btn">Записать</button> <button type="button" class="btn ghost" onclick="document.getElementById('cash').hidden=true;document.querySelector('.acts .btn').hidden=false">Отмена</button></div>
     <p class="after">Оплата ляжет на самый старый долг. Деньги попадут в выбранный карман, на счёт они не попадали.</p>
   </form>
