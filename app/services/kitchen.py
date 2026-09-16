@@ -22,7 +22,9 @@ from app.services.warehouse import get_balance_map
 
 SHEET_REASON = "лист кухни"
 WORKING_WEEKDAYS = {0, 1, 2, 3, 4}   # пн–пт: кухня в субботу не работает (владелец, 16.09)
-LOOKBACK_DAYS = 7                    # без единого листа — невнесённые дни за последнюю неделю
+LOOKBACK_DAYS = 14                   # невнесённые дни ищем в окне двух недель, не «после последнего листа»:
+                                     # Махабат вносит пачками и не по порядку, пропуск раньше внесённого дня
+                                     # иначе исчезал бы из списка
 SUB_UNITS = {"кг": ("г", 1000), "л": ("мл", 1000)}
 EPS = 0.0005
 
@@ -88,10 +90,9 @@ def last_sheet(db: Session, site_org_id: int, before: date | None = None) -> Kit
 
 
 def missing_days(db: Session, site_org_id: int, until: date | None = None) -> list[date]:
-    """Рабочие дни без листа: от дня после последнего листа (или за неделю) до сегодня."""
+    """Рабочие дни без листа в окне LOOKBACK_DAYS до `until` включительно."""
     until = until or date.today()
-    last = last_sheet(db, site_org_id)
-    start = last.date + timedelta(days=1) if last else until - timedelta(days=LOOKBACK_DAYS)
+    start = until - timedelta(days=LOOKBACK_DAYS)
     have = {s.date for s in db.query(KitchenSheet)
             .filter(KitchenSheet.site_org_id == site_org_id, KitchenSheet.deleted_at.is_(None),
                     KitchenSheet.date >= start).all()}

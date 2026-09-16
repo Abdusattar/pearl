@@ -72,8 +72,8 @@ def kitchen_search(request: Request, q: str = "", db: Session = Depends(get_db))
                     "balance": None if minor else round(bal, 3),
                     "balance_text": "" if minor else f"{svc.fmt_qty(bal)} {p.unit or ''}",
                     "score": c["score"]})
-    # основные с остатком первыми, потом по релевантности
-    out.sort(key=lambda r: (r["minor"] or (r["balance"] or 0) <= 0, -r["score"]))
+    # точное или по началу слова — первым; среди остальных основные с остатком впереди
+    out.sort(key=lambda r: (r["score"] < 95, r["minor"] or (r["balance"] or 0) <= 0, -r["score"]))
     return JSONResponse(out)
 
 

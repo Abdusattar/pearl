@@ -164,7 +164,10 @@ def test_missing_days_are_working_days_after_last_sheet(db, site, staff):
     db.add(KitchenSheet(site_org_id=site.id, date=monday, created_by=staff.id))
     db.flush()
     days = svc.missing_days(db, site.id, until=monday + timedelta(days=6))  # до воскресенья
-    assert days == [monday + timedelta(days=i) for i in range(1, 5)]  # вт–пт, без сб/вс
+    assert monday not in days                                  # внесённый день не в списке
+    assert all(x.weekday() < 5 for x in days)                  # без сб/вс
+    assert [x for x in days if x > monday] == [monday + timedelta(days=i) for i in range(1, 5)]  # вт–пт
+    assert days[0] < monday                                    # пропуски до внесённого дня тоже видны
     assert svc.next_missing_day(db, site.id, monday) == monday + timedelta(days=1)
 
 
