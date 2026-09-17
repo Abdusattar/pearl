@@ -73,6 +73,9 @@ def payroll_sheet(request: Request, org_id: str | None = None, month: str | None
     user, redirect = _guard(request, db)
     if redirect:
         return redirect
+    # Закрыто 17.09: здесь месяц по умолчанию текущий и нет «на руки / на карту» —
+    # 18 выдач за август легли в сентябрь из кармана Махабат. Выдача — в новом входе.
+    return RedirectResponse("/new/salary", status_code=302)
 
     accessible = get_accessible_orgs(user, db)
     current_org = resolve_org(int(org_id) if org_id and org_id.isdigit() else None, user, db)
@@ -117,6 +120,7 @@ def pay_salaries(
     user, redirect = _guard(request, db)
     if redirect:
         return redirect
+    return RedirectResponse("/new/salary", status_code=303)   # закрыто 17.09, см. payroll_sheet
 
     back = f"/employees/payroll?org_id={org_id}&month={month}"
     try:
