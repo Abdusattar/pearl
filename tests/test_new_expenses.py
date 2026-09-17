@@ -204,3 +204,18 @@ def test_nocheck_edit_replaces_and_keeps_kind(client, db, site, staff):
     db.refresh(old)
     assert old.deleted_at is not None and new.replaces_id == old.id
     assert podotchet.get_cash_state(db, site.id)["net"] == cash0 - Decimal(12000)
+
+
+def test_feed_debt_row_follows_later_payment(client, db, site, staff, halima, carrot):
+    p = _purchase(db, _post(client, halima, [{"name": carrot.name, "pid": carrot.id, "qty": "10", "price": "30"}], payment="debt"))
+    def row():
+        first, last, _ = svc.month_bounds(date.today().strftime("%Y-%m"))
+        days, _ = svc.month_rows(db, site.id, first, last)
+        return next(x for d in days for x in d["rows"] if x["url"] == f"/new/buy/{p.id}")
+    assert row()["status"] == "в долг"
+    client.post("/new/pay", data={"supplier_id": halima.id, "amount": "100", "source": "cash", "payer_id": str(staff.id),
+                                  "pay_date": date.today().isoformat()})
+    assert row()["status"] == "200 в долг"
+    client.post("/new/pay", data={"supplier_id": halima.id, "amount": "200", "source": "cash", "payer_id": str(staff.id),
+                                  "pay_date": date.today().isoformat(), "repeat_ok": "1"})
+    assert row()["status"] == "долг оплачен" and row()["status_kind"] == ""

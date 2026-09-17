@@ -17,7 +17,7 @@ from app.models import (ExpenseCategory, Purchase, ReceiptItem, ReceiptTransacti
                         SupplierPayment, Transaction, User, WarehouseReceipt)
 from app.services.price_check import fmt_money
 from app.services.purchases import audit, site_orgs
-from app.services.supplier_ledger import get_supplier_balance
+from app.services.supplier_ledger import get_supplier_balance, get_transaction_remaining_debt_bulk
 
 FOOD_CATEGORY_NAMES = {"продукты питания", "услуги питания"}
 SALARY_CATEGORY_NAMES = {"фот", "соцфонд", "соцфонд и подоходный"}
@@ -57,6 +57,11 @@ def month_rows(db: Session, site_org_id: int, first: date, last: date) -> tuple[
     purchases = {p.id: p for p in db.query(Purchase).filter(Purchase.id.in_(
         [t.purchase_id for t in txs if t.purchase_id])).all()} if any(t.purchase_id for t in txs) else {}
 
+    # Долг строки — по расчётам с поставщиком, а не по тому, как записали при
+    # закупе: оплаченное позже («Оплатить») иначе вечно висит «в долг» (17.09).
+    debt_sids = sorted({t.supplier_id for t in txs if t.supplier_id and t.amount_paid is not None})
+    remaining = get_transaction_remaining_debt_bulk(db, debt_sids) if debt_sids else {}
+
     groups: dict = {}
     order: list = []
     for t in txs:
@@ -77,7 +82,10 @@ def month_rows(db: Session, site_org_id: int, first: date, last: date) -> tuple[
             groups[key] = g
             order.append(key)
         g["amount"] += Decimal(t.amount)
-        g["paid"] += Decimal(t.amount_paid) if t.amount_paid is not None else Decimal(t.amount)
+        left = remaining.get(t.supplier_id, {}).get(t.id) if t.amount_paid is not None else None
+        g["paid"] += Decimal(t.amount) - (Decimal(left) if left is not None else Decimal("0"))
+        g["paid_later"] = g.get("paid_later", False) or (t.amount_paid is not None and left is not None
+                                                        and Decimal(t.amount) - Decimal(left) > Decimal(t.amount_paid))
         g["tx_ids"].append(t.id)
         g["kinds"].add(kinds.get(t.category_id, "other"))
         if t.employee_id:
@@ -123,6 +131,8 @@ def month_rows(db: Session, site_org_id: int, first: date, last: date) -> tuple[
             status, status_kind = (f"{fmt_money(float(debt))} в долг" if g["paid"] >= 1 else "в долг"), "debt"
             if g["paid"] >= 1:
                 sub += f" · {fmt_money(float(g['paid']))} оплачено"
+        elif g.get("paid_later"):
+            status, status_kind = "долг оплачен", ""
         elif g["paid_directly"]:
             status, status_kind = "со счёта", ""
         else:
