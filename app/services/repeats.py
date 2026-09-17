@@ -67,3 +67,9 @@ def child_cash(db: Session, student_id: int, amount: Decimal, d: date) -> dict |
     q = db.query(Transaction).filter(Transaction.type == "income", Transaction.student_id == student_id,
                                      Transaction.amount == amount, Transaction.date == d)
     return _found(db, _last(q, Transaction), "оплата")
+
+
+def salary(db: Session, employee_id: int, period: date, amount: Decimal, d: date) -> dict | None:
+    q = db.query(Transaction).filter(Transaction.type == "expense", Transaction.employee_id == employee_id,
+                                     Transaction.period == period, Transaction.amount == amount, Transaction.date == d)
+    return _found(db, _last(q, Transaction), "выдача")

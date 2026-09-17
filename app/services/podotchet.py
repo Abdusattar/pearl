@@ -312,7 +312,10 @@ def get_expected_balance(db: Session, organization_id: int, as_of: date_cls) -> 
     direct = db.query(func.coalesce(func.sum(
         func.coalesce(Transaction.amount_paid, Transaction.amount)
     ), 0)).filter(
-        Transaction.organization_id == organization_id, Transaction.type == "expense",
+        # Счёт — явный account_org_id (покупка, зарплата со счёта Школы на
+        # площадке Садика), иначе объект расхода, как у старых записей.
+        func.coalesce(Transaction.account_org_id, Transaction.organization_id) == organization_id,
+        Transaction.type == "expense",
         Transaction.paid_directly.is_(True),
         Transaction.date > since, Transaction.date <= as_of, Transaction.deleted_at.is_(None),
     ).scalar()

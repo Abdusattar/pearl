@@ -1,0 +1,125 @@
+{% extends "new/base.html" %}
+{% block title %}Зарплата — Жемчужина{% endblock %}
+
+{% block head %}
+<style>
+  .back { font-size: 14px; text-decoration: none; }
+  .sub b { font-weight: 600; }
+  .list { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; }
+  .row { display: grid; grid-template-columns: 1fr 90px 90px 90px 110px; gap: 8px; align-items: center; padding: 10px 16px;
+         border-top: 1px solid var(--line); font-variant-numeric: tabular-nums; }
+  .list > .row:first-child { border-top: 0; }
+  .row.head { font-size: 12px; color: var(--muted); padding-block: 10px 8px; }
+  .r { text-align: right; white-space: nowrap; }
+  .rl { font-size: 13px; color: var(--muted); }
+  .zero { color: var(--muted); }
+  .act { text-align: right; }
+  .act .btn { min-width: 96px; }
+  .done { font-size: 13px; color: var(--ok); }
+  .open { background: var(--field); border-top: 1px solid var(--line); padding: 14px 16px 16px; }
+  .give { display: flex; flex-wrap: wrap; gap: 12px 16px; align-items: end; }
+  .fld { display: flex; flex-direction: column; gap: 6px; }
+  .lb { font-size: 13px; color: var(--muted); }
+  .open .in { background: var(--surface); height: 44px; }
+  .open .in.num { width: 120px; }
+  .open .chips { margin: 0; }
+  .hist { margin-top: 14px; font-size: 14px; }
+  .hist .h { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 2px 0;
+             border-top: 1px solid var(--line); font-variant-numeric: tabular-nums; }
+  .hist .h:first-of-type { border-top: 0; }
+  .hist .odd { color: var(--warn); }
+  .hist form { display: inline; }
+  @media (max-width: 760px) {
+    .row { grid-template-columns: 1fr auto; }
+    .row.head { display: none; }
+    .row .c-sal, .row .c-iss { display: none; }
+    .row .act { grid-column: 1 / -1; text-align: left; }
+  }
+</style>
+{% endblock %}
+
+{% block content %}
+{% set months_gen = ["январь", "февраль", "март", "апрель", "май", "июнь", "июль", "август", "сентябрь", "октябрь", "ноябрь", "декабрь"] %}
+{% set months_of = ["января", "февраля", "марта", "апреля", "мая", "июня", "июля", "августа", "сентября", "октября", "ноября", "декабря"] %}
+<a class="back" href="/new/cash">← Касса</a>
+<h3 class="title" style="margin-top:6px">Зарплата за {{ months_gen[period.month - 1] }}</h3>
+<div class="chips" role="group" aria-label="Месяц">
+  {% for m in months %}<a class="chip {% if m == period %}on{% endif %}" href="/new/salary?month={{ '%04d-%02d' % (m.year, m.month) }}">{{ months_gen[m.month - 1] }}</a>{% endfor %}
+</div>
+{% if saved == 'pay' %}<div class="alert ok">Выдача записана, касса уменьшилась.</div>
+{% elif saved == 'remove' %}<div class="alert ok">Выдача убрана. Строка осталась в истории с отметкой, кто убрал.</div>{% endif %}
+{% if not sheet.rows %}
+<div class="alert warn">Сотрудников нет. Заводят их пока в старом входе: <a href="/employees/">Сотрудники</a>.</div>
+{% else %}
+<p class="sub">{{ sheet.rows | length }} человек. Оклады <b>{{ sheet.salary | money }}</b> · выдано <b>{{ sheet.issued | money }}</b> · осталось выдать <b>{{ sheet.left | money }}</b></p>
+{% if sheet.late %}<div class="alert warn">День зарплаты, {{ sheet.payday.day }} {{ months_of[sheet.payday.month - 1] }}, прошёл: {{ sheet.unpaid }} чел. ещё не получили за {{ months_gen[period.month - 1] }}.</div>{% endif %}
+
+<div class="list">
+  <div class="row head"><span>Кто</span><span class="r">Оклад</span><span class="r">Выдано</span><span class="r">Осталось</span><span></span></div>
+  {% for r in sheet.rows %}
+  {% set e = r.employee %}
+  {% set is_open = open_id == e.id %}
+  <div class="row">
+    <span>{{ e.full_name }}<br><span class="rl">{{ e.role or '' }}{% if r.org %} · {{ r.org }}{% endif %}</span></span>
+    <span class="r c-sal">{{ r.salary | money }}</span>
+    <span class="r c-iss {% if not r.issued %}zero{% endif %}">{{ r.issued | money }}</span>
+    <span class="r {% if not r.left %}zero{% endif %}">{{ r.left | money }}</span>
+    <span class="act">{% if r.left > 0 and can_write %}<button type="button" class="btn ghost" aria-expanded="{{ 'true' if is_open else 'false' }}" onclick="toggle({{ e.id }}, this)">Выдать</button>{% elif r.pays %}<button type="button" class="btn ghost" aria-expanded="{{ 'true' if is_open else 'false' }}" onclick="toggle({{ e.id }}, this)">Выдачи</button>{% endif %}</span>
+  </div>
+  <div class="open" id="open-{{ e.id }}" {% if not is_open %}hidden{% endif %}>
+    {% if can_write and r.left > 0 %}
+    <form method="post" action="/new/salary/pay" autocomplete="off">
+      {% if is_open %}
+        {% if error %}<div class="alert bad">{{ error }}</div>{% endif %}
+        {% include "new/_repeat.html" %}
+      {% endif %}
+      <input type="hidden" name="employee_id" value="{{ e.id }}">
+      <input type="hidden" name="month" value="{{ '%04d-%02d' % (period.year, period.month) }}">
+      <div class="give">
+        <div class="fld"><label class="lb" for="amt-{{ e.id }}">Сколько на руки</label>
+          <input class="in num" id="amt-{{ e.id }}" name="amount" inputmode="decimal" value="{% if is_open and amount %}{{ amount }}{% else %}{{ r.left | money }}{% endif %}"></div>
+        <div class="fld"><label class="lb" for="dt-{{ e.id }}">Когда</label>
+          <input class="in" id="dt-{{ e.id }}" type="date" name="date" value="{{ (d if is_open else today).isoformat() }}" max="{{ today.isoformat() }}"></div>
+        <div class="fld"><span class="lb">Откуда</span>
+          <div class="chips">
+            {% for u in pockets %}{% set v = 'pocket:%d' % u.id %}<label class="chip {% if source == v %}on{% endif %}"><input type="radio" name="source" value="{{ v }}" {% if source == v %}checked{% endif %}>Карман {{ u.name }}</label>{% endfor %}
+            {% if current_user.id not in pockets | map(attribute='id') | list and current_user.role in ('staff', 'manager', 'director') %}{% set v = 'pocket:%d' % current_user.id %}<label class="chip {% if source == v %}on{% endif %}"><input type="radio" name="source" value="{{ v }}" {% if source == v %}checked{% endif %}>Мой карман</label>{% endif %}
+            {% for o in accounts %}{% set v = 'account:%d' % o.id %}<label class="chip {% if source == v %}on{% endif %}"><input type="radio" name="source" value="{{ v }}" {% if source == v %}checked{% endif %}>Со счёта {{ o.name }}</label>{% endfor %}
+          </div></div>
+        <button type="submit" class="btn">Записать</button>
+      </div>
+    </form>
+    {% endif %}
+    {% if r.pays %}
+    <div class="hist">
+      <div class="lb" style="margin-bottom:4px">Уже выдано за {{ months_gen[period.month - 1] }}</div>
+      {% for p in r.pays %}
+      <div class="h"><span {% if p.odd %}class="odd"{% endif %}>{{ p.date | human_date }} · {{ p.source }}{% if p.odd %} · похоже на опечатку{% endif %}</span>
+        <span {% if p.odd %}class="odd"{% endif %}>{{ p.amount | money }}{% if can_write %}
+          <form method="post" action="/new/salary/{{ p.id }}/remove" onsubmit="return confirm('Убрать выдачу {{ p.amount | money }} от {{ p.date | human_date }}?')"><button type="submit" class="btn quiet">Убрать</button></form>{% endif %}</span></div>
+      {% endfor %}
+    </div>
+    {% endif %}
+  </div>
+  {% endfor %}
+</div>
+<p class="after">Выдача ложится расходом на выбранный карман или счёт, частями складывается. Сотрудников и оклады пока правят в старом входе: <a href="/employees/">Сотрудники</a>.</p>
+{% endif %}
+{% endblock %}
+
+{% block scripts %}
+<script>
+function toggle(id, btn) {
+  var box = document.getElementById('open-' + id);
+  box.hidden = !box.hidden;
+  btn.setAttribute('aria-expanded', box.hidden ? 'false' : 'true');
+  var amt = document.getElementById('amt-' + id);
+  if (!box.hidden && amt) amt.focus();
+}
+document.querySelectorAll('label.chip input[type=radio]').forEach(function (r) {
+  r.addEventListener('change', function () {
+    r.form.querySelectorAll('input[name="' + r.name + '"]').forEach(function (o) { o.closest('label.chip').classList.toggle('on', o.checked); });
+  });
+});
+</script>
+{% endblock %}
