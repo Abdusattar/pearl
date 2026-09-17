@@ -108,3 +108,16 @@ def test_no_tariff_means_no_debt_text(db, site, staff):
     db.flush()
     data = svc.children_list(db, school)
     assert data["tariff"] is None and data["count"] == 1
+
+
+def test_same_cash_again_asks_and_token_repeat_writes_once(client, db, site, staff, amir):
+    data = {"amount": "3000", "what": "канцелярия", "pay_date": date.today().isoformat(), "pocket_user_id": staff.id,
+            "form_token": "tok-child-000000000000001"}
+    count = lambda: db.query(Transaction).filter_by(student_id=amir.id, type="income", deleted_at=None).count()
+    n0 = count()
+    assert client.post(f"/new/children/{amir.id}/cash", data=data, follow_redirects=False).status_code == 303
+    assert client.post(f"/new/children/{amir.id}/cash", data=data, follow_redirects=False).status_code == 303
+    assert count() == n0 + 1
+    r = client.post(f"/new/children/{amir.id}/cash", data={**data, "form_token": "tok-child-000000000000002"},
+                    follow_redirects=False)
+    assert r.status_code == 200 and "Такое уже записано" in r.text and count() == n0 + 1

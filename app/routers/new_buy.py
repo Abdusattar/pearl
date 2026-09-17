@@ -18,6 +18,7 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.dependencies import get_current_user, resolve_org
 from app.models import Organization, Product, ProductCategory, Purchase, Receipt, Supplier, User
+from app.services import once
 from app.services import purchases as svc
 from app.services import recognize as rz
 from app.services.ocr import compute_hash
@@ -277,6 +278,9 @@ async def buy_submit(request: Request, photo: UploadFile | None = File(None), db
     if payment == "founder" and not founder_id:
         return render("Кто из учредителей заплатил?")
 
+    token = once.clean(form.get("form_token"))
+    if done := once.done_url(db, token):
+        return RedirectResponse(done, status_code=303)
     total = round(sum(it["total"] for it in items), 2)
     if not dup_ok:
         dup = svc.find_duplicate(db, supplier.id, tx_date, total,
@@ -289,8 +293,10 @@ async def buy_submit(request: Request, photo: UploadFile | None = File(None), db
         payment=payment, paid_amount=paid_val, payer_id=payer_id, account_org_id=account_org_id,
         founder_id=founder_id, for_org_id=for_org_id, receipt_id=photo_receipt_id, note=note, dup_confirmed=dup_ok,
     )
+    url = f"/new/buy/{purchase.id}?saved=1"
+    once.remember(db, token, user.id, url)
     db.commit()
-    return RedirectResponse(f"/new/buy/{purchase.id}?saved=1", status_code=303)
+    return RedirectResponse(url, status_code=303)
 
 
 @router.get("/buy/{purchase_id}", response_class=HTMLResponse)

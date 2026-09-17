@@ -274,3 +274,13 @@ def test_remove_rolls_back_stock_and_debt(client, db, site, staff, halima, carro
     assert get_supplier_balance(db, halima.id) == debt0
     card = client.get(f"/new/buy/{p.id}")
     assert "Покупка убрана" in card.text
+
+
+def test_same_form_token_twice_writes_one_purchase(client, db, site, staff, halima, carrot):
+    rows = [{"name": carrot.name, "pid": carrot.id, "qty": "5", "price": "40"}]
+    r1 = _post(client, halima, rows, form_token="tok-buy-000000000000000001")
+    r2 = _post(client, halima, rows, form_token="tok-buy-000000000000000001")
+    p = _purchase(db, r1)
+    assert r2.status_code == 303 and r2.headers["location"] == r1.headers["location"]
+    assert db.query(Purchase).filter(Purchase.supplier_id == halima.id, Purchase.deleted_at.is_(None)).count() == 1
+    assert p is not None

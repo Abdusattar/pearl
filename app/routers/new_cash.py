@@ -14,6 +14,7 @@ from app.dependencies import get_current_user
 from app.models import User
 from app.routers.new_buy import WRITE_ROLES, _base_ctx, _site, templates
 from app.services import cash as svc
+from app.services import once, repeats
 from app.services.purchases import OPERATIONAL_ROLES, default_pocket, site_orgs
 
 router = APIRouter(prefix="/new", tags=["new"])
@@ -112,8 +113,12 @@ async def cash_submit(kind: str, request: Request, db: Session = Depends(get_db)
     kw = dict(amount=g("amount"), d=d or date.today(), comment=g("comment"), reason=g("reason"),
               direction=g("direction") or "fund", **ints)
 
-    def render(error):
-        return templates.TemplateResponse("new/cash_form.html", _form_ctx(request, user, site, db, kind, error=error, **kw))
+    repeat_ok = g("repeat_ok") == "1"
+
+    def render(error, repeat=None):
+        ctx = _form_ctx(request, user, site, db, kind, error=error, **kw)
+        ctx.update({"repeat": repeat, "repeat_back": "/new/cash"})
+        return templates.TemplateResponse("new/cash_form.html", ctx)
 
     if d is None:
         return render("Дата не позже сегодняшней")
@@ -121,16 +126,23 @@ async def cash_submit(kind: str, request: Request, db: Session = Depends(get_db)
         return render("Укажите сумму")
     orgs = {o.id for o in site_orgs(db, site.id)}
     people = {p.id for p in svc.pocket_people(db, site.id)} | ({user.id} if user.role in OPERATIONAL_ROLES else set())
+    token = once.clean(g("form_token"))
+    if done := once.done_url(db, token):
+        return RedirectResponse(done, status_code=303)
     try:
         if kind == "withdraw":
             if ints["account_org_id"] not in orgs:
                 return render("Со счёта садика или школы? Выберите")
+            if not repeat_ok and (rep := repeats.withdrawal(db, site.id, amount, d)):
+                return render(None, rep)
             svc.withdraw(db, user=user, site_org_id=site.id, account_org_id=ints["account_org_id"], amount=amount, d=d,
                          comment=g("comment") or None, pocket_user_id=ints["pocket_user_id"] or default_pocket(db, site.id, user))
             msg = "withdraw"
         elif kind == "transfer":
             if ints["from_user_id"] not in people or ints["to_user_id"] not in people:
                 return render("Выберите, кто кому передал")
+            if not repeat_ok and (rep := repeats.transfer(db, site.id, ints["from_user_id"], ints["to_user_id"], amount, d)):
+                return render(None, rep)
             svc.transfer(db, user=user, site_org_id=site.id, from_user_id=ints["from_user_id"],
                          to_user_id=ints["to_user_id"], amount=amount, d=d, comment=g("comment") or None)
             msg = "transfer"
@@ -148,6 +160,9 @@ async def cash_submit(kind: str, request: Request, db: Session = Depends(get_db)
                 return render("Кто из учредителей?")
             if ints["pocket_user_id"] not in people:
                 return render("В чей карман / из чьего кармана?")
+            find = repeats.founder_withdraw if kw["direction"] == "withdraw" else repeats.founder_fund
+            if not repeat_ok and (rep := find(db, site.id, ints["founder_id"], amount, d)):
+                return render(None, rep)
             if kw["direction"] == "withdraw":
                 svc.founder_withdraw(db, user=user, site_org_id=site.id, founder_id=ints["founder_id"],
                                      pocket_user_id=ints["pocket_user_id"], amount=amount, d=d, comment=g("comment") or None)
@@ -157,5 +172,7 @@ async def cash_submit(kind: str, request: Request, db: Session = Depends(get_db)
             msg = "founder"
     except ValueError as e:
         return render(str(e))
+    url = f"/new/cash?saved={msg}"
+    once.remember(db, token, user.id, url)
     db.commit()
-    return RedirectResponse(f"/new/cash?saved={msg}", status_code=303)
+    return RedirectResponse(url, status_code=303)

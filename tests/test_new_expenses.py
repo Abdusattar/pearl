@@ -113,3 +113,19 @@ def test_payment_row_in_feed_is_negative_and_not_in_total(client, db, site, staf
     pay = [r for r in rows if r["payment"] and halima.name in r["title"]]
     assert pay and pay[0]["amount"] == Decimal("-100")
     assert totals["total"] >= Decimal("300")
+
+
+def test_same_payment_again_asks_and_token_repeat_writes_once(client, db, site, staff, halima, carrot):
+    _purchase(db, _post(client, halima, [{"name": carrot.name, "pid": carrot.id, "qty": "10", "price": "30"}], payment="debt"))
+    data = {"supplier_id": halima.id, "amount": "100", "source": "cash", "payer_id": str(staff.id),
+            "pay_date": date.today().isoformat(), "form_token": "tok-pay-00000000000000001"}
+    assert client.post("/new/pay", data=data, follow_redirects=False).status_code == 303
+    assert client.post("/new/pay", data=data, follow_redirects=False).status_code == 303   # тот же номер
+    assert db.query(SupplierPayment).filter_by(supplier_id=halima.id).count() == 1
+    r = client.post("/new/pay", data={**data, "form_token": "tok-pay-00000000000000002"}, follow_redirects=False)
+    assert r.status_code == 200 and "Такое уже записано" in r.text
+    assert db.query(SupplierPayment).filter_by(supplier_id=halima.id).count() == 1
+    r = client.post("/new/pay", data={**data, "form_token": "tok-pay-00000000000000003", "repeat_ok": "1"},
+                    follow_redirects=False)
+    assert r.status_code == 303
+    assert db.query(SupplierPayment).filter_by(supplier_id=halima.id).count() == 2

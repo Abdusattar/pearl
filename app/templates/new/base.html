@@ -125,6 +125,24 @@
 document.addEventListener('submit', function (e) {
   if (e.submitter) setTimeout(function () { e.submitter.disabled = true; }, 0);
 });
+// Номер формы (services/once.py): тот же номер дважды — сервер не пишет второй
+// раз. Новый номер при каждом показе страницы, в том числе по кнопке «Назад»,
+// иначе следующая запись с той же страницы увела бы на предыдущую.
+function stampForms() {
+  document.querySelectorAll('form[method=post]').forEach(function (f) {
+    var i = f.querySelector('input[name=form_token]');
+    if (!i) { i = document.createElement('input'); i.type = 'hidden'; i.name = 'form_token'; f.appendChild(i); }
+    i.value = window.crypto && crypto.randomUUID ? crypto.randomUUID()
+      : Date.now().toString(36) + Math.random().toString(36).slice(2) + Math.random().toString(36).slice(2);
+  });
+}
+stampForms();
+window.addEventListener('pageshow', function (e) {
+  if (e.persisted) {
+    stampForms();
+    document.querySelectorAll('form [type=submit]').forEach(function (b) { b.disabled = false; });
+  }
+});
 </script>
 {% block scripts %}{% endblock %}
 </body>

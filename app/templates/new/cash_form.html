@@ -21,6 +21,7 @@
 <h3 class="title">{{ title }}</h3>
 {% if error %}<div class="alert bad">{{ error }}</div>{% endif %}
 <form method="post" action="/new/cash/{{ kind }}" class="phone" autocomplete="off">
+  {% include "new/_repeat.html" %}
 
   {% if kind == 'withdraw' %}
     <span class="lb">Со счёта</span>

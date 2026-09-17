@@ -144,3 +144,58 @@ def test_internal_funding_is_a_pocket_transfer(db, site, people, as_makhabat):
 def test_cash_page_renders(client, db, site, people, as_makhabat):
     page = client.get("/new/cash")
     assert page.status_code == 200 and "Наличные" in page.text and "На счетах" in page.text
+
+
+# ── повторы (17.09) ──────────────────────────────────────────────────────
+
+def _withdraw(client, school, m, **extra):
+    data = {"account_org_id": school.id, "amount": "250 000", "date": date.today().isoformat(), "pocket_user_id": m.id}
+    data.update(extra)
+    return client.post("/new/cash/withdraw", data=data, follow_redirects=False)
+
+
+def _live_withdrawals(db, sadik):
+    return db.query(CashFunding).filter(CashFunding.organization_id == sadik.id, CashFunding.source_type == "withdrawal",
+                                        CashFunding.deleted_at.is_(None)).count()
+
+
+def test_same_form_token_twice_writes_once(client, db, site, people, as_makhabat):
+    sadik, school = site
+    m, _, _ = people
+    token = "tok-cash-0000000000000001"
+    r1 = _withdraw(client, school, m, form_token=token)
+    r2 = _withdraw(client, school, m, form_token=token)
+    assert r1.status_code == 303 and r2.status_code == 303
+    assert r2.headers["location"] == r1.headers["location"]
+    assert _live_withdrawals(db, sadik) == 1
+
+
+def test_same_withdrawal_again_asks_and_writes_only_on_yes(client, db, site, people, as_makhabat):
+    sadik, school = site
+    m, _, _ = people
+    assert _withdraw(client, school, m, form_token="tok-cash-0000000000000002").status_code == 303
+    r = _withdraw(client, school, m, form_token="tok-cash-0000000000000003")
+    assert r.status_code == 200 and "Такое уже записано" in r.text and "Да, другое" in r.text
+    assert _live_withdrawals(db, sadik) == 1
+    r = _withdraw(client, school, m, form_token="tok-cash-0000000000000004", repeat_ok="1")
+    assert r.status_code == 303
+    assert _live_withdrawals(db, sadik) == 2
+
+
+def test_other_amount_or_date_is_not_a_repeat(client, db, site, people, as_makhabat):
+    sadik, school = site
+    m, _, _ = people
+    assert _withdraw(client, school, m).status_code == 303
+    assert _withdraw(client, school, m, amount="33 000").status_code == 303
+    assert _withdraw(client, school, m, date=(date.today() - timedelta(days=1)).isoformat()).status_code == 303
+    assert _live_withdrawals(db, sadik) == 3
+
+
+def test_same_transfer_again_asks(client, db, site, people, as_makhabat):
+    _, _ = site
+    m, mu, _ = people
+    data = {"from_user_id": mu.id, "to_user_id": m.id, "amount": "5000", "date": date.today().isoformat()}
+    assert client.post("/new/cash/transfer", data=data, follow_redirects=False).status_code == 303
+    r = client.post("/new/cash/transfer", data=data, follow_redirects=False)
+    assert r.status_code == 200 and "Такое уже записано: передача 5 000" in r.text
+    assert db.query(CashTransfer).filter(CashTransfer.to_user_id == m.id).count() == 1

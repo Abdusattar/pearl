@@ -12,7 +12,7 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.dependencies import get_accessible_orgs, get_current_user, resolve_org
 from app.models import (
-    CapitalWithdrawal, CashFunding, Organization, Reconciliation, Supplier, User,
+    AuditLog, CapitalWithdrawal, CashFunding, Organization, Reconciliation, Supplier, User,
 )
 from app.services import podotchet, reconciliation, supplier_ledger
 from app.services.dedup_guard import acquire_submission_lock
@@ -465,6 +465,10 @@ def delete_founder_withdraw(
     ).first()
     if withdrawal:
         withdrawal.deleted_at = func.now()
+        # Кто убрал (17.09): оригинал снятия 250 000 убрали кнопкой, и узнать,
+        # кто нажал, было не по чему.
+        db.add(AuditLog(entity_type="capital_withdrawal", entity_id=withdrawal.id, action="delete", user_id=user.id,
+                        old_data={"amount": float(withdrawal.amount), "date": withdrawal.date.isoformat()}))
         db.commit()
     return RedirectResponse(redirect_url, status_code=303)
 
@@ -491,6 +495,9 @@ def delete_funding(
         return RedirectResponse(f"{redirect_url}{err_sep}error={quote(msg)}", status_code=303)
     if funding:
         funding.deleted_at = func.now()
+        db.add(AuditLog(entity_type="cash_funding", entity_id=funding.id, action="delete", user_id=user.id,
+                        old_data={"amount": float(funding.amount), "date": funding.date.isoformat(),
+                                  "source_type": funding.source_type, "created_by": funding.created_by}))
         db.commit()
     return RedirectResponse(redirect_url, status_code=303)
 

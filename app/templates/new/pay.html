@@ -30,6 +30,7 @@
 {% if supplier %}
 <form method="post" action="/new/pay" id="pay" autocomplete="off">
   <input type="hidden" name="supplier_id" value="{{ supplier.id }}">
+  {% include "new/_repeat.html" %}
   <p class="sub">Долг {{ supplier.name }} сейчас <b>{{ balance | money }} сом</b>.</p>
   <div class="form">
     <span class="lb">Сколько</span><span><input class="in num" name="amount" value="{{ amount }}" inputmode="decimal" placeholder="0"> <span class="u">сом</span></span>

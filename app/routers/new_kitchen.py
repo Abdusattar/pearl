@@ -13,6 +13,7 @@ from app.dependencies import get_current_user
 from app.models import Organization, Product
 from app.routers.new_buy import WRITE_ROLES, _base_ctx, _site, templates
 from app.services import kitchen as svc
+from app.services import once
 from app.services import recognize as rz
 from app.services.ocr import compute_hash
 from app.services.products import rank_candidates
@@ -173,6 +174,9 @@ async def kitchen_submit(request: Request, photo: UploadFile | None = File(None)
     if not items:
         return render("Добавьте хотя бы одну строку")
 
+    token = once.clean(form.get("form_token"))
+    if done := once.done_url(db, token):
+        return RedirectResponse(done, status_code=303)
     photo_path = None
     if photo is not None and photo.filename:
         data = await photo.read()
@@ -187,7 +191,10 @@ async def kitchen_submit(request: Request, photo: UploadFile | None = File(None)
 
     saved = svc.save_sheet(db, user=user, site_org_id=site.id, d=d, items=items,
                            children_count=children, photo_path=photo_path)
-    db.commit()
+    db.flush()
     nxt = svc.next_missing_day(db, site.id, d)
     target = nxt.isoformat() if nxt else d.isoformat()
-    return RedirectResponse(f"/new/kitchen?date={target}&saved={d.isoformat()}", status_code=303)
+    url = f"/new/kitchen?date={target}&saved={d.isoformat()}"
+    once.remember(db, token, user.id, url)
+    db.commit()
+    return RedirectResponse(url, status_code=303)

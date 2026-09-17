@@ -676,6 +676,18 @@ class AuditLog(Base):
     created_at  = Column(DateTime, server_default=func.now())
 
 
+class FormSubmission(Base):
+    """Одна отправка формы — одна запись (17.09). Страница нового входа кладёт в
+    каждую форму одноразовый номер; сервер запоминает номер вместе с записью в
+    той же транзакции. Пришёл тот же номер ещё раз (двойной тап, повтор после
+    обрыва сети) — ничего не пишем, ведём на уже созданное."""
+    __tablename__ = "form_submissions"
+    token      = Column(String(64), primary_key=True)
+    user_id    = Column(Integer, ForeignKey("users.id"))
+    result_url = Column(String(300), nullable=False)
+    created_at = Column(DateTime, server_default=func.now())
+
+
 class CashFunding(Base):
     """Пополнение подотчёта — деньги попадают в руки человека, из банковского счёта
     (снятие) либо наличными напрямую (например, канцелярский сбор с детей, мимо

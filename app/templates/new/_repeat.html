@@ -1,0 +1,11 @@
+{# Вопрос «такое уже записано» (services/repeats.py). Внутри формы: «Да, другое»
+   отправляет те же поля ещё раз с repeat_ok=1. #}
+{% if repeat %}
+<div class="alert warn">
+  Такое уже записано: {{ repeat.what }} от {{ repeat.date | human_date }}{% if repeat.by %}, внес(ла) {{ repeat.by }}{% if repeat.at %} {{ repeat.at | human_date }}{% endif %}{% endif %}. Это другое?
+  <div class="chips" style="margin:10px 0 0">
+    <button type="submit" class="chip" name="repeat_ok" value="1">Да, другое — записать</button>
+    <a class="chip" href="{{ repeat_back }}">Нет, это оно</a>
+  </div>
+</div>
+{% endif %}

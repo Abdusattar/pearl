@@ -13,6 +13,7 @@ from app.database import get_db
 from app.models import Group, Organization, Student
 from app.routers.new_buy import WRITE_ROLES, _base_ctx, _site, templates
 from app.services import children as svc
+from app.services import once, repeats
 from app.services.billing import generate_monthly_charges
 from app.services.purchases import default_pocket, pocket_users, site_orgs
 
@@ -80,7 +81,8 @@ def child_page(student_id: int, request: Request, saved: int = 0, cash: int = 0,
 
 @router.post("/children/{student_id}/cash", response_class=HTMLResponse)
 def child_cash(student_id: int, request: Request, amount: str = Form(""), what: str = Form(""),
-               pay_date: str = Form(""), pocket_user_id: str = Form(""), db: Session = Depends(get_db)):
+               pay_date: str = Form(""), pocket_user_id: str = Form(""), repeat_ok: str = Form(""),
+               form_token: str = Form(""), db: Session = Depends(get_db)):
     user = get_current_user(request, db)
     if not user:
         return RedirectResponse("/login", status_code=302)
@@ -104,18 +106,29 @@ def child_cash(student_id: int, request: Request, amount: str = Form(""), what: 
         error = "Укажите сумму"
     elif d > date.today():
         error = "Дата не позже сегодняшней"
-    if error:
+    def render(error, repeat=None):
         ctx = _base_ctx(request, user, site, db, "children")
         ctx.update({"s": student, "card": svc.child_card(db, student), "saved": 0, "cash_open": True,
                     "org": db.get(Organization, student.organization_id), "pockets": pocket_users(db, site.id),
                     "groups": _groups(db, student.organization_id),
                     "can_write": True, "today": date.today(), "error": error, "month": svc.month_name(date.today()),
-                    "amount": amount, "what": what, "pay_date": d, "pocket_user_id": pocket})
+                    "amount": amount, "what": what, "pay_date": d, "pocket_user_id": pocket,
+                    "repeat": repeat, "repeat_back": f"/new/children/{student.id}"})
         return templates.TemplateResponse("new/child.html", ctx)
+
+    if error:
+        return render(error)
+    token = once.clean(form_token)
+    if done := once.done_url(db, token):
+        return RedirectResponse(done, status_code=303)
+    if repeat_ok != "1" and (rep := repeats.child_cash(db, student.id, amt, d)):
+        return render(None, rep)
     svc.accept_cash(db, user=user, site_org_id=site.id, student=student, amount=amt, d=d,
                     what=what.strip() or None, pocket_user_id=pocket)
+    url = f"/new/children/{student.id}?saved=1"
+    once.remember(db, token, user.id, url)
     db.commit()
-    return RedirectResponse(f"/new/children/{student.id}?saved=1", status_code=303)
+    return RedirectResponse(url, status_code=303)
 
 
 # ── добавление, скидка, статус, группа ───────────────────────────────────
@@ -156,6 +169,9 @@ async def child_add(request: Request, db: Session = Depends(get_db)):
         start = date.fromisoformat(data["start"]) if data["start"] else date.today()
     except ValueError:
         return render("Дата зачисления не читается")
+    token = once.clean(g("form_token"))
+    if done := once.done_url(db, token):
+        return RedirectResponse(done, status_code=303)
     if g("dup_ok") != "1":
         similar = svc.similar_children(db, current.id, data["last_name"], data["first_name"], data["inn"] or None)
         if similar:
@@ -164,8 +180,10 @@ async def child_add(request: Request, db: Session = Depends(get_db)):
     student = svc.add_child(db, user=user, org_id=current.id, last_name=data["last_name"], first_name=data["first_name"],
                             patronymic=data["patronymic"], group_id=gid, parent_name=data["parent_name"],
                             parent_contact=data["parent_contact"], inn=data["inn"] or None, start=start)
+    url = f"/new/children/{student.id}?saved=2"
+    once.remember(db, token, user.id, url)
     db.commit()
-    return RedirectResponse(f"/new/children/{student.id}?saved=2", status_code=303)
+    return RedirectResponse(url, status_code=303)
 
 
 def _student_for(db: Session, user, site, student_id: int) -> Student | None:

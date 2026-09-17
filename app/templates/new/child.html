@@ -87,6 +87,7 @@
   {% if can_write %}
   <form id="cash" class="cash" method="post" action="/new/children/{{ s.id }}/cash" {% if not cash_open %}hidden{% endif %}>
     <b>Принять наличные</b>
+    {% include "new/_repeat.html" %}
     <span class="lb">Сколько</span><input class="in num" name="amount" value="{{ amount }}" inputmode="decimal" placeholder="{% if card.balance > 0.5 %}{{ card.balance | money }}{% else %}0{% endif %}">
     <span class="lb">За что</span><input class="in" name="what" value="{{ what }}" placeholder="{{ org.name | lower }} за {{ month }}, канцелярия, проезд…" style="width:100%">
     <span class="lb">Когда</span><input class="in" type="date" name="pay_date" value="{{ pay_date.isoformat() }}" max="{{ today.isoformat() }}">

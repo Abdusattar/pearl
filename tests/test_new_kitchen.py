@@ -3,7 +3,7 @@ from datetime import date, timedelta
 
 import pytest
 
-from app.models import KitchenSheet, Organization, Product, User, WarehouseReceipt, WriteOff
+from app.models import AuditLog, KitchenSheet, Organization, Product, User, WarehouseReceipt, WriteOff
 from app.routers import new_buy as buy_router
 from app.routers import new_kitchen as kitchen_router
 from app.services import kitchen as svc
@@ -190,3 +190,14 @@ def test_like_last_prefills(client, db, site, staff, butter):
     page = client.get(f"/new/kitchen?date={date.today().isoformat()}&like=1")
     assert page.status_code == 200
     assert "Строки с листа за" in page.text and 'value="0,7"' in page.text and butter.name in page.text
+
+
+def test_same_form_token_twice_writes_sheet_once(client, db, site, staff, butter):
+    d = date.today()
+    rows = [{"pid": butter.id, "name": butter.name, "qty": "200", "unit": "г"}]
+    r1 = _post(client, d, rows, form_token="tok-kitchen-0000000000001")
+    r2 = _post(client, d, rows, form_token="tok-kitchen-0000000000001")
+    assert r1.status_code == 303 and r2.headers["location"] == r1.headers["location"]
+    audits = db.query(AuditLog).filter(AuditLog.entity_type == "kitchen_sheet", AuditLog.action == "replace",
+                                       AuditLog.entity_id == svc.sheet_for(db, site.id, d).id).count()
+    assert audits == 0 and len(_lines(db, svc.sheet_for(db, site.id, d))) == 1

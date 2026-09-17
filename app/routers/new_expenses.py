@@ -13,6 +13,7 @@ from app.dependencies import get_current_user
 from app.models import Supplier
 from app.routers.new_buy import WRITE_ROLES, _base_ctx, _site, templates
 from app.services import ledger as svc
+from app.services import once, repeats
 from app.services.purchases import default_pocket, founders, pocket_users, site_orgs
 from app.services.supplier_ledger import get_supplier_balance
 from app.services.today import supplier_debts
@@ -79,7 +80,8 @@ def pay_form(request: Request, supplier: int | None = None, saved: int | None = 
 @router.post("/pay", response_class=HTMLResponse)
 def pay_submit(request: Request, supplier_id: int = Form(...), amount: str = Form(""), source: str = Form("cash"),
                payer_id: str = Form(""), account_org_id: str = Form(""), pay_date: str = Form(""),
-               comment: str = Form(""), db: Session = Depends(get_db)):
+               comment: str = Form(""), repeat_ok: str = Form(""), form_token: str = Form(""),
+               db: Session = Depends(get_db)):
     user = get_current_user(request, db)
     if not user:
         return RedirectResponse("/login", status_code=302)
@@ -96,10 +98,11 @@ def pay_submit(request: Request, supplier_id: int = Form(...), amount: str = For
     except ValueError:
         d = date.today()
 
-    def render(error):
-        return templates.TemplateResponse("new/pay.html", _pay_ctx(
-            request, user, site, db, sup, amount=amount, source=source, payer_id=payer,
-            account_org_id=acc, pay_date=d, comment=comment, error=error))
+    def render(error, repeat=None):
+        ctx = _pay_ctx(request, user, site, db, sup, amount=amount, source=source, payer_id=payer,
+                       account_org_id=acc, pay_date=d, comment=comment, error=error)
+        ctx.update({"repeat": repeat, "repeat_back": f"/new/pay?supplier={sup.id}"})
+        return templates.TemplateResponse("new/pay.html", ctx)
 
     try:
         amt = Decimal(amount.replace(" ", "").replace(",", "."))
@@ -111,10 +114,17 @@ def pay_submit(request: Request, supplier_id: int = Form(...), amount: str = For
         return render("Со счёта садика или школы? Выберите")
     if d > date.today():
         return render("Дата не позже сегодняшней")
+    token = once.clean(form_token)
+    if done := once.done_url(db, token):
+        return RedirectResponse(done, status_code=303)
+    if repeat_ok != "1" and (rep := repeats.supplier_payment(db, sup.id, amt, d)):
+        return render(None, rep)
     try:
         svc.pay_supplier(db, user=user, site_org_id=site.id, supplier_id=sup.id, amount=amt, d=d,
                          source=source, payer_id=payer, account_org_id=acc, comment=comment.strip() or None)
     except ValueError as e:
         return render(str(e))
+    url = f"/new/pay?supplier={sup.id}&saved=1"
+    once.remember(db, token, user.id, url)
     db.commit()
-    return RedirectResponse(f"/new/pay?supplier={sup.id}&saved=1", status_code=303)
+    return RedirectResponse(url, status_code=303)
