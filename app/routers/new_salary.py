@@ -106,18 +106,18 @@ async def salary_pay(request: Request, db: Session = Depends(get_db)):
     pocket = account = None
     if method == "hand" and pocket_raw in {u.id for u in pocket_users(db, site.id)} | {user.id}:
         pocket = pocket_raw
-    elif method == "card" and emp.organization_id in {o.id for o in site_orgs(db, site.id)}:
+    elif method in ("card", "socfond") and emp.organization_id in {o.id for o in site_orgs(db, site.id)}:
         account = emp.organization_id
     else:
-        return render("Как выдали: на руки (из чьего кармана) или на карту?")
+        return render("Как выдали: на руки (из чьего кармана), на карту или это соцфонд?")
 
     token = once.clean(g("form_token"))
     if done := once.done_url(db, token):
         return RedirectResponse(done, status_code=303)
-    if g("repeat_ok") != "1" and (rep := repeats.salary(db, emp.id, period, amount, d)):
+    if g("repeat_ok") != "1" and (rep := repeats.salary(db, emp.id, period, amount, d)):   # и соцфонд тоже
         return render(None, rep)
     svc.pay(db, user=user, site_org_id=site.id, employee=emp, amount=amount, period=period, d=d,
-            pocket_user_id=pocket, account_org_id=account)
+            pocket_user_id=pocket, account_org_id=account, socfond=method == "socfond")
     url = f"/new/salary?month={period:%Y-%m}&saved=pay"
     once.remember(db, token, user.id, url)
     db.commit()

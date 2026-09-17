@@ -24,7 +24,7 @@ from app.services.purchases import site_orgs
 from app.services.warehouse import get_product_balances
 
 FOOD = {"продукты питания", "услуги питания", "бутилированная вода"}
-SALARY = {"фот"}
+SALARY = {"фот", "соцфонд"}
 UTIL = {"коммунальные расходы", "электричество", "вода", "отопление", "интернет", "связь",
         "охрана", "операционные услуги", "реклама"}
 POCKET_STALE_DAYS = 7

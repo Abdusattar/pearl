@@ -6,7 +6,7 @@
   .back { font-size: 14px; text-decoration: none; }
   .sub b { font-weight: 600; }
   .list { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; }
-  .row { display: grid; grid-template-columns: 1fr 90px 90px 110px; gap: 8px; align-items: center; padding: 10px 16px;
+  .row { display: grid; grid-template-columns: 1fr 90px 90px 90px 110px; gap: 8px; align-items: center; padding: 10px 16px;
          border-top: 1px solid var(--line); font-variant-numeric: tabular-nums; }
   .list > .row:first-child { border-top: 0; }
   .row.head { font-size: 12px; color: var(--muted); padding-block: 10px 8px; }
@@ -32,7 +32,7 @@
   @media (max-width: 760px) {
     .row { grid-template-columns: 1fr auto; }
     .row.head { display: none; }
-    .row .c-sal { display: none; }
+    .row .c-sal, .row .c-soc { display: none; }
     .row .act { grid-column: 1 / -1; text-align: left; }
   }
 </style>
@@ -51,11 +51,11 @@
 {% if not sheet.rows %}
 <div class="alert warn">Сотрудников нет. Заводят их пока в старом входе: <a href="/employees/">Сотрудники</a>.</div>
 {% else %}
-<p class="sub">{{ sheet.rows | length }} человек. Оклады <b>{{ sheet.salary | money }}</b> · выдано <b>{{ sheet.issued | money }}</b>{% if sheet.unpaid %} · ещё никому не выдано: <b>{{ sheet.unpaid }} чел.</b>{% endif %}</p>
+<p class="sub">{{ sheet.rows | length }} человек. Оклады <b>{{ sheet.salary | money }}</b> · выдано <b>{{ sheet.issued | money }}</b>{% if sheet.socfond %} · соцфонд <b>{{ sheet.socfond | money }}</b>{% endif %}{% if sheet.unpaid %} · ещё никому не выдано: <b>{{ sheet.unpaid }} чел.</b>{% endif %}</p>
 {% if sheet.late %}<div class="alert warn">День зарплаты, {{ sheet.payday.day }} {{ months_of[sheet.payday.month - 1] }}, прошёл: {{ sheet.unpaid }} чел. ещё ничего не получили за {{ months_gen[period.month - 1] }}.</div>{% endif %}
 
 <div class="list">
-  <div class="row head"><span>Кто</span><span class="r">Оклад</span><span class="r">Выдано</span><span></span></div>
+  <div class="row head"><span>Кто</span><span class="r">Оклад</span><span class="r">Выдано</span><span class="r">Соцфонд</span><span></span></div>
   {% for r in sheet.rows %}
   {% set e = r.employee %}
   {% set is_open = open_id == e.id %}
@@ -63,6 +63,7 @@
     <span>{{ e.full_name }}<br><span class="rl">{{ e.role or '' }}{% if r.org %} · {{ r.org }}{% endif %}</span></span>
     <span class="r c-sal">{{ r.salary | money }}</span>
     <span class="r {% if not r.issued %}zero{% endif %}">{{ r.issued | money }}</span>
+    <span class="r c-soc {% if not r.socfond %}zero{% endif %}">{{ r.socfond | money }}</span>
     <span class="act">{% if can_write and not r.pays %}<button type="button" class="btn ghost" aria-expanded="{{ 'true' if is_open else 'false' }}" onclick="toggle({{ e.id }}, this)">Выдать</button>{% elif r.pays %}<button type="button" class="btn ghost" aria-expanded="{{ 'true' if is_open else 'false' }}" onclick="toggle({{ e.id }}, this)">Выдачи</button>{% endif %}</span>
   </div>
   <div class="open" id="open-{{ e.id }}" {% if not is_open %}hidden{% endif %}>
@@ -84,10 +85,11 @@
           <div class="chips">
             <label class="chip {% if m == 'hand' %}on{% endif %}"><input type="radio" name="method" value="hand" {% if m == 'hand' %}checked{% endif %}>На руки</label>
             <label class="chip {% if m == 'card' %}on{% endif %}"><input type="radio" name="method" value="card" {% if m == 'card' %}checked{% endif %}>На карту</label>
+            <label class="chip {% if m == 'socfond' %}on{% endif %}"><input type="radio" name="method" value="socfond" {% if m == 'socfond' %}checked{% endif %}>Соцфонд</label>
           </div></div>
         <div class="fld" data-method="hand" {% if m != 'hand' %}hidden{% endif %}><label class="lb" for="pk-{{ e.id }}">Из чьего кармана</label>
           <select class="in" id="pk-{{ e.id }}" name="pocket_user_id">{% for u in pockets %}<option value="{{ u.id }}" {% if u.id == pocket_user_id %}selected{% endif %}>{{ u.name }}</option>{% endfor %}{% if current_user.id not in pockets | map(attribute='id') | list and current_user.role in ('staff', 'manager', 'director') %}<option value="{{ current_user.id }}" {% if current_user.id == pocket_user_id %}selected{% endif %}>{{ current_user.name }}</option>{% endif %}</select></div>
-        <div class="fld" data-method="card" {% if m != 'card' %}hidden{% endif %}><span class="lb">Откуда</span>
+        <div class="fld" data-method="card socfond" {% if m not in ('card', 'socfond') %}hidden{% endif %}><span class="lb">Откуда</span>
           <span style="height:44px;display:flex;align-items:center">со счёта {{ org_names.get(e.organization_id, '') }}</span></div>
         <button type="submit" class="btn">Записать</button>
       </div>
@@ -95,7 +97,7 @@
     {% endif %}
     {% if r.pays %}
     <div class="hist">
-      <div class="lb" style="margin-bottom:4px">Уже выдано за {{ months_gen[period.month - 1] }}</div>
+      <div class="lb" style="margin-bottom:4px">Записано за {{ months_gen[period.month - 1] }}</div>
       {% for p in r.pays %}
       <div class="h"><span {% if p.odd %}class="odd"{% endif %}>{{ p.date | human_date }} · {{ p.source }}{% if p.odd %} · похоже на опечатку{% endif %}</span>
         <span {% if p.odd %}class="odd"{% endif %}>{{ p.amount | money }}{% if can_write %}
@@ -106,7 +108,7 @@
   </div>
   {% endfor %}
 </div>
-<p class="after">Оклад здесь для справки: из-за отпусков и неполных месяцев на руки выходит по-разному, долгом разница не считается. Выдача ложится расходом на выбранный карман или счёт, частями складывается. Сотрудников и оклады пока правят в старом входе: <a href="/employees/">Сотрудники</a>.</p>
+<p class="after">Соцфонд — то, что банк удерживает со счёта при переводе на карту; у каждого своя сумма, в «Выдано» не входит. Оклад здесь для справки: из-за отпусков и неполных месяцев на руки выходит по-разному, долгом разница не считается. Выдача ложится расходом на выбранный карман или счёт, частями складывается. Сотрудников и оклады пока правят в старом входе: <a href="/employees/">Сотрудники</a>.</p>
 {% endif %}
 {% endblock %}
 
@@ -122,7 +124,7 @@ function toggle(id, btn) {
 document.querySelectorAll('label.chip input[type=radio]').forEach(function (r) {
   r.addEventListener('change', function () {
     r.form.querySelectorAll('input[name="' + r.name + '"]').forEach(function (o) { o.closest('label.chip').classList.toggle('on', o.checked); });
-    if (r.name === 'method') r.form.querySelectorAll('[data-method]').forEach(function (f) { f.hidden = f.dataset.method !== r.value; });
+    if (r.name === 'method') r.form.querySelectorAll('[data-method]').forEach(function (f) { f.hidden = f.dataset.method.split(' ').indexOf(r.value) < 0; });
   });
 });
 </script>

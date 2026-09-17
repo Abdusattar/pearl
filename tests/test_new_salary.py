@@ -139,3 +139,26 @@ def test_late_after_payday(db, site, people):
     assert svc.sheet(db, [sadik], AUG, today=date(2026, 9, 11))["late"] is True
     assert svc.sheet(db, [sadik], AUG, today=date(2026, 9, 10))["late"] is False
     assert svc.prev_month(date(2026, 9, 17)) == AUG
+
+
+def test_socfond_goes_from_account_and_is_not_issued(client, db, site, people, as_makhabat):
+    sadik, _ = site
+    e1, _, _, m = people
+    acc0 = podotchet.get_expected_balance(db, sadik.id, date.today())["expected"]
+    cash0 = podotchet.get_cash_state(db, sadik.id)["net"]
+    assert _pay(client, e1, "25985", "card").status_code == 303
+    r = client.post("/new/salary/pay", data={"employee_id": e1.id, "month": "2026-08", "amount": "6015",
+                                             "date": date.today().isoformat(), "method": "socfond"}, follow_redirects=False)
+    assert r.status_code == 303, r.text[:300]
+    sheet = svc.sheet(db, [sadik], AUG)
+    row = next(x for x in sheet["rows"] if x["employee"].id == e1.id)
+    assert row["issued"] == 25985 and row["socfond"] == 6015 and sheet["socfond"] == 6015
+    assert podotchet.get_expected_balance(db, sadik.id, date.today())["expected"] == acc0 - Decimal(32000)
+    assert podotchet.get_cash_state(db, sadik.id)["net"] == cash0
+    page = client.get(f"/new/salary?month=2026-08&open={e1.id}")
+    assert "соцфонд, со счёта Садик тест-зп" in page.text
+    # только соцфонд без выдачи — человек всё ещё «ничего не получил»
+    e2 = people[1]
+    client.post("/new/salary/pay", data={"employee_id": e2.id, "month": "2026-08", "amount": "100",
+                                         "date": date.today().isoformat(), "method": "socfond"})
+    assert svc.sheet(db, [sadik], AUG)["unpaid"] == 1
