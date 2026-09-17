@@ -37,11 +37,16 @@
 {% endblock %}
 
 {% block content %}
-<h3 class="title">Купили</h3>
+<h3 class="title">{% if replaces %}Поправить покупку{% else %}Купили{% endif %}</h3>
 {% if error %}<div class="alert bad">{{ error }}</div>{% endif %}
+{% if replaces %}
+<div class="alert warn">Поправляете покупку у {{ replaces.supplier.name }} от {{ replaces.date | human_date }} на {{ replaces.total | money }}. После «Записать» она заменится: склад, долг и касса пересчитаются сами, прежняя версия останется в истории.
+  {% if paid_warning %}<br><b>По долгу этой покупки уже платили.</b> Если поменяете «в долг» на «из кассы», оплата поставщику станет лишней.{% endif %}
+  <a href="/new/buy/{{ replaces.id }}">Отмена</a></div>
+{% endif %}
 
 <p class="sub">У кого?</p>
-<div class="chips">
+<div class="chips" {% if replaces %}hidden{% endif %}>
   {% for s in chips %}
   <a class="chip {% if supplier and s.id == supplier.id and not other %}on{% endif %}" href="/new/buy?supplier={{ s.id }}">{{ s.name }}</a>
   {% endfor %}
@@ -50,6 +55,7 @@
 
 <form method="post" action="/new/buy" enctype="multipart/form-data" id="buy" autocomplete="off">
   <input type="hidden" name="other" value="{{ '1' if other else '' }}">
+  <input type="hidden" name="replaces_id" value="{{ replaces.id if replaces else '' }}">
   <input type="hidden" name="photo_receipt_id" value="{{ photo_receipt_id or '' }}">
   <input type="hidden" name="dup_ok" id="dup_ok" value="">
   <input type="hidden" name="for_org_confirmed" id="for_org_confirmed" value="{{ '1' if ask_for_org else '' }}">

@@ -3,7 +3,8 @@
 
 {% block content %}
 {% if saved %}<div class="alert ok">{% if lines %}Записано. Склад пополнился, покупка появится в ленте.{% else %}Записано, расход появится в ленте.{% endif %}</div>{% endif %}
-{% if p.deleted_at %}<div class="alert warn">Покупка убрана {{ p.deleted_at.strftime('%d.%m %H:%M') }}. Склад и долг откатились, запись осталась в истории.</div>{% endif %}
+{% if p.deleted_at and next_version %}<div class="alert warn">Это прежняя версия: покупку поправили {{ p.deleted_at.strftime('%d.%m в %H:%M') }}. <a href="/new/buy/{{ next_version.id }}">Действующая версия →</a></div>
+{% elif p.deleted_at %}<div class="alert warn">Покупка убрана {{ p.deleted_at.strftime('%d.%m %H:%M') }}. Склад и долг откатились, запись осталась в истории.</div>{% endif %}
 
 <div class="card">
   <h3>{{ p.supplier.name }}, {{ p.date | human_date }}</h3>
@@ -22,6 +23,7 @@
     {% if can_write and not p.deleted_at and supplier_debt > 0 and p.payment in ('debt', 'part') %}<a class="btn" href="/new/pay?supplier={{ p.supplier_id }}">Оплатить</a>{% endif %}
     <a class="btn {% if can_write and not p.deleted_at and supplier_debt > 0 and p.payment in ('debt', 'part') %}ghost{% endif %}" href="{{ '/new/buy' if lines else '/new/nocheck' }}">{{ 'Ещё покупка' if lines else 'Ещё расход' }}</a>
     <a class="btn ghost" href="/new/expenses">В ленту</a>
+    {% if can_write and not p.deleted_at %}<a class="btn ghost" href="/new/buy/{{ p.id }}/edit">Поправить</a>{% endif %}
     {% if photo %}<a class="btn ghost" href="/media/{{ photo }}" target="_blank">Фото чека</a>{% endif %}
     {% if can_write and not p.deleted_at %}
     <button type="button" class="btn quiet right" onclick="document.getElementById('rm').hidden=false;this.hidden=true">Убрать покупку</button>
@@ -44,5 +46,6 @@
     <tr class="tot"><td>Итого</td><td></td><td class="r">{{ p.total | money }}</td></tr>
   </table>
   {% if p.note and lines %}<p class="after">{{ p.note }}</p>{% endif %}
+  {% if previous %}<p class="after">Поправлено {{ p.created_at.date() | human_date if p.created_at else '' }}{% if p.creator %}, {{ p.creator.name }}{% endif %}: было {{ previous.total | money }}, стало {{ p.total | money }}. <a href="/new/buy/{{ previous.id }}">Прежняя версия</a></p>{% endif %}
 </div>
 {% endblock %}

@@ -10,11 +10,11 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.dependencies import get_current_user
-from app.models import Supplier
+from app.models import Purchase, Supplier
 from app.routers.new_buy import WRITE_ROLES, _base_ctx, _site, templates
 from app.services import ledger as svc
 from app.services import no_receipt, once, repeats
-from app.services.purchases import default_pocket, founders, pocket_users, site_orgs
+from app.services.purchases import default_pocket, founders, pocket_users, remove_purchase, site_orgs
 from app.services.supplier_ledger import get_supplier_balance
 from app.services.today import supplier_debts
 
@@ -144,20 +144,36 @@ def _nocheck_ctx(request, user, site, db, **kw) -> dict:
         "payment": kw.get("payment", "cash"), "payer_id": kw.get("payer_id", default_pocket(db, site.id, user)),
         "account_org_id": kw.get("account_org_id"), "founder_id": kw.get("founder_id"),
         "d": kw.get("d", date.today()), "error": kw.get("error"), "repeat": kw.get("repeat"),
-        "repeat_back": "/new/expenses",
+        "repeat_back": "/new/expenses", "replaces": kw.get("replaces"),
     })
     return ctx
 
 
+def _live_nocheck(db: Session, site, purchase_id: int | None) -> Purchase | None:
+    p = db.get(Purchase, purchase_id) if purchase_id else None
+    if p is None or p.site_org_id != site.id or p.deleted_at is not None or p.receipt_id is not None:
+        return None
+    return p
+
+
 @router.get("/nocheck", response_class=HTMLResponse)
-def nocheck_form(request: Request, db: Session = Depends(get_db)):
+def nocheck_form(request: Request, edit: int | None = None, db: Session = Depends(get_db)):
     user = get_current_user(request, db)
     if not user:
         return RedirectResponse("/login", status_code=302)
     site = _site(user, db)
     if site is None:
         return HTMLResponse("Объект не найден", status_code=404)
-    return templates.TemplateResponse("new/nocheck.html", _nocheck_ctx(request, user, site, db))
+    if edit is None:
+        return templates.TemplateResponse("new/nocheck.html", _nocheck_ctx(request, user, site, db))
+    old = _live_nocheck(db, site, edit)
+    if old is None:
+        return HTMLResponse("Расход не найден или уже поправлен", status_code=404)
+    kw = dict(amount=f"{float(old.total):g}".replace(".", ","), kind=no_receipt.kind_of(db, old), what=old.note or "",
+              supplier_name=old.supplier.name, for_org=str(old.for_org_id) if old.for_org_id else "shared",
+              payment=old.payment, payer_id=old.paid_from_user_id or default_pocket(db, site.id, user),
+              account_org_id=old.account_org_id, founder_id=old.founder_id, d=old.date, replaces=old)
+    return templates.TemplateResponse("new/nocheck.html", _nocheck_ctx(request, user, site, db, **kw))
 
 
 @router.post("/nocheck", response_class=HTMLResponse)
@@ -180,7 +196,9 @@ async def nocheck_submit(request: Request, db: Session = Depends(get_db)):
     kw = dict(amount=g("amount"), kind=g("kind"), what=g("what"), supplier_name=g("supplier_name"),
               for_org=g("for_org") or "shared", payment=g("payment") or "cash",
               payer_id=num("payer_id") or default_pocket(db, site.id, user), account_org_id=num("account_org_id"),
-              founder_id=num("founder_id"), d=d or date.today())
+              founder_id=num("founder_id"), d=d or date.today(), replaces=_live_nocheck(db, site, num("replaces_id")))
+    if g("replaces_id") and kw["replaces"] is None:
+        return HTMLResponse("Этот расход уже поправили или убрали — откройте его заново", status_code=409)
 
     def render(error=None, repeat=None):
         return templates.TemplateResponse("new/nocheck.html", _nocheck_ctx(request, user, site, db, error=error,
@@ -215,8 +233,10 @@ async def nocheck_submit(request: Request, db: Session = Depends(get_db)):
     if done := once.done_url(db, token):
         return RedirectResponse(done, status_code=303)
     repeat_ok = g("repeat_ok") == "1"
-    if not repeat_ok and (rep := no_receipt.find_repeat(db, site.id, kw["kind"], amount, d)):
+    if not repeat_ok and kw["replaces"] is None and (rep := no_receipt.find_repeat(db, site.id, kw["kind"], amount, d)):
         return render(None, rep)
+    if kw["replaces"] is not None:
+        remove_purchase(db, kw["replaces"], user)
     supplier = db.query(Supplier).filter(Supplier.name == kw["supplier_name"]).first()
     if supplier is None:
         supplier = Supplier(name=kw["supplier_name"], phone="0000")
@@ -226,6 +246,8 @@ async def nocheck_submit(request: Request, db: Session = Depends(get_db)):
         db, user=user, site_org_id=site.id, supplier=supplier, kind=kw["kind"], amount=amount, what=kw["what"] or None,
         payment=kw["payment"], payer_id=kw["payer_id"], account_org_id=kw["account_org_id"],
         founder_id=kw["founder_id"], for_org_id=for_org_id, d=d, repeat_confirmed=repeat_ok)
+    if kw["replaces"] is not None:
+        purchase.replaces_id = kw["replaces"].id
     url = f"/new/buy/{purchase.id}?saved=1"
     once.remember(db, token, user.id, url)
     db.commit()

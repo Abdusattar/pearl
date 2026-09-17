@@ -284,3 +284,47 @@ def test_same_form_token_twice_writes_one_purchase(client, db, site, staff, hali
     assert r2.status_code == 303 and r2.headers["location"] == r1.headers["location"]
     assert db.query(Purchase).filter(Purchase.supplier_id == halima.id, Purchase.deleted_at.is_(None)).count() == 1
     assert p is not None
+
+
+# ── «Поправить» (17.09) ──────────────────────────────────────────────────
+
+def _stock(db, product):
+    from sqlalchemy import func
+    from app.models import WarehouseReceipt
+    return float(db.query(func.coalesce(func.sum(WarehouseReceipt.quantity), 0))
+                 .filter(WarehouseReceipt.product_id == product.id, WarehouseReceipt.deleted_at.is_(None)).scalar())
+
+
+def test_edit_replaces_purchase_and_recounts_cash_stock(client, db, site, staff, halima, carrot):
+    from app.services import podotchet
+    sadik, _ = site
+    cash0 = podotchet.get_cash_state(db, sadik.id)["net"]
+    stock0 = _stock(db, carrot)
+    old = _purchase(db, _post(client, halima, [{"name": carrot.name, "pid": carrot.id, "qty": "10", "price": "35"}],
+                              payer_id=staff.id))
+    page = client.get(f"/new/buy/{old.id}/edit")
+    assert page.status_code == 200 and "Поправить покупку" in page.text and 'name="replaces_id" value="%d"' % old.id in page.text
+    r = _post(client, halima, [{"name": carrot.name, "pid": carrot.id, "qty": "12", "price": "35"}],
+              payer_id=staff.id, replaces_id=old.id)
+    new = _purchase(db, r)
+    db.refresh(old)
+    assert old.deleted_at is not None and new.replaces_id == old.id and float(new.total) == 420
+    assert _stock(db, carrot) == stock0 + 12
+    assert podotchet.get_cash_state(db, sadik.id)["net"] == cash0 - Decimal(420)
+    card = client.get(f"/new/buy/{new.id}")
+    assert "Поправлено" in card.text and "было 350" in card.text and "стало 420" in card.text
+    assert "Это прежняя версия" in client.get(f"/new/buy/{old.id}").text
+    # вторая правка той же старой версии не пройдёт
+    assert _post(client, halima, [{"name": carrot.name, "pid": carrot.id, "qty": "1", "price": "35"}],
+                 replaces_id=old.id).status_code == 409
+
+
+def test_edit_debt_after_partial_payment_warns(client, db, site, staff, halima, carrot):
+    from app.models import SupplierPayment
+    old = _purchase(db, _post(client, halima, [{"name": carrot.name, "pid": carrot.id, "qty": "10", "price": "40"}],
+                              payment="debt"))
+    debt = get_supplier_balance(db, halima.id)
+    db.add(SupplierPayment(supplier_id=halima.id, amount=debt, date=date.today(), created_by=staff.id))
+    db.flush()
+    page = client.get(f"/new/buy/{old.id}/edit")
+    assert "По долгу этой покупки уже платили" in page.text

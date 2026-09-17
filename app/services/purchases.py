@@ -742,6 +742,29 @@ def remove_purchase(db: Session, purchase: Purchase, user: User) -> None:
     audit(db, "purchase", purchase.id, "delete", user.id, {"tx_ids": tx_ids})
 
 
+def edit_rows(db: Session, purchase: Purchase) -> list[dict]:
+    """«Поправить»: строки покупки как строки формы «Купили»."""
+    tx_ids = [t.id for t in purchase.transactions]
+    if not tx_ids:
+        return []
+    receipts = (db.query(WarehouseReceipt)
+                .filter(WarehouseReceipt.transaction_id.in_(tx_ids), WarehouseReceipt.deleted_at.is_(None))
+                .order_by(WarehouseReceipt.id).all())
+    return [_row_dict(r.product, r.quantity, r.price_per_unit) for r in receipts]
+
+
+def replace_purchase(db: Session, old: Purchase, user: User) -> int | None:
+    """Перед записью поправленной версии: прежняя уходит в историю, как при
+    «Убрать». Возвращает фото чека, если оно было, — новая версия берёт его себе;
+    строки распознавания старой версии с чека снимаются, их заменят новые."""
+    remove_purchase(db, old, user)
+    receipt = db.get(Receipt, old.receipt_id) if old.receipt_id else None
+    if receipt is None or receipt.file_path == "manual":
+        return None
+    db.query(ReceiptItem).filter(ReceiptItem.receipt_id == receipt.id).delete(synchronize_session=False)
+    return receipt.id
+
+
 def purchase_lines(db: Session, purchase: Purchase) -> list[dict]:
     """Строки карточки покупки: товар, количество × цена, сумма."""
     tx_ids = [t.id for t in purchase.transactions]

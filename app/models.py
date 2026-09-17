@@ -313,6 +313,7 @@ class Purchase(Base):
     created_at        = Column(DateTime, server_default=func.now())
     deleted_at        = Column(DateTime)
     deleted_by        = Column(Integer, ForeignKey("users.id"))
+    replaces_id       = Column(Integer, ForeignKey("purchases.id"))   # «Поправить»: какую версию заменила (17.09)
 
     supplier       = relationship("Supplier")
     for_org        = relationship("Organization", foreign_keys=[for_org_id])

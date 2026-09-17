@@ -40,6 +40,13 @@ def category_id(db: Session, kind: str) -> int | None:
     return row[0] if row else None
 
 
+def kind_of(db: Session, purchase: Purchase) -> str:
+    """«Поправить»: какое «Что это» было у расхода — по категории его проводки."""
+    tx = next((t for t in purchase.transactions if t.deleted_at is None), None)
+    cat = db.get(ExpenseCategory, tx.category_id) if tx and tx.category_id else None
+    return next((k for k, (_, name) in KINDS.items() if cat and name == cat.name), "other")
+
+
 def recent_suppliers(db: Session, site_org_id: int) -> list[Supplier]:
     """Чипы «Кому»: у кого уже были расходы без чека."""
     ids = [r[0] for r in db.query(Purchase.supplier_id)

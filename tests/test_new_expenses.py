@@ -186,3 +186,21 @@ def test_nocheck_remove_rolls_back_cash(client, db, site, staff):
     p = _purchase(db, _nocheck(client, payer_id=staff.id, amount="700", kind="other"))
     assert client.post(f"/new/buy/{p.id}/remove", follow_redirects=False).status_code == 303
     assert podotchet.get_cash_state(db, site.id)["net"] == cash0
+
+
+def test_nocheck_edit_replaces_and_keeps_kind(client, db, site, staff):
+    from app.models import ExpenseCategory, Purchase, Transaction
+    if not db.query(ExpenseCategory).filter_by(name="Охрана").first():
+        db.add(ExpenseCategory(name="Охрана"))
+        db.flush()
+    cash0 = podotchet.get_cash_state(db, site.id)["net"]
+    old = _purchase(db, _nocheck(client, kind="guard", amount="15000", what="охрана за август", payer_id=staff.id))
+    card = client.get(f"/new/buy/{old.id}/edit", follow_redirects=False)
+    assert card.status_code == 302 and card.headers["location"] == f"/new/nocheck?edit={old.id}"
+    form = client.get(f"/new/nocheck?edit={old.id}")
+    assert "Поправить расход" in form.text and 'value="guard" checked' in form.text
+    new = _purchase(db, _nocheck(client, kind="guard", amount="12000", what="охрана за август", payer_id=staff.id,
+                                 replaces_id=old.id))
+    db.refresh(old)
+    assert old.deleted_at is not None and new.replaces_id == old.id
+    assert podotchet.get_cash_state(db, site.id)["net"] == cash0 - Decimal(12000)

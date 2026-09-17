@@ -74,7 +74,7 @@ def _form_ctx(request: Request, user: User, site: Organization, db: Session, *,
               tx_date: date, payment: str | None, for_org: str, payer_id: int | None,
               account_org_id: int | None, founder_id: int | None, paid_amount: str,
               note: str, photo_receipt_id: int | None, dup: dict | None, error: str | None,
-              ask_for_org: bool = False) -> dict:
+              ask_for_org: bool = False, replaces: Purchase | None = None) -> dict:
     ctx = _base_ctx(request, user, site, db, "expenses")
     chips = svc.suggest_suppliers(db, site.id)
     if supplier and supplier.id not in {s.id for s in chips}:
@@ -95,9 +95,25 @@ def _form_ctx(request: Request, user: User, site: Organization, db: Session, *,
         "pockets": svc.pocket_users(db, site.id), "founders": svc.founders(db),
         "categories": db.query(ProductCategory).order_by(ProductCategory.sort_order).all(),
         "units": UNITS, "supplier_debt": supplier_debt, "total": total,
-        "dup": dup, "error": error,
+        "dup": dup, "error": error, "replaces": replaces,
+        "paid_warning": _paid_warning(db, replaces) if replaces else False,
     })
     return ctx
+
+
+def _paid_warning(db: Session, old: Purchase) -> bool:
+    """По долгу этой покупки уже платили: смена «в долг» на «из кассы» даст переплату."""
+    if old.payment not in ("debt", "part"):
+        return False
+    unpaid = float(old.total) - float(old.paid_amount or 0)
+    return float(get_supplier_balance(db, old.supplier_id)) < unpaid - 0.5
+
+
+def _live_purchase(db: Session, site: Organization, purchase_id: int | None) -> Purchase | None:
+    p = db.get(Purchase, purchase_id) if purchase_id else None
+    if p is None or p.site_org_id != site.id or p.deleted_at is not None:
+        return None
+    return p
 
 
 @router.get("/", response_class=HTMLResponse)
@@ -182,6 +198,9 @@ async def buy_submit(request: Request, photo: UploadFile | None = File(None), db
     note = (form.get("note") or "").strip() or None
     photo_receipt_id = _int_or_none(form.get("photo_receipt_id"))
     dup_ok = form.get("dup_ok") == "1"
+    replaces = _live_purchase(db, site, _int_or_none(form.get("replaces_id")))
+    if form.get("replaces_id") and replaces is None:
+        return HTMLResponse("Эту покупку уже поправили или убрали — откройте её заново", status_code=409)
 
     supplier = db.get(Supplier, supplier_id) if supplier_id else None
     if supplier is None and new_supplier_name:
@@ -200,7 +219,7 @@ async def buy_submit(request: Request, photo: UploadFile | None = File(None), db
                         last_date=last_date, tx_date=tx_date, payment=payment, for_org=for_org,
                         payer_id=payer_id, account_org_id=account_org_id, founder_id=founder_id,
                         paid_amount=paid_amount, note=note or "", photo_receipt_id=photo_receipt_id,
-                        dup=dup, error=error, ask_for_org=ask_for_org)
+                        dup=dup, error=error, ask_for_org=ask_for_org, replaces=replaces)
         ctx["recognized_amount"] = recognized_amount
         return templates.TemplateResponse("new/buy.html", ctx)
 
@@ -214,7 +233,7 @@ async def buy_submit(request: Request, photo: UploadFile | None = File(None), db
         if data:
             file_hash = compute_hash(data)
             existing = db.query(Receipt).filter(Receipt.file_hash == file_hash).first()
-            if existing is not None and existing.id != photo_receipt_id:
+            if existing is not None and existing.id != photo_receipt_id and not (replaces and existing.id == replaces.receipt_id):
                 if not dup_ok:
                     return render(dup={"kind": "photo", "date": existing.created_at.date() if existing.created_at else None,
                                        "total": float(existing.amount_confirmed or existing.amount_detected or 0)})
@@ -282,17 +301,23 @@ async def buy_submit(request: Request, photo: UploadFile | None = File(None), db
     if done := once.done_url(db, token):
         return RedirectResponse(done, status_code=303)
     total = round(sum(it["total"] for it in items), 2)
-    if not dup_ok:
+    if not dup_ok and replaces is None:   # правка сама себе не повтор
         dup = svc.find_duplicate(db, supplier.id, tx_date, total,
                                  {it["product"].id for it in items if it.get("product")})
         if dup:
             return render(dup=dup)
 
+    if replaces is not None:
+        kept = svc.replace_purchase(db, replaces, user)
+        if photo_receipt_id == replaces.receipt_id:
+            photo_receipt_id = kept
     purchase = svc.record_purchase(
         db, user=user, site_org_id=site.id, supplier_id=supplier.id, tx_date=tx_date, items=items,
         payment=payment, paid_amount=paid_val, payer_id=payer_id, account_org_id=account_org_id,
         founder_id=founder_id, for_org_id=for_org_id, receipt_id=photo_receipt_id, note=note, dup_confirmed=dup_ok,
     )
+    if replaces is not None:
+        purchase.replaces_id = replaces.id
     url = f"/new/buy/{purchase.id}?saved=1"
     once.remember(db, token, user.id, url)
     db.commit()
@@ -311,12 +336,37 @@ def purchase_card(purchase_id: int, request: Request, saved: int = 0, db: Sessio
     ctx = _base_ctx(request, user, site, db, "expenses")
     receipt = db.get(Receipt, purchase.receipt_id) if purchase.receipt_id else None
     ctx.update({
+        "previous": db.get(Purchase, purchase.replaces_id) if purchase.replaces_id else None,
+        "next_version": db.query(Purchase).filter(Purchase.replaces_id == purchase.id).first(),
         "p": purchase, "lines": svc.purchase_lines(db, purchase), "saved": bool(saved),
         "supplier_debt": float(get_supplier_balance(db, purchase.supplier_id)),
         "photo": receipt.file_path if receipt and receipt.file_path != "manual" else None,
         "can_write": user.role in WRITE_ROLES,
     })
     return templates.TemplateResponse("new/purchase.html", ctx)
+
+
+@router.get("/buy/{purchase_id}/edit", response_class=HTMLResponse)
+def purchase_edit(purchase_id: int, request: Request, db: Session = Depends(get_db)):
+    """«Поправить»: та же форма «Купили», заполненная этой покупкой (17.09)."""
+    user = get_current_user(request, db)
+    if not user:
+        return RedirectResponse("/login", status_code=302)
+    site = _site(user, db)
+    old = _live_purchase(db, site, purchase_id) if site else None
+    if old is None:
+        return HTMLResponse("Покупка не найдена или уже поправлена", status_code=404)
+    rows = svc.edit_rows(db, old)
+    if not rows:
+        return RedirectResponse(f"/new/nocheck?edit={old.id}", status_code=302)
+    receipt = db.get(Receipt, old.receipt_id) if old.receipt_id else None
+    ctx = _form_ctx(request, user, site, db, supplier=old.supplier, other=True, rows=rows, last_date=None,
+                    tx_date=old.date, payment=old.payment, for_org=str(old.for_org_id) if old.for_org_id else "shared",
+                    payer_id=old.paid_from_user_id, account_org_id=old.account_org_id, founder_id=old.founder_id,
+                    paid_amount=(f"{float(old.paid_amount):g}" if old.payment == "part" else ""), note=old.note or "",
+                    photo_receipt_id=receipt.id if receipt and receipt.file_path != "manual" else None,
+                    dup=None, error=None, replaces=old)
+    return templates.TemplateResponse("new/buy.html", ctx)
 
 
 @router.post("/buy/{purchase_id}/remove")
