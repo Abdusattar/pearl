@@ -40,7 +40,8 @@
     <a href="#" onclick="openModal('founder-withdraw-modal');return false" style="font-size:13px;color:var(--text-muted)">Учредитель забрал?</a>
     <button class="btn btn-secondary" onclick="document.getElementById('reconcile-card').scrollIntoView({behavior:'smooth'})">Сверить остаток</button>
     {% if holder %}
-    <button class="btn btn-primary" onclick="openModal('withdraw-modal')">+ Снять деньги</button>
+    {# 17.09: снятие только в новом входе — здесь карман всегда держателя кассы, кто бы ни снял #}
+    <a class="btn btn-primary" href="/new/cash/withdraw">+ Снять деньги</a>
     {% endif %}
   </div>
 </div>
