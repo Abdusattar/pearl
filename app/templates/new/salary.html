@@ -6,7 +6,7 @@
   .back { font-size: 14px; text-decoration: none; }
   .sub b { font-weight: 600; }
   .list { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; }
-  .row { display: grid; grid-template-columns: 1fr 90px 90px 90px 110px; gap: 8px; align-items: center; padding: 10px 16px;
+  .row { display: grid; grid-template-columns: 1fr 90px 90px 110px; gap: 8px; align-items: center; padding: 10px 16px;
          border-top: 1px solid var(--line); font-variant-numeric: tabular-nums; }
   .list > .row:first-child { border-top: 0; }
   .row.head { font-size: 12px; color: var(--muted); padding-block: 10px 8px; }
@@ -32,7 +32,7 @@
   @media (max-width: 760px) {
     .row { grid-template-columns: 1fr auto; }
     .row.head { display: none; }
-    .row .c-sal, .row .c-iss { display: none; }
+    .row .c-sal { display: none; }
     .row .act { grid-column: 1 / -1; text-align: left; }
   }
 </style>
@@ -51,23 +51,22 @@
 {% if not sheet.rows %}
 <div class="alert warn">Сотрудников нет. Заводят их пока в старом входе: <a href="/employees/">Сотрудники</a>.</div>
 {% else %}
-<p class="sub">{{ sheet.rows | length }} человек. Оклады <b>{{ sheet.salary | money }}</b> · выдано <b>{{ sheet.issued | money }}</b> · осталось выдать <b>{{ sheet.left | money }}</b></p>
-{% if sheet.late %}<div class="alert warn">День зарплаты, {{ sheet.payday.day }} {{ months_of[sheet.payday.month - 1] }}, прошёл: {{ sheet.unpaid }} чел. ещё не получили за {{ months_gen[period.month - 1] }}.</div>{% endif %}
+<p class="sub">{{ sheet.rows | length }} человек. Оклады <b>{{ sheet.salary | money }}</b> · выдано <b>{{ sheet.issued | money }}</b>{% if sheet.unpaid %} · ещё никому не выдано: <b>{{ sheet.unpaid }} чел.</b>{% endif %}</p>
+{% if sheet.late %}<div class="alert warn">День зарплаты, {{ sheet.payday.day }} {{ months_of[sheet.payday.month - 1] }}, прошёл: {{ sheet.unpaid }} чел. ещё ничего не получили за {{ months_gen[period.month - 1] }}.</div>{% endif %}
 
 <div class="list">
-  <div class="row head"><span>Кто</span><span class="r">Оклад</span><span class="r">Выдано</span><span class="r">Осталось</span><span></span></div>
+  <div class="row head"><span>Кто</span><span class="r">Оклад</span><span class="r">Выдано</span><span></span></div>
   {% for r in sheet.rows %}
   {% set e = r.employee %}
   {% set is_open = open_id == e.id %}
   <div class="row">
     <span>{{ e.full_name }}<br><span class="rl">{{ e.role or '' }}{% if r.org %} · {{ r.org }}{% endif %}</span></span>
     <span class="r c-sal">{{ r.salary | money }}</span>
-    <span class="r c-iss {% if not r.issued %}zero{% endif %}">{{ r.issued | money }}</span>
-    <span class="r {% if not r.left %}zero{% endif %}">{{ r.left | money }}</span>
-    <span class="act">{% if r.left > 0 and can_write %}<button type="button" class="btn ghost" aria-expanded="{{ 'true' if is_open else 'false' }}" onclick="toggle({{ e.id }}, this)">Выдать</button>{% elif r.pays %}<button type="button" class="btn ghost" aria-expanded="{{ 'true' if is_open else 'false' }}" onclick="toggle({{ e.id }}, this)">Выдачи</button>{% endif %}</span>
+    <span class="r {% if not r.issued %}zero{% endif %}">{{ r.issued | money }}</span>
+    <span class="act">{% if can_write and not r.pays %}<button type="button" class="btn ghost" aria-expanded="{{ 'true' if is_open else 'false' }}" onclick="toggle({{ e.id }}, this)">Выдать</button>{% elif r.pays %}<button type="button" class="btn ghost" aria-expanded="{{ 'true' if is_open else 'false' }}" onclick="toggle({{ e.id }}, this)">Выдачи</button>{% endif %}</span>
   </div>
   <div class="open" id="open-{{ e.id }}" {% if not is_open %}hidden{% endif %}>
-    {% if can_write and r.left > 0 %}
+    {% if can_write %}
     <form method="post" action="/new/salary/pay" autocomplete="off">
       {% if is_open %}
         {% if error %}<div class="alert bad">{{ error }}</div>{% endif %}
@@ -77,7 +76,7 @@
       <input type="hidden" name="month" value="{{ '%04d-%02d' % (period.year, period.month) }}">
       <div class="give">
         <div class="fld"><label class="lb" for="amt-{{ e.id }}">Сколько на руки</label>
-          <input class="in num" id="amt-{{ e.id }}" name="amount" inputmode="decimal" value="{% if is_open and amount %}{{ amount }}{% else %}{{ r.left | money }}{% endif %}"></div>
+          <input class="in num" id="amt-{{ e.id }}" name="amount" inputmode="decimal" value="{% if is_open and amount %}{{ amount }}{% endif %}" placeholder="0"></div>
         <div class="fld"><label class="lb" for="dt-{{ e.id }}">Когда</label>
           <input class="in" id="dt-{{ e.id }}" type="date" name="date" value="{{ (d if is_open else today).isoformat() }}" max="{{ today.isoformat() }}"></div>
         {% set m = method if is_open else 'hand' %}
@@ -107,7 +106,7 @@
   </div>
   {% endfor %}
 </div>
-<p class="after">Выдача ложится расходом на выбранный карман или счёт, частями складывается. Сотрудников и оклады пока правят в старом входе: <a href="/employees/">Сотрудники</a>.</p>
+<p class="after">Оклад здесь для справки: из-за отпусков и неполных месяцев на руки выходит по-разному, долгом разница не считается. Выдача ложится расходом на выбранный карман или счёт, частями складывается. Сотрудников и оклады пока правят в старом входе: <a href="/employees/">Сотрудники</a>.</p>
 {% endif %}
 {% endblock %}
 

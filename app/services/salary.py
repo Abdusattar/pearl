@@ -6,6 +6,10 @@
 Расход пишется на площадку: карманы и касса считаются по площадке, а чей
 сотрудник — видно по самому сотруднику.
 
+Остатка «оклад минус выдано» нет (Махабат 17.09): из-за отпусков сумма у всех
+разная, выданное — окончательное. Оклад в ведомости — справка, а не долг;
+сигнал после дня зарплаты — только по тем, кому не выдано ничего.
+
 Видимость (решение 14.09): школьную ведомость ведёт Айжан, Махабат её не
 видит, хотя к Школе доступ у неё есть.
 """
@@ -62,13 +66,13 @@ def sheet(db: Session, orgs: list[Organization], period: date, today: date | Non
         issued = sum((Decimal(t.amount) for t in by_emp.get(e.id, [])), ZERO)
         salary = Decimal(e.salary or 0)
         rows.append({"employee": e, "org": names.get(e.organization_id) if len(orgs) > 1 else None,
-                     "salary": salary, "issued": issued, "left": max(ZERO, salary - issued),
+                     "salary": salary, "issued": issued,
                      "pays": [_pay_row(db, t) for t in by_emp.get(e.id, [])]})
     salary_total = sum((r["salary"] for r in rows), ZERO)
     issued_total = sum((r["issued"] for r in rows), ZERO)
-    unpaid = sum(1 for r in rows if r["left"] > 0)
+    unpaid = sum(1 for r in rows if not r["pays"])
     payday = (period.replace(day=28) + timedelta(days=4)).replace(day=PAY_DAY)   # 10-е следующего месяца
-    return {"rows": rows, "salary": salary_total, "issued": issued_total, "left": max(ZERO, salary_total - issued_total),
+    return {"rows": rows, "salary": salary_total, "issued": issued_total,
             "unpaid": unpaid, "payday": payday, "late": today > payday and unpaid > 0}
 
 

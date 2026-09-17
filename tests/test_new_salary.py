@@ -76,10 +76,10 @@ def test_pay_from_pocket_goes_to_august_and_leaves_pocket(client, db, site, peop
     assert cash.pocket_balance(db, sadik.id, m.id) == pocket0 - Decimal(32000)
     sheet = svc.sheet(db, [sadik], AUG)
     row = next(x for x in sheet["rows"] if x["employee"].id == e1.id)
-    assert row["issued"] == 32000 and row["left"] == 8000
+    assert row["issued"] == 32000 and "left" not in row     # остатка «оклад минус выдано» нет (17.09)
     assert _pay(client, e1, "8000", f"pocket:{m.id}").status_code == 303   # частями складывается
     row = next(x for x in svc.sheet(db, [sadik], AUG)["rows"] if x["employee"].id == e1.id)
-    assert row["left"] == 0
+    assert row["issued"] == 40000 and svc.sheet(db, [sadik], AUG)["unpaid"] == 1   # не получал только второй
 
 
 def test_card_goes_from_own_object_account_not_cash(client, db, site, people, as_makhabat):
