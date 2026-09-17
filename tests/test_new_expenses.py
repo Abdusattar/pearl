@@ -129,3 +129,60 @@ def test_same_payment_again_asks_and_token_repeat_writes_once(client, db, site, 
                     follow_redirects=False)
     assert r.status_code == 303
     assert db.query(SupplierPayment).filter_by(supplier_id=halima.id).count() == 2
+
+
+# ── расход без чека (17.09) ──────────────────────────────────────────────
+
+def _nocheck(client, **kw):
+    data = {"amount": "4 800", "kind": "light", "what": "Свет за август", "supplier_name": "Северэлектро тест-лр",
+            "for_org": "shared", "payment": "cash", "date": date.today().isoformat()}
+    data.update({k: str(v) for k, v in kw.items()})
+    return client.post("/new/nocheck", data=data, follow_redirects=False)
+
+
+def test_nocheck_from_pocket_goes_to_feed_and_category(client, db, site, staff):
+    from app.models import ExpenseCategory, Purchase, Transaction
+    db.add(ExpenseCategory(name="Электричество"))
+    db.flush()
+    cash0 = podotchet.get_cash_state(db, site.id)["net"]
+    r = _nocheck(client, payer_id=staff.id)
+    assert r.status_code == 303, r.text[:300]
+    p = _purchase(db, r)
+    tx = db.query(Transaction).filter_by(purchase_id=p.id).one()
+    assert tx.category_id == db.query(ExpenseCategory).filter_by(name="Электричество").first().id
+    assert tx.paid_from_user_id == staff.id and p.receipt_id is None and p.note == "Свет за август"
+    assert podotchet.get_cash_state(db, site.id)["net"] == cash0 - Decimal(4800)
+    first, last, _ = svc.month_bounds(date.today().strftime("%Y-%m"))
+    days, _ = svc.month_rows(db, site.id, first, last)
+    row = next(x for d in days for x in d["rows"] if x["url"] == f"/new/buy/{p.id}")
+    assert row["title"] == "Северэлектро тест-лр" and row["sub"] == "Свет за август" and row["status"] == "из кассы"
+    card = client.get(f"/new/buy/{p.id}?saved=1")
+    assert card.status_code == 200 and "Расход без чека: Свет за август" in card.text
+
+
+def test_nocheck_debt_then_pay(client, db, site, staff):
+    r = _nocheck(client, payment="debt", kind="delivery", amount="300", supplier_name="Такси тест-лр", what="доставка мяса")
+    p = _purchase(db, r)
+    assert get_supplier_balance(db, p.supplier_id) == Decimal(300)
+    client.post("/new/pay", data={"supplier_id": p.supplier_id, "amount": "300", "source": "cash",
+                                  "payer_id": str(staff.id), "pay_date": date.today().isoformat()})
+    assert get_supplier_balance(db, p.supplier_id) == 0
+
+
+def test_nocheck_repair_needs_object_and_repeat_asks(client, db, site, staff):
+    from app.models import Purchase
+    r = _nocheck(client, kind="repair", amount="12000", what="краска", supplier_name="Строймаркет тест-лр")
+    assert r.status_code == 200 and "Ремонт для кого" in r.text
+    assert _nocheck(client, kind="repair", amount="12000", for_org=site.id, supplier_name="Строймаркет тест-лр").status_code == 303
+    r = _nocheck(client, kind="repair", amount="12000", for_org=site.id, supplier_name="Строймаркет тест-лр")
+    assert r.status_code == 200 and "Такое уже записано" in r.text
+    assert db.query(Purchase).filter(Purchase.site_org_id == site.id, Purchase.deleted_at.is_(None)).count() == 1
+    assert _nocheck(client, kind="repair", amount="12000", for_org=site.id, supplier_name="Строймаркет тест-лр",
+                    repeat_ok="1").status_code == 303
+
+
+def test_nocheck_remove_rolls_back_cash(client, db, site, staff):
+    cash0 = podotchet.get_cash_state(db, site.id)["net"]
+    p = _purchase(db, _nocheck(client, payer_id=staff.id, amount="700", kind="other"))
+    assert client.post(f"/new/buy/{p.id}/remove", follow_redirects=False).status_code == 303
+    assert podotchet.get_cash_state(db, site.id)["net"] == cash0

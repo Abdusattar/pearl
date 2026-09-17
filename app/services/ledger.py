@@ -106,7 +106,7 @@ def month_rows(db: Session, site_org_id: int, first: date, last: date) -> tuple[
         if key[0] == "s":
             title = f"Зарплата за {_month_name(g['date'] if not key[2] else key[2])}" if g["people"] else "Зарплата"
             sub = f"{g['people']} чел., ведомость" if g["people"] else (g["description"] or "")
-            url = "/employees/payroll"
+            url = f"/new/salary?month={key[2]:%Y-%m}" if key[2] else "/new/salary"
         else:
             title = g["supplier"] or (g["description"] or "Расход")
             if names:

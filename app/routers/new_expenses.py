@@ -13,7 +13,7 @@ from app.dependencies import get_current_user
 from app.models import Supplier
 from app.routers.new_buy import WRITE_ROLES, _base_ctx, _site, templates
 from app.services import ledger as svc
-from app.services import once, repeats
+from app.services import no_receipt, once, repeats
 from app.services.purchases import default_pocket, founders, pocket_users, site_orgs
 from app.services.supplier_ledger import get_supplier_balance
 from app.services.today import supplier_debts
@@ -125,6 +125,108 @@ def pay_submit(request: Request, supplier_id: int = Form(...), amount: str = For
     except ValueError as e:
         return render(str(e))
     url = f"/new/pay?supplier={sup.id}&saved=1"
+    once.remember(db, token, user.id, url)
+    db.commit()
+    return RedirectResponse(url, status_code=303)
+
+
+# ── расход без чека (2г) ─────────────────────────────────────────────────
+
+def _nocheck_ctx(request, user, site, db, **kw) -> dict:
+    ctx = _base_ctx(request, user, site, db, "expenses")
+    ctx.update({
+        "kinds": no_receipt.KINDS, "recent": no_receipt.recent_suppliers(db, site.id),
+        "all_suppliers": db.query(Supplier).order_by(Supplier.name).all(),
+        "pockets": pocket_users(db, site.id), "founders": founders(db), "today": date.today(),
+        "can_write": user.role in WRITE_ROLES,
+        "amount": kw.get("amount", ""), "kind": kw.get("kind", ""), "what": kw.get("what", ""),
+        "supplier_name": kw.get("supplier_name", ""), "for_org": kw.get("for_org", "shared"),
+        "payment": kw.get("payment", "cash"), "payer_id": kw.get("payer_id", default_pocket(db, site.id, user)),
+        "account_org_id": kw.get("account_org_id"), "founder_id": kw.get("founder_id"),
+        "d": kw.get("d", date.today()), "error": kw.get("error"), "repeat": kw.get("repeat"),
+        "repeat_back": "/new/expenses",
+    })
+    return ctx
+
+
+@router.get("/nocheck", response_class=HTMLResponse)
+def nocheck_form(request: Request, db: Session = Depends(get_db)):
+    user = get_current_user(request, db)
+    if not user:
+        return RedirectResponse("/login", status_code=302)
+    site = _site(user, db)
+    if site is None:
+        return HTMLResponse("Объект не найден", status_code=404)
+    return templates.TemplateResponse("new/nocheck.html", _nocheck_ctx(request, user, site, db))
+
+
+@router.post("/nocheck", response_class=HTMLResponse)
+async def nocheck_submit(request: Request, db: Session = Depends(get_db)):
+    user = get_current_user(request, db)
+    if not user:
+        return RedirectResponse("/login", status_code=302)
+    if user.role not in WRITE_ROLES:
+        return HTMLResponse("Расходы записывают сотрудники площадки", status_code=403)
+    site = _site(user, db)
+    if site is None:
+        return HTMLResponse("Объект не найден", status_code=404)
+    form = await request.form()
+    g = lambda k: (form.get(k) or "").strip()
+    num = lambda k: int(g(k)) if g(k).isdigit() else None
+    try:
+        d = date.fromisoformat(g("date")) if g("date") else date.today()
+    except ValueError:
+        d = None
+    kw = dict(amount=g("amount"), kind=g("kind"), what=g("what"), supplier_name=g("supplier_name"),
+              for_org=g("for_org") or "shared", payment=g("payment") or "cash",
+              payer_id=num("payer_id") or default_pocket(db, site.id, user), account_org_id=num("account_org_id"),
+              founder_id=num("founder_id"), d=d or date.today())
+
+    def render(error=None, repeat=None):
+        return templates.TemplateResponse("new/nocheck.html", _nocheck_ctx(request, user, site, db, error=error,
+                                                                           repeat=repeat, **kw))
+
+    try:
+        amount = Decimal(g("amount").replace(" ", "").replace(",", "."))
+    except InvalidOperation:
+        return render("Укажите сумму")
+    if amount <= 0:
+        return render("Укажите сумму")
+    if kw["kind"] not in no_receipt.KINDS:
+        return render("Что это: свет, доставка, ремонт…? Выберите")
+    if not kw["supplier_name"]:
+        return render("Кому заплатили? Например, Северэлектро или Такси")
+    orgs = {o.id for o in site_orgs(db, site.id)}
+    for_org_id = int(kw["for_org"]) if kw["for_org"].isdigit() else None
+    if for_org_id is not None and for_org_id not in orgs:
+        return render("Для кого: общее, школа или садик?")
+    if for_org_id is None and kw["kind"] in no_receipt.FOR_ORG_REQUIRED:
+        return render("Ремонт для кого: школа или садик? Стройка идёт на объект, не в общее")
+    if kw["payment"] not in no_receipt.PAYMENTS:
+        return render("Откуда деньги?")
+    if kw["payment"] == "account" and kw["account_org_id"] not in orgs:
+        return render("Со счёта садика или школы? Выберите")
+    if kw["payment"] == "founder" and not kw["founder_id"]:
+        return render("Кто из учредителей заплатил?")
+    if d is None or d > date.today():
+        return render("Дата не позже сегодняшней")
+
+    token = once.clean(g("form_token"))
+    if done := once.done_url(db, token):
+        return RedirectResponse(done, status_code=303)
+    repeat_ok = g("repeat_ok") == "1"
+    if not repeat_ok and (rep := no_receipt.find_repeat(db, site.id, kw["kind"], amount, d)):
+        return render(None, rep)
+    supplier = db.query(Supplier).filter(Supplier.name == kw["supplier_name"]).first()
+    if supplier is None:
+        supplier = Supplier(name=kw["supplier_name"], phone="0000")
+        db.add(supplier)
+        db.flush()
+    purchase = no_receipt.record(
+        db, user=user, site_org_id=site.id, supplier=supplier, kind=kw["kind"], amount=amount, what=kw["what"] or None,
+        payment=kw["payment"], payer_id=kw["payer_id"], account_org_id=kw["account_org_id"],
+        founder_id=kw["founder_id"], for_org_id=for_org_id, d=d, repeat_confirmed=repeat_ok)
+    url = f"/new/buy/{purchase.id}?saved=1"
     once.remember(db, token, user.id, url)
     db.commit()
     return RedirectResponse(url, status_code=303)

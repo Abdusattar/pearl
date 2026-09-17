@@ -2,13 +2,13 @@
 {% block title %}{{ p.supplier.name }}, {{ p.date | human_date }} — Жемчужина{% endblock %}
 
 {% block content %}
-{% if saved %}<div class="alert ok">Записано. Склад пополнился, покупка появится в ленте.</div>{% endif %}
+{% if saved %}<div class="alert ok">{% if lines %}Записано. Склад пополнился, покупка появится в ленте.{% else %}Записано, расход появится в ленте.{% endif %}</div>{% endif %}
 {% if p.deleted_at %}<div class="alert warn">Покупка убрана {{ p.deleted_at.strftime('%d.%m %H:%M') }}. Склад и долг откатились, запись осталась в истории.</div>{% endif %}
 
 <div class="card">
   <h3>{{ p.supplier.name }}, {{ p.date | human_date }}</h3>
   <div class="meta">
-    Покупка, {{ lines | length }} {% if lines | length == 1 %}позиция{% elif lines | length < 5 %}позиции{% else %}позиций{% endif %},
+    {% if lines %}Покупка, {{ lines | length }} {% if lines | length == 1 %}позиция{% elif lines | length < 5 %}позиции{% else %}позиций{% endif %},{% else %}Расход без чека{% if p.note %}: {{ p.note }}{% endif %},{% endif %}
     {% if p.for_org %}для: {{ p.for_org.name }}{% else %}общее{% endif %}.
     {% if p.payment == 'debt' %}<b>В долг, не оплачено.</b> Долг {{ p.supplier.name }} сейчас {{ supplier_debt | money }}.
     {% elif p.payment == 'cash' %}Заплатили из кассы{% if p.paid_from_user %}, карман: {{ p.paid_from_user.name }}{% endif %}.
@@ -20,7 +20,7 @@
   </div>
   <div class="acts">
     {% if can_write and not p.deleted_at and supplier_debt > 0 and p.payment in ('debt', 'part') %}<a class="btn" href="/new/pay?supplier={{ p.supplier_id }}">Оплатить</a>{% endif %}
-    <a class="btn {% if can_write and not p.deleted_at and supplier_debt > 0 and p.payment in ('debt', 'part') %}ghost{% endif %}" href="/new/buy">Ещё покупка</a>
+    <a class="btn {% if can_write and not p.deleted_at and supplier_debt > 0 and p.payment in ('debt', 'part') %}ghost{% endif %}" href="{{ '/new/buy' if lines else '/new/nocheck' }}">{{ 'Ещё покупка' if lines else 'Ещё расход' }}</a>
     <a class="btn ghost" href="/new/expenses">В ленту</a>
     {% if photo %}<a class="btn ghost" href="/media/{{ photo }}" target="_blank">Фото чека</a>{% endif %}
     {% if can_write and not p.deleted_at %}
@@ -43,6 +43,6 @@
     {% endfor %}
     <tr class="tot"><td>Итого</td><td></td><td class="r">{{ p.total | money }}</td></tr>
   </table>
-  {% if p.note %}<p class="after">{{ p.note }}</p>{% endif %}
+  {% if p.note and lines %}<p class="after">{{ p.note }}</p>{% endif %}
 </div>
 {% endblock %}

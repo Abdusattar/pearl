@@ -26,7 +26,7 @@
 </div>
 <p class="sub">За {{ month_name }} <b>{{ totals.total | money }} сом</b>: продукты {{ totals.food | money }}, зарплата {{ totals.salary | money }}, остальное {{ totals.other | money }}. Должны поставщикам <b>{{ debt_total | money }}</b>{% if debts %}: {% for d in debts[:3] %}{{ d.name }} {{ d.debt | money }}{% if not loop.last %}, {% endif %}{% endfor %}{% endif %}.</p>
 <div class="links">
-  <a href="/expenses/add?category_id=service">Расход без чека</a>
+  <a href="/new/nocheck">Расход без чека</a>
   <a href="/new/pay">Оплатить поставщику</a>
   <a href="/suppliers/">Поставщики и долги</a>
 </div>

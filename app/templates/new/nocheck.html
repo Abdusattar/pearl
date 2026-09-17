@@ -1,0 +1,78 @@
+{% extends "new/base.html" %}
+{% block title %}Расход без чека — Жемчужина{% endblock %}
+
+{% block head %}
+<style>
+  .phone { max-width: 560px; }
+  .back { font-size: 14px; text-decoration: none; }
+  .lb { display: block; font-size: 13px; color: var(--muted); margin: 16px 0 6px; }
+  .phone .in { height: 44px; }
+  .phone .in.num { width: 160px; font-size: 18px; }
+  .phone .chips { margin-bottom: 0; }
+  .more { margin-top: 8px; font-size: 14px; color: var(--muted); display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .more .chips { margin: 0; }
+</style>
+{% endblock %}
+
+{% block content %}
+<a class="back" href="/new/expenses">← Расходы</a>
+<h3 class="title" style="margin-top:6px">Расход без чека</h3>
+{% if error %}<div class="alert bad">{{ error }}</div>{% endif %}
+<form method="post" action="/new/nocheck" class="phone" id="nocheck" autocomplete="off">
+  {% include "new/_repeat.html" %}
+
+  <label class="lb" for="amount">Сколько</label>
+  <input class="in num" id="amount" name="amount" value="{{ amount }}" inputmode="decimal" placeholder="0"><span class="u">сом</span>
+
+  <span class="lb">Что это</span>
+  <div class="chips">{% for key, v in kinds.items() %}<label class="chip {% if kind == key %}on{% endif %}"><input type="radio" name="kind" value="{{ key }}" {% if kind == key %}checked{% endif %}>{{ v[0] }}</label>{% endfor %}</div>
+
+  <label class="lb" for="what">За что</label>
+  <input class="in wide" id="what" name="what" value="{{ what }}" placeholder="свет за август, доставка мяса…">
+
+  <label class="lb" for="supplier_name">Кому</label>
+  {% if recent %}<div class="chips" style="margin-bottom:8px">{% for s in recent %}<button type="button" class="chip {% if supplier_name == s.name %}on{% endif %}" data-name="{{ s.name }}">{{ s.name }}</button>{% endfor %}</div>{% endif %}
+  <input class="in wide" id="supplier_name" name="supplier_name" value="{{ supplier_name }}" list="suppliers" placeholder="Северэлектро, Такси…">
+  <datalist id="suppliers">{% for s in all_suppliers %}<option value="{{ s.name }}">{% endfor %}</datalist>
+
+  <span class="lb">Для кого</span>
+  <div class="chips"><label class="chip {% if for_org == 'shared' %}on{% endif %}"><input type="radio" name="for_org" value="shared" {% if for_org == 'shared' %}checked{% endif %}>Общее</label>{% for o in site_orgs %}<label class="chip {% if for_org == o.id|string %}on{% endif %}"><input type="radio" name="for_org" value="{{ o.id }}" {% if for_org == o.id|string %}checked{% endif %}>{{ o.name }}</label>{% endfor %}</div>
+
+  <span class="lb">Откуда</span>
+  <div class="chips">
+    {% for key, label in [('cash', 'Из кассы'), ('account', 'Со счёта'), ('debt', 'В долг'), ('founder', 'Учредитель')] %}<label class="chip {% if payment == key %}on{% endif %}"><input type="radio" name="payment" value="{{ key }}" {% if payment == key %}checked{% endif %}>{{ label }}</label>{% endfor %}
+  </div>
+  <div class="more" data-for="cash" {% if payment != 'cash' %}hidden{% endif %}>карман:
+    <select class="in" name="payer_id" aria-label="Чей карман">{% for u in pockets %}<option value="{{ u.id }}" {% if u.id == payer_id %}selected{% endif %}>{{ u.name }}</option>{% endfor %}{% if current_user.role in ('staff', 'manager', 'director') and current_user.id not in pockets|map(attribute='id')|list %}<option value="{{ current_user.id }}" {% if payer_id == current_user.id %}selected{% endif %}>{{ current_user.name }}</option>{% endif %}</select></div>
+  <div class="more" data-for="account" {% if payment != 'account' %}hidden{% endif %}>
+    <div class="chips">{% for o in site_orgs %}<label class="chip {% if account_org_id == o.id %}on{% endif %}"><input type="radio" name="account_org_id" value="{{ o.id }}" {% if account_org_id == o.id %}checked{% endif %}>счёт {{ o.name }}</label>{% endfor %}</div></div>
+  <div class="more" data-for="debt" {% if payment != 'debt' %}hidden{% endif %}>долг появится у того, кому заплатить; оплатить потом из «Расходов»</div>
+  <div class="more" data-for="founder" {% if payment != 'founder' %}hidden{% endif %}>
+    <select class="in" name="founder_id" aria-label="Кто из учредителей"><option value="">Кто…</option>{% for u in founders %}<option value="{{ u.id }}" {% if u.id == founder_id %}selected{% endif %}>{{ u.name }}</option>{% endfor %}</select></div>
+
+  <label class="lb" for="date">Когда</label>
+  <input class="in" type="date" id="date" name="date" value="{{ d.isoformat() }}" max="{{ today.isoformat() }}">
+
+  {% if can_write %}<button type="submit" class="btn full" style="margin-top:22px">Записать</button>{% endif %}
+  <p class="after">Ремонт без выбора школы или садика не запишется: стройка идёт на объект, не в общее.</p>
+</form>
+{% endblock %}
+
+{% block scripts %}
+<script>
+document.querySelectorAll('#nocheck label.chip input[type=radio]').forEach(function (r) {
+  r.addEventListener('change', function () {
+    document.querySelectorAll('#nocheck input[name="' + r.name + '"]').forEach(function (o) { o.closest('label.chip').classList.toggle('on', o.checked); });
+    if (r.name === 'payment') {
+      document.querySelectorAll('#nocheck .more[data-for]').forEach(function (m) { m.hidden = m.dataset.for !== r.value; });
+    }
+  });
+});
+document.querySelectorAll('#nocheck button[data-name]').forEach(function (b) {
+  b.addEventListener('click', function () {
+    document.getElementById('supplier_name').value = b.dataset.name;
+    document.querySelectorAll('#nocheck button[data-name]').forEach(function (o) { o.classList.toggle('on', o === b); });
+  });
+});
+</script>
+{% endblock %}
