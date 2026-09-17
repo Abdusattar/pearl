@@ -156,9 +156,25 @@ def test_socfond_goes_from_account_and_is_not_issued(client, db, site, people, a
     assert podotchet.get_expected_balance(db, sadik.id, date.today())["expected"] == acc0 - Decimal(32000)
     assert podotchet.get_cash_state(db, sadik.id)["net"] == cash0
     page = client.get(f"/new/salary?month=2026-08&open={e1.id}")
-    assert "соцфонд, со счёта Садик тест-зп" in page.text
+    assert "соцфонд и подоходный, со счёта Садик тест-зп" in page.text
     # только соцфонд без выдачи — человек всё ещё «ничего не получил»
     e2 = people[1]
     client.post("/new/salary/pay", data={"employee_id": e2.id, "month": "2026-08", "amount": "100",
                                          "date": date.today().isoformat(), "method": "socfond"})
     assert svc.sheet(db, [sadik], AUG)["unpaid"] == 1
+
+
+def test_withholding_is_computed_from_card_amount(client, db, site, people, as_makhabat):
+    assert svc.withholding_from_card(Decimal(25985)) == {"gross": Decimal(32000), "soc": Decimal(3200),
+                                                          "tax": Decimal(2815), "total": Decimal(6015)}
+    assert svc.withholding_from_card(Decimal(23555))["total"] == Decimal(5445)
+    assert svc.withholding_from_card(Decimal(0)) is None
+    sadik, _ = site
+    e1 = people[0]
+    assert _pay(client, e1, "25985", "card").status_code == 303
+    page = client.get(f"/new/salary?month=2026-08&open={e1.id}")
+    assert 'data-calc="6 015"' in page.text and "начислено 32 000" in page.text
+    client.post("/new/salary/pay", data={"employee_id": e1.id, "month": "2026-08", "amount": "6015",
+                                         "date": date.today().isoformat(), "method": "socfond"})
+    row = next(x for x in svc.sheet(db, [sadik], AUG)["rows"] if x["employee"].id == e1.id)
+    assert row["calc"] is None and row["socfond"] == 6015      # записано — больше не подсказываем

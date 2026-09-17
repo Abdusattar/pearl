@@ -20,7 +20,7 @@ from app.services.purchases import audit, site_orgs
 from app.services.supplier_ledger import get_supplier_balance
 
 FOOD_CATEGORY_NAMES = {"продукты питания", "услуги питания"}
-SALARY_CATEGORY_NAMES = {"фот", "соцфонд"}
+SALARY_CATEGORY_NAMES = {"фот", "соцфонд", "соцфонд и подоходный"}
 
 
 def month_bounds(month: str | None) -> tuple[date, date, str]:

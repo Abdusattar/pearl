@@ -51,11 +51,11 @@
 {% if not sheet.rows %}
 <div class="alert warn">Сотрудников нет. Заводят их пока в старом входе: <a href="/employees/">Сотрудники</a>.</div>
 {% else %}
-<p class="sub">{{ sheet.rows | length }} человек. Оклады <b>{{ sheet.salary | money }}</b> · выдано <b>{{ sheet.issued | money }}</b>{% if sheet.socfond %} · соцфонд <b>{{ sheet.socfond | money }}</b>{% endif %}{% if sheet.unpaid %} · ещё никому не выдано: <b>{{ sheet.unpaid }} чел.</b>{% endif %}</p>
+<p class="sub">{{ sheet.rows | length }} человек. Оклады <b>{{ sheet.salary | money }}</b> · выдано <b>{{ sheet.issued | money }}</b>{% if sheet.socfond %} · соцфонд и подоходный <b>{{ sheet.socfond | money }}</b>{% endif %}{% if sheet.unpaid %} · ещё никому не выдано: <b>{{ sheet.unpaid }} чел.</b>{% endif %}</p>
 {% if sheet.late %}<div class="alert warn">День зарплаты, {{ sheet.payday.day }} {{ months_of[sheet.payday.month - 1] }}, прошёл: {{ sheet.unpaid }} чел. ещё ничего не получили за {{ months_gen[period.month - 1] }}.</div>{% endif %}
 
 <div class="list">
-  <div class="row head"><span>Кто</span><span class="r">Оклад</span><span class="r">Выдано</span><span class="r">Соцфонд</span><span></span></div>
+  <div class="row head"><span>Кто</span><span class="r">Оклад</span><span class="r">Выдано</span><span class="r">Соцфонд, налог</span><span></span></div>
   {% for r in sheet.rows %}
   {% set e = r.employee %}
   {% set is_open = open_id == e.id %}
@@ -85,7 +85,7 @@
           <div class="chips">
             <label class="chip {% if m == 'hand' %}on{% endif %}"><input type="radio" name="method" value="hand" {% if m == 'hand' %}checked{% endif %}>На руки</label>
             <label class="chip {% if m == 'card' %}on{% endif %}"><input type="radio" name="method" value="card" {% if m == 'card' %}checked{% endif %}>На карту</label>
-            <label class="chip {% if m == 'socfond' %}on{% endif %}"><input type="radio" name="method" value="socfond" {% if m == 'socfond' %}checked{% endif %}>Соцфонд</label>
+            <label class="chip {% if m == 'socfond' %}on{% endif %}"><input type="radio" name="method" value="socfond" {% if m == 'socfond' %}checked{% endif %} {% if r.calc %}data-calc="{{ r.calc.total | money }}"{% endif %}>Соцфонд и налог</label>
           </div></div>
         <div class="fld" data-method="hand" {% if m != 'hand' %}hidden{% endif %}><label class="lb" for="pk-{{ e.id }}">Из чьего кармана</label>
           <select class="in" id="pk-{{ e.id }}" name="pocket_user_id">{% for u in pockets %}<option value="{{ u.id }}" {% if u.id == pocket_user_id %}selected{% endif %}>{{ u.name }}</option>{% endfor %}{% if current_user.id not in pockets | map(attribute='id') | list and current_user.role in ('staff', 'manager', 'director') %}<option value="{{ current_user.id }}" {% if current_user.id == pocket_user_id %}selected{% endif %}>{{ current_user.name }}</option>{% endif %}</select></div>
@@ -93,6 +93,7 @@
           <span style="height:44px;display:flex;align-items:center">со счёта {{ org_names.get(e.organization_id, '') }}</span></div>
         <button type="submit" class="btn">Записать</button>
       </div>
+      {% if r.calc %}<p class="after" data-calc-note hidden>Расчёт: на карту {{ r.card | money }} → начислено {{ r.calc.gross | money }}; соцфонд 10% — {{ r.calc.soc | money }}, подоходный 10% — {{ r.calc.tax | money }}, всего {{ r.calc.total | money }}. Если в банке другая цифра, впишите её.</p>{% endif %}
     </form>
     {% endif %}
     {% if r.pays %}
@@ -108,7 +109,7 @@
   </div>
   {% endfor %}
 </div>
-<p class="after">Соцфонд — то, что банк удерживает со счёта при переводе на карту; у каждого своя сумма, в «Выдано» не входит. Оклад здесь для справки: из-за отпусков и неполных месяцев на руки выходит по-разному, долгом разница не считается. Выдача ложится расходом на выбранный карман или счёт, частями складывается. Сотрудников и оклады пока правят в старом входе: <a href="/employees/">Сотрудники</a>.</p>
+<p class="after">Соцфонд и подоходный — удержания у официально оформленных, уходят со счёта вместе с переводом на карту; в «Выдано» не входят. Оклад здесь для справки: из-за отпусков и неполных месяцев на руки выходит по-разному, долгом разница не считается. Выдача ложится расходом на выбранный карман или счёт, частями складывается. Сотрудников и оклады пока правят в старом входе: <a href="/employees/">Сотрудники</a>.</p>
 {% endif %}
 {% endblock %}
 
@@ -124,7 +125,15 @@ function toggle(id, btn) {
 document.querySelectorAll('label.chip input[type=radio]').forEach(function (r) {
   r.addEventListener('change', function () {
     r.form.querySelectorAll('input[name="' + r.name + '"]').forEach(function (o) { o.closest('label.chip').classList.toggle('on', o.checked); });
-    if (r.name === 'method') r.form.querySelectorAll('[data-method]').forEach(function (f) { f.hidden = f.dataset.method.split(' ').indexOf(r.value) < 0; });
+    if (r.name === 'method') {
+      r.form.querySelectorAll('[data-method]').forEach(function (f) { f.hidden = f.dataset.method.split(' ').indexOf(r.value) < 0; });
+      // Соцфонд и налог: сумма считается от «на карту» и подставляется; чужой ввод не трогаем
+      var amt = r.form.querySelector('input[name=amount]'), note = r.form.querySelector('[data-calc-note]');
+      var soc = r.form.querySelector('input[value=socfond]'), calc = soc && soc.dataset.calc;
+      if (r.value === 'socfond' && calc && (!amt.value || amt.dataset.auto === '1')) { amt.value = calc; amt.dataset.auto = '1'; }
+      else if (r.value !== 'socfond' && amt.dataset.auto === '1') { amt.value = ''; amt.dataset.auto = ''; }
+      if (note) note.hidden = r.value !== 'socfond';
+    }
   });
 });
 </script>

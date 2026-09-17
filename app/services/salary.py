@@ -10,8 +10,9 @@
 разная, выданное — окончательное. Оклад в ведомости — справка, а не долг;
 сигнал после дня зарплаты — только по тем, кому не выдано ничего.
 
-Соцфонд (Махабат 17.09): у тех, кому платят на карту, банк при переводе
-удерживает соцфонд со счёта объекта — сумма у каждого своя. Это отдельная
+Соцфонд и подоходный (Махабат и владелец 17.09): у официально оформленных,
+кому платят на карту, при переводе со счёта объекта уходят и удержания. Сумму
+система считает от «на карту» и подставляет, человек проверяет и записывает. Это отдельная
 строка у человека (категория расхода «Соцфонд»), в «Выдано» не входит: выдано
 — то, что человек получил. Удержание за еду деньгами не движется, не пишется.
 
@@ -34,7 +35,25 @@ ZERO = Decimal("0")
 PAY_DAY = 10                    # день зарплаты; потом в Настройки
 ODD_AMOUNT = Decimal("100")     # выдача меньше — скорее опечатка (3 и 50 сом 16.09)
 SCHOOL_PAYROLL_ROLES = ("owner", "founder", "director")
-SOCFOND = "Соцфонд"
+SOCFOND = "Соцфонд и подоходный"
+# Удержания с официально оформленных (КР, проверено на ведомости августа:
+# 25 985 на карту → 32 000 начислено → 6 015; 23 555 → 29 000 → 5 445).
+# Потом в Настройки: софт пойдёт другим садикам.
+SOCFOND_RATE = Decimal("0.10")        # соцфонд с работника
+INCOME_TAX_RATE = Decimal("0.10")     # подоходный, с суммы после соцфонда и вычета
+TAX_DEDUCTION = Decimal("650")        # стандартный вычет
+
+
+def withholding_from_card(card: Decimal) -> dict | None:
+    """Сколько банк удержал, если на карту пришло `card`. Обратный счёт:
+    на карту = начислено − соцфонд − подоходный."""
+    if card <= 0:
+        return None
+    keep = (1 - SOCFOND_RATE) * (1 - INCOME_TAX_RATE)
+    gross = ((card - INCOME_TAX_RATE * TAX_DEDUCTION) / keep).quantize(Decimal("1"))
+    soc = (gross * SOCFOND_RATE).quantize(Decimal("1"))
+    tax = gross - card - soc
+    return {"gross": gross, "soc": soc, "tax": tax, "total": gross - card}
 
 
 def socfond_category_id(db: Session, create: bool = False) -> int | None:
@@ -84,8 +103,10 @@ def sheet(db: Session, orgs: list[Organization], period: date, today: date | Non
         soc = sum((Decimal(t.amount) for t in mine if soc_id and t.category_id == soc_id), ZERO)
         issued = sum((Decimal(t.amount) for t in mine), ZERO) - soc
         salary = Decimal(e.salary or 0)
+        card = sum((Decimal(t.amount) for t in mine if t.paid_directly and not (soc_id and t.category_id == soc_id)), ZERO)
+        calc = withholding_from_card(card) if not soc else None   # подсказка, пока удержание не записано
         rows.append({"employee": e, "org": names.get(e.organization_id) if len(orgs) > 1 else None,
-                     "salary": salary, "issued": issued, "socfond": soc,
+                     "salary": salary, "issued": issued, "socfond": soc, "card": card, "calc": calc,
                      "pays": [_pay_row(db, t, soc_id) for t in mine]})
     salary_total = sum((r["salary"] for r in rows), ZERO)
     issued_total = sum((r["issued"] for r in rows), ZERO)
@@ -100,7 +121,7 @@ def _pay_row(db: Session, t: Transaction, soc_id: int | None = None) -> dict:
     if soc_id and t.category_id == soc_id:
         org = db.get(Organization, t.account_org_id) if t.account_org_id else None
         return {"id": t.id, "date": t.date, "amount": Decimal(t.amount), "odd": False,
-                "source": f"соцфонд, со счёта {org.name}" if org else "соцфонд"}
+                "source": f"соцфонд и подоходный, со счёта {org.name}" if org else "соцфонд и подоходный"}
     if t.paid_directly:
         org = db.get(Organization, t.account_org_id) if t.account_org_id else None
         source = f"на карту, со счёта {org.name}" if org else "на карту"
@@ -118,7 +139,7 @@ def pay(db: Session, *, user: User, site_org_id: int, employee: Employee, amount
     from_account = account_org_id is not None
     if socfond and not from_account:
         raise ValueError("Соцфонд уходит со счёта")
-    label = "Соцфонд" if socfond else "Зарплата"
+    label = "Соцфонд и подоходный" if socfond else "Зарплата"
     tx = Transaction(
         organization_id=site_org_id, type="expense", amount=amount,
         category_id=socfond_category_id(db, create=True) if socfond else payroll_category_id(db),
