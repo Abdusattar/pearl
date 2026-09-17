@@ -34,9 +34,9 @@ def _ctx(request, user, site, db, period: date, **kw) -> dict:
     ctx.update({
         "period": period, "months": svc.month_choices(), "sheet": svc.sheet(db, orgs, period),
         "today": date.today(), "can_write": user.role in WRITE_ROLES,
-        "pockets": pocket_users(db, site.id), "accounts": site_orgs(db, site.id),
+        "pockets": pocket_users(db, site.id), "org_names": {o.id: o.name for o in site_orgs(db, site.id)},
         "open_id": kw.get("open_id"), "amount": kw.get("amount"), "d": kw.get("d", date.today()),
-        "source": kw.get("source", f"pocket:{default_pocket(db, site.id, user)}"),
+        "method": kw.get("method", "hand"), "pocket_user_id": kw.get("pocket_user_id") or default_pocket(db, site.id, user),
         "error": kw.get("error"), "repeat": kw.get("repeat"), "saved": kw.get("saved"),
         "repeat_back": f"/new/salary?month={period:%Y-%m}",
     })
@@ -81,7 +81,8 @@ async def salary_pay(request: Request, db: Session = Depends(get_db)):
     emp = _employee_for(db, user, site, int(g("employee_id"))) if g("employee_id").isdigit() else None
     if emp is None:
         return HTMLResponse("Сотрудник не найден", status_code=404)
-    raw_d, source = g("date"), g("source")
+    raw_d, method = g("date"), g("method") or "hand"
+    pocket_raw = int(g("pocket_user_id")) if g("pocket_user_id").isdigit() else None
     try:
         d = date.fromisoformat(raw_d) if raw_d else date.today()
     except ValueError:
@@ -90,7 +91,7 @@ async def salary_pay(request: Request, db: Session = Depends(get_db)):
     def render(error=None, repeat=None):
         return templates.TemplateResponse("new/salary.html", _ctx(
             request, user, site, db, period, open_id=emp.id, amount=g("amount"), d=d or date.today(),
-            source=source, error=error, repeat=repeat))
+            method=method, pocket_user_id=pocket_raw, error=error, repeat=repeat))
 
     try:
         amount = Decimal(g("amount").replace(" ", "").replace(",", "."))
@@ -100,14 +101,15 @@ async def salary_pay(request: Request, db: Session = Depends(get_db)):
         return render("Укажите сумму")
     if d is None or d > date.today():
         return render("Дата не позже сегодняшней")
-    kind, _, ref = source.partition(":")
+    # На руки — из кармана; на карту — переводом со счёта объекта, где человек
+    # работает: садик со счёта садика, школа со счёта школы (владелец 17.09).
     pocket = account = None
-    if kind == "pocket" and ref.isdigit() and int(ref) in {u.id for u in pocket_users(db, site.id)} | {user.id}:
-        pocket = int(ref)
-    elif kind == "account" and ref.isdigit() and int(ref) in {o.id for o in site_orgs(db, site.id)}:
-        account = int(ref)
+    if method == "hand" and pocket_raw in {u.id for u in pocket_users(db, site.id)} | {user.id}:
+        pocket = pocket_raw
+    elif method == "card" and emp.organization_id in {o.id for o in site_orgs(db, site.id)}:
+        account = emp.organization_id
     else:
-        return render("Откуда деньги: из чьего кармана или со счёта?")
+        return render("Как выдали: на руки (из чьего кармана) или на карту?")
 
     token = once.clean(g("form_token"))
     if done := once.done_url(db, token):

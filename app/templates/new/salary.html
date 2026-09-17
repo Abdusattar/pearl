@@ -80,12 +80,16 @@
           <input class="in num" id="amt-{{ e.id }}" name="amount" inputmode="decimal" value="{% if is_open and amount %}{{ amount }}{% else %}{{ r.left | money }}{% endif %}"></div>
         <div class="fld"><label class="lb" for="dt-{{ e.id }}">Когда</label>
           <input class="in" id="dt-{{ e.id }}" type="date" name="date" value="{{ (d if is_open else today).isoformat() }}" max="{{ today.isoformat() }}"></div>
-        <div class="fld"><span class="lb">Откуда</span>
+        {% set m = method if is_open else 'hand' %}
+        <div class="fld"><span class="lb">Как выдали</span>
           <div class="chips">
-            {% for u in pockets %}{% set v = 'pocket:%d' % u.id %}<label class="chip {% if source == v %}on{% endif %}"><input type="radio" name="source" value="{{ v }}" {% if source == v %}checked{% endif %}>Карман {{ u.name }}</label>{% endfor %}
-            {% if current_user.id not in pockets | map(attribute='id') | list and current_user.role in ('staff', 'manager', 'director') %}{% set v = 'pocket:%d' % current_user.id %}<label class="chip {% if source == v %}on{% endif %}"><input type="radio" name="source" value="{{ v }}" {% if source == v %}checked{% endif %}>Мой карман</label>{% endif %}
-            {% for o in accounts %}{% set v = 'account:%d' % o.id %}<label class="chip {% if source == v %}on{% endif %}"><input type="radio" name="source" value="{{ v }}" {% if source == v %}checked{% endif %}>Со счёта {{ o.name }}</label>{% endfor %}
+            <label class="chip {% if m == 'hand' %}on{% endif %}"><input type="radio" name="method" value="hand" {% if m == 'hand' %}checked{% endif %}>На руки</label>
+            <label class="chip {% if m == 'card' %}on{% endif %}"><input type="radio" name="method" value="card" {% if m == 'card' %}checked{% endif %}>На карту</label>
           </div></div>
+        <div class="fld" data-method="hand" {% if m != 'hand' %}hidden{% endif %}><label class="lb" for="pk-{{ e.id }}">Из чьего кармана</label>
+          <select class="in" id="pk-{{ e.id }}" name="pocket_user_id">{% for u in pockets %}<option value="{{ u.id }}" {% if u.id == pocket_user_id %}selected{% endif %}>{{ u.name }}</option>{% endfor %}{% if current_user.id not in pockets | map(attribute='id') | list and current_user.role in ('staff', 'manager', 'director') %}<option value="{{ current_user.id }}" {% if current_user.id == pocket_user_id %}selected{% endif %}>{{ current_user.name }}</option>{% endif %}</select></div>
+        <div class="fld" data-method="card" {% if m != 'card' %}hidden{% endif %}><span class="lb">Откуда</span>
+          <span style="height:44px;display:flex;align-items:center">со счёта {{ org_names.get(e.organization_id, '') }}</span></div>
         <button type="submit" class="btn">Записать</button>
       </div>
     </form>
@@ -119,6 +123,7 @@ function toggle(id, btn) {
 document.querySelectorAll('label.chip input[type=radio]').forEach(function (r) {
   r.addEventListener('change', function () {
     r.form.querySelectorAll('input[name="' + r.name + '"]').forEach(function (o) { o.closest('label.chip').classList.toggle('on', o.checked); });
+    if (r.name === 'method') r.form.querySelectorAll('[data-method]').forEach(function (f) { f.hidden = f.dataset.method !== r.value; });
   });
 });
 </script>

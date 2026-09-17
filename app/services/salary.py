@@ -75,10 +75,10 @@ def sheet(db: Session, orgs: list[Organization], period: date, today: date | Non
 def _pay_row(db: Session, t: Transaction) -> dict:
     if t.paid_directly:
         org = db.get(Organization, t.account_org_id) if t.account_org_id else None
-        source = f"со счёта {org.name}" if org else "со счёта"
+        source = f"на карту, со счёта {org.name}" if org else "на карту"
     else:
         u = db.get(User, t.paid_from_user_id or t.created_by) if (t.paid_from_user_id or t.created_by) else None
-        source = f"из кармана {u.name}" if u else "из кассы"
+        source = f"на руки, из кармана {u.name}" if u else "на руки"
     return {"id": t.id, "date": t.date, "amount": Decimal(t.amount), "source": source,
             "odd": Decimal(t.amount) < ODD_AMOUNT}
 

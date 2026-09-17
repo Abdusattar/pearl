@@ -50,8 +50,9 @@ AUG = date(2026, 8, 1)
 
 
 def _pay(client, emp, amount, source, **extra):
+    kind, _, ref = source.partition(":")
     data = {"employee_id": emp.id, "month": "2026-08", "amount": amount, "date": date.today().isoformat(),
-            "source": source}
+            "method": "hand" if kind == "pocket" else "card", "pocket_user_id": ref if kind == "pocket" else ""}
     data.update(extra)
     return client.post("/new/salary/pay", data=data, follow_redirects=False)
 
@@ -81,16 +82,28 @@ def test_pay_from_pocket_goes_to_august_and_leaves_pocket(client, db, site, peop
     assert row["left"] == 0
 
 
-def test_pay_from_school_account_reduces_school_account_not_cash(client, db, site, people, as_makhabat):
+def test_card_goes_from_own_object_account_not_cash(client, db, site, people, as_makhabat):
     sadik, school = site
     e1, _, _, m = people
     acc_school = podotchet.get_expected_balance(db, school.id, date.today())["expected"]
     acc_sadik = podotchet.get_expected_balance(db, sadik.id, date.today())["expected"]
     cash0 = podotchet.get_cash_state(db, sadik.id)["net"]
-    assert _pay(client, e1, "5000", f"account:{school.id}").status_code == 303
-    assert podotchet.get_expected_balance(db, school.id, date.today())["expected"] == acc_school - Decimal(5000)
-    assert podotchet.get_expected_balance(db, sadik.id, date.today())["expected"] == acc_sadik
+    assert _pay(client, e1, "5000", "card").status_code == 303        # садик — со счёта садика
+    assert podotchet.get_expected_balance(db, sadik.id, date.today())["expected"] == acc_sadik - Decimal(5000)
+    assert podotchet.get_expected_balance(db, school.id, date.today())["expected"] == acc_school
     assert podotchet.get_cash_state(db, sadik.id)["net"] == cash0
+    page = client.get(f"/new/salary?month=2026-08&open={e1.id}")
+    assert "на карту, со счёта Садик тест-зп" in page.text
+
+
+def test_school_employee_card_goes_from_school_account(db, site, people):
+    sadik, school = site
+    _, _, e3, m = people
+    acc_school = podotchet.get_expected_balance(db, school.id, date.today())["expected"]
+    svc.pay(db, user=m, site_org_id=sadik.id, employee=e3, amount=Decimal(7000), period=AUG, d=date.today(),
+            pocket_user_id=None, account_org_id=e3.organization_id)
+    db.flush()
+    assert podotchet.get_expected_balance(db, school.id, date.today())["expected"] == acc_school - Decimal(7000)
 
 
 def test_same_payout_again_asks_and_token_repeat_writes_once(client, db, site, people, as_makhabat):
