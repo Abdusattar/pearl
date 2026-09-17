@@ -184,8 +184,10 @@
                 <div class="autocomplete-dropdown" style="display:none;position:absolute;z-index:100;left:4px;right:4px;top:100%;background:#fff;border:1px solid var(--border);border-radius:6px;box-shadow:0 4px 12px rgba(0,0,0,.1);max-height:180px;overflow-y:auto"></div>
                 {% if item.product_matched %}
                 <div class="product-hint" style="font-size:10px;color:#16a34a;margin-top:2px">✓ в каталоге</div>
-                {% else %}
-                <div class="product-hint" style="font-size:10px;color:#b45309;margin-top:2px">{{ item.check_hint or "проверь — новая позиция" }}</div>
+                {% elif item.check_hint %}
+                {# 17.09, просьба Махабат: «проверь — не из каталога» у каждой новой строки убрано —
+                   новый товар не ошибка. Остаются только подсказки по делу: похожая карточка, нет цены. #}
+                <div class="product-hint" style="font-size:10px;color:#b45309;margin-top:2px">{{ item.check_hint }}</div>
                 {% endif %}
                 {% if item.price_hint %}
                 <div class="price-hint" style="font-size:11px;color:#b45309;margin-top:3px;white-space:normal">{{ item.price_hint }}

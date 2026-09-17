@@ -867,7 +867,7 @@ def handle_confirm(
                 "fuzzy_matched": False, "provisional_matched": False,
                 "is_standard_match": bool(r["product_id"]),
                 "needs_check": not r["product_id"],
-                "check_hint": "" if r["product_id"] else "проверь — не из каталога",
+                "check_hint": "",
                 "unit": r["unit"], "candidates": [],
                 "qty": r["qty"], "unit_price": r["unit_price"],
                 "total_price": r["total_price"],
@@ -933,6 +933,15 @@ def handle_confirm(
 
     # Валидация + разрешение товара для каждой позиции — нужно ДО разбивки по категориям,
     # т.к. категория расхода теперь берётся из товара, а не выбирается человеком.
+    # Новые товары без единицы — одним сообщением, а не по одному на каждое «Провести»
+    # (аптечный чек на 10 новых строк, 17.09).
+    no_unit = [n.strip() for i, n in enumerate(item_name)
+               if n.strip() and not _str_at(item_product_id, i).isdigit() and not _str_at(item_unit, i)
+               and find_product(db, n.strip()) is None]
+    if no_unit:
+        return _error_response("Новые товары без единицы: " + ", ".join(f"«{n}»" for n in no_unit)
+                               + ". Выберите единицу в каждой такой строке")
+
     resolved_items = []  # [{name, raw, product, qty, unit_price, total}, ...]
     price_hints: dict[int, str] = {}
     for i, name in enumerate(item_name):
