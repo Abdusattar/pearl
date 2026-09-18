@@ -1,10 +1,14 @@
 import os
 from pathlib import Path
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI, Request
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from fastapi.responses import RedirectResponse
+from sqlalchemy.orm import Session
 from starlette.middleware.sessions import SessionMiddleware
+
+from app.database import get_db
+from app.dependencies import get_current_user
 
 app = FastAPI(title="Жемчужина ИС")
 app.add_middleware(SessionMiddleware, secret_key=os.getenv("SESSION_SECRET", "pearl-dev-secret"))
@@ -61,5 +65,10 @@ app.include_router(settings.router)
 
 
 @app.get("/")
-def root():
-    return RedirectResponse("/expenses/")
+def root(request: Request, db: Session = Depends(get_db)):
+    # Вход — новая версия (решение владельца 17.09, переключено 18.09):
+    # собственникам Обзор, остальным «Сегодня». Старая — только по ссылке.
+    user = get_current_user(request, db)
+    if not user:
+        return RedirectResponse("/login")
+    return RedirectResponse("/new/overview" if user.role == "founder" else "/new/today")
