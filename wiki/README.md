@@ -13,6 +13,7 @@
 - [unit_economics_module.md](architecture/unit_economics_module.md) — Сотрудники/ФОТ, Амортизация (живой расчёт, не Transaction), роль founder (10.07)
 - [revision_2026_09.md](architecture/revision_2026_09.md) — ревизия и пересборка (14.09): одна касса Сокулука, принципы, судьба модулей
 - [new_entry.md](architecture/new_entry.md) — новый вход `/new` как построен (16.09): добавки к базе, карманы, Купили, Лист кухни, Дети, бот, уроки
+- [reconciliation.md](architecture/reconciliation.md) — точки отсчёта (18.09): правила «после сверки», записи задним числом, снятые гипотезы, человеческий фактор, кто пишет в прод
 
 ### payments/
 - [strategy.md](payments/strategy.md) — стратегия оплат: ручной ввод → автоматика, два банка
@@ -29,3 +30,4 @@
 > вопросы к заказчику. После реализации — переносится в architecture/.
 - [menu_module.md](blueprints/menu_module.md) — Меню/приёмы пищи — **реализовано**, актуальная версия в architecture/
 - [unit_economics_module.md](blueprints/unit_economics_module.md) — Сотрудники/ФОТ, Амортизация — **реализовано**, актуальная версия в architecture/
+- [bot.md](blueprints/bot.md) — бот в группе «Жемчужина» (18.09): автоматом всё обычное, подозрительное владельцу, два числа вслепую вечером, утренний разбор; полный проект в context/revision/09_bot.md
