@@ -159,12 +159,17 @@ def recent(db: Session, site_org_id: int, limit: int = 10) -> list[dict]:
         items.append({"date": p.date, "title": f"Оплата {p.supplier.name if p.supplier else ''}",
                       "sub": ("со счёта" if p.paid_directly else f"из кармана {p.paid_from_user.name if p.paid_from_user else ''}"),
                       "amount": -Decimal(p.amount), "at": p.created_at})
+    # Только наличная часть: «на карту» идёт со счёта и кассу не трогает.
+    # Махабат 18.09: «Светлана 31 079 — система считает всё из кассы» — считала
+    # правильно, а лента показывала сумму с картой.
     salary = (db.query(Transaction.date, func.sum(Transaction.amount), func.count(Transaction.id))
               .filter(Transaction.organization_id == site_org_id, Transaction.type == "expense",
-                      Transaction.employee_id.isnot(None), Transaction.deleted_at.is_(None))
+                      Transaction.employee_id.isnot(None), Transaction.deleted_at.is_(None),
+                      Transaction.paid_directly.is_(False))
               .group_by(Transaction.date).order_by(Transaction.date.desc()).limit(3).all())
     for d, s, n in salary:
-        items.append({"date": d, "title": "Зарплата", "sub": f"{n} чел.", "amount": -Decimal(s), "at": None})
+        items.append({"date": d, "title": "Зарплата наличными", "sub": f"{n} чел., на карту — отдельно со счёта",
+                      "amount": -Decimal(s), "at": None})
     items.sort(key=lambda x: (x["date"], x["at"] or datetime.min), reverse=True)
     return items[:limit]
 
