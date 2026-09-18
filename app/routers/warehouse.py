@@ -150,8 +150,15 @@ def index(request: Request, org_id: str | None = None, err: str | None = None,
     return templates.TemplateResponse("warehouse/index.html", ctx)
 
 
+# Закрыто 18.09: списание — только Лист кухни нового входа. Старая форма по
+# приёмам пищи молча пропускала строки без выбранного из списка продукта и
+# «сохраняла» ноль строк без ошибки — 17.09 пять таких попыток подряд.
+_TO_KITCHEN = RedirectResponse("/new/kitchen", status_code=302)
+
+
 @router.get("/writeoff/add", response_class=HTMLResponse)
 def writeoff_add_form(request: Request, org_id: str | None = None, db: Session = Depends(get_db)):
+    return _TO_KITCHEN
     ctx = _base_ctx(request, db, org_id)
     if ctx is None:
         return RedirectResponse("/login", status_code=302)
@@ -175,6 +182,7 @@ def writeoff_add_save(
     reason: str = Form("питание детей"),
     db: Session = Depends(get_db),
 ):
+    return _TO_KITCHEN
     ctx = _base_ctx(request, db, org_id)
     if ctx is None:
         return RedirectResponse("/login", status_code=302)
@@ -325,6 +333,7 @@ def writeoff_auto_save(
 
 @router.get("/writeoff/meal", response_class=HTMLResponse)
 def writeoff_meal_form(request: Request, org_id: str | None = None, db: Session = Depends(get_db)):
+    return _TO_KITCHEN
     ctx = _base_ctx(request, db, org_id)
     if ctx is None:
         return RedirectResponse("/login", status_code=302)
@@ -357,6 +366,7 @@ def writeoff_meal_save(
     item_dish_id: List[str] = Form(default=[]),
     db: Session = Depends(get_db),
 ):
+    return _TO_KITCHEN
     ctx = _base_ctx(request, db, org_id)
     if ctx is None:
         return RedirectResponse("/login", status_code=302)

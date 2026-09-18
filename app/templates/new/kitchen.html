@@ -66,7 +66,7 @@
         <input type="hidden" name="item_product_id" value="{{ r.product_id or '' }}">
         <input class="in wide name" name="item_name" value="{{ r.name }}" placeholder="{% if loop.last %}Ещё продукт…{% else %}Продукт{% endif %}">
         <div class="dd"></div>
-        <span class="hint mute minor-hint" {% if not r.minor %}hidden{% endif %}>мелочь, не на складе</span>
+        <span class="hint mute minor-hint" {% if not r.minor %}hidden{% endif %}>учтено, остаток не считаем</span>
         <span class="hint bad err" {% if not r.error %}hidden{% endif %}>{{ r.error or '' }}</span>
         <span class="hint over" hidden></span>
       </td>
@@ -86,7 +86,7 @@
   </table>
 
   <div class="foot">
-    <p class="after">Списывается с одного склада Сокулука. Взяли больше, чем числится, — спишется что есть, разница запишется расхождением. Мелочь (зелень, специи, хлеб) остаток не трогает, но на листе остаётся.</p>
+    <p class="after">Списывается с одного склада Сокулука. Взяли больше, чем числится, — спишется что есть, разница запишется расхождением. Зелень, специи, хлеб, канцтовары и моющее пишите как есть: они уже в расходе с чека, остаток по ним не считаем, на листе остаются.</p>
     {% if can_write %}<aside><button type="submit" class="btn full">Внести лист кухни</button></aside>{% endif %}
   </div>
 </form>
@@ -132,7 +132,7 @@ function initRow(tr) {
   var input = tr.querySelector('.name'), dd = tr.querySelector('.dd'), timer = null;
   function show(items) {
     if (!items.length) { dd.style.display = 'none'; return; }
-    dd.innerHTML = items.map(function (c, i) { return '<div data-i="' + i + '"><span>' + c.name + (c.minor ? ' <small>· мелочь</small>' : '') + '</span><small>' + (c.minor ? c.unit : (c.balance_text || ('0 ' + c.unit))) + '</small></div>'; }).join('');
+    dd.innerHTML = items.map(function (c, i) { return '<div data-i="' + i + '"><span>' + c.name + (c.minor ? ' <small>· остаток не считаем</small>' : '') + '</span><small>' + (c.minor ? c.unit : (c.balance_text || ('0 ' + c.unit))) + '</small></div>'; }).join('');
     dd.style.display = 'block';
     dd.querySelectorAll('div').forEach(function (el) { el.addEventListener('mousedown', function (e) { e.preventDefault(); pick(tr, items[+el.dataset.i]); }); });
   }
@@ -150,7 +150,7 @@ function initRow(tr) {
 }
 function rowHtml() {
   return '<td class="ac"><input type="hidden" name="item_product_id" value=""><input class="in wide name" name="item_name" value="" placeholder="Ещё продукт…"><div class="dd"></div>' +
-    '<span class="hint mute minor-hint" hidden>мелочь, не на складе</span><span class="hint bad err" hidden></span><span class="hint over" hidden></span></td>' +
+    '<span class="hint mute minor-hint" hidden>учтено, остаток не считаем</span><span class="hint bad err" hidden></span><span class="hint over" hidden></span></td>' +
     '<td class="r"><input class="in qty" name="item_qty" value="" inputmode="decimal" placeholder="0"><select class="in unit" name="item_unit" hidden data-factor=""><option value=""></option></select><span class="u utext"></span></td>' +
     '<td class="r q bal" data-balance=""></td><td class="r"><button type="button" class="x" aria-label="Убрать строку" onclick="removeRow(this)">×</button></td>';
 }
