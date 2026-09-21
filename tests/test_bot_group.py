@@ -179,3 +179,28 @@ def test_far_date_is_dropped(monkeypatch):
     _model(monkeypatch, {"kind": "purchase", "date": "2026-01-01", "amount": 7167})
     info = grp.read_photo(b"x", date(2026, 9, 21))
     assert info["date"] is None
+
+
+def test_silent_bot_tells_owner_not_group(db, site, people, supplier, monkeypatch):
+    m, _ = people
+    monkeypatch.delenv(svc.GROUP_TALK_ENV, raising=False)
+    _model(monkeypatch, {"kind": "purchase", "supplier": "Халиматест Овощи", "amount": 999})
+    reply = svc.handle_update(db, _upd(m, photo_id="j"))
+    assert db.query(BotMessage).filter_by(kind="group_reply").count() == 0
+    out = db.query(BotMessage).filter_by(kind="group_reply_owner").one()
+    assert out.user_id == svc.OWNER_USER_ID and reply in out.text and "Махабаттест" in out.text
+
+
+def test_talking_bot_answers_under_message(db, site, people, supplier, monkeypatch):
+    m, _ = people
+    monkeypatch.setenv(svc.GROUP_TALK_ENV, "1")
+    _model(monkeypatch, {"kind": "purchase", "supplier": "Халиматест Овощи", "amount": 999})
+    svc.handle_update(db, _upd(m, photo_id="k", message_id=7))
+    out = db.query(BotMessage).filter_by(kind="group_reply").one()
+    assert out.chat_id == GROUP
+
+
+def test_silent_bot_keeps_signals_in_journal(monkeypatch):
+    monkeypatch.setenv(svc.GROUP_ENV, str(GROUP))
+    monkeypatch.delenv(svc.GROUP_TALK_ENV, raising=False)
+    assert svc.group_out() is None and svc.group_chat_id() == GROUP

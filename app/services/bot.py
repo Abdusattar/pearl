@@ -32,6 +32,10 @@ from app.services.purchases import OPERATIONAL_ROLES, audit, site_orgs
 TOKEN_ENV = "TELEGRAM_TOKEN"
 GROUP_ENV = "TELEGRAM_GROUP_CHAT_ID"
 REVIEW_ENV = "BOT_REVIEW_SUMMARY"      # «1» — сводка учредителям через проверку владельца (по умолчанию да)
+# «1» — бот говорит в группе. По умолчанию молчит (владелец 21.09): группу он
+# слушает, а разбор каждого сообщения шлёт владельцу в личку, сигналы в группу
+# только в журнал — пока на живых сообщениях не станет видно, что понимает верно.
+GROUP_TALK_ENV = "BOT_GROUP_TALK"
 OWNER_USER_ID = 1                      # Абдусаттар: проверяет сводку
 
 MEDIA_ROOT = Path(__file__).parent.parent.parent / "media"
@@ -52,6 +56,15 @@ def token() -> str | None:
 def group_chat_id() -> int | None:
     v = os.getenv(GROUP_ENV)
     return int(v) if v and v.lstrip("-").isdigit() else None
+
+
+def group_talks() -> bool:
+    return os.getenv(GROUP_TALK_ENV, "0") == "1"
+
+
+def group_out() -> int | None:
+    """Куда слать в группу: молчащий бот — никуда, только в журнал."""
+    return group_chat_id() if group_talks() else None
 
 
 def webhook_secret() -> str:
@@ -167,7 +180,7 @@ def run_scheduled(db: Session, now: datetime | None = None) -> list[str]:
         key = f"group_signals:{d.isoformat()}"
         if not _done(db, key):
             text = group_signals_text(db, site.id)
-            send(db, group_chat_id(), text or "Неделя началась. Сигналов нет: листы внесены, долги свежие.",
+            send(db, group_out(), text or "Неделя началась. Сигналов нет: листы внесены, долги свежие.",
                  "group_signals", job_key=key)
             sent.append(key)
         key = f"founders:{d.isoformat()}"
@@ -199,7 +212,7 @@ def run_scheduled(db: Session, now: datetime | None = None) -> list[str]:
         if not _done(db, key):
             text = group_signals_text(db, site.id)
             if text:
-                send(db, group_chat_id(), text, "group_threshold", job_key=key)
+                send(db, group_out(), text, "group_threshold", job_key=key)
             else:
                 db.add(BotMessage(kind="group_threshold", job_key=key, status="skipped"))
             sent.append(key)
@@ -310,7 +323,15 @@ def _handle_group(db: Session, msg: dict, user: User | None, text: str) -> str |
     db.add(BotMessage(kind=kind, chat_id=chat_id, user_id=user.id if user else None, direction="in",
                       text=text[:2000], status="understood" if reply else "silent", payload=payload))
     if reply:
-        send(db, chat_id, reply, "group_reply", user_id=user.id if user else None, reply_to=message_id)
+        if group_talks():
+            send(db, chat_id, reply, "group_reply", user_id=user.id if user else None, reply_to=message_id)
+        else:
+            # бот молчит в группе: владелец видит, что бот ответил бы, у себя в личке
+            owner = db.get(User, OWNER_USER_ID)
+            what = "фото" if kind == "group_photo" else f"«{text[:80]}»"
+            who = user.name if user else "не привязан"
+            send(db, owner.tg_id if owner else None, f"Группа, {who}, {what}:\n{reply}", "group_reply_owner",
+                 user_id=OWNER_USER_ID)
     return reply
 
 
