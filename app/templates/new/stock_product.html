@@ -1,0 +1,80 @@
+{% extends "new/base.html" %}
+{% block title %}{{ p.name }} — Склад — Жемчужина{% endblock %}
+
+{% block head %}
+<style>
+  .meta { color: var(--muted); margin: 6px 0 0; }
+  .big { font-size: 34px; font-weight: 600; line-height: 1.15; margin: 10px 0 2px; font-variant-numeric: tabular-nums; }
+  .big.bad { color: var(--bad); }
+  .trust { display: flex; align-items: baseline; gap: 7px; font-size: 14px; }
+  .trust::before { content: ""; flex: none; width: 9px; height: 9px; border-radius: 50%; background: currentColor; transform: translateY(-1px); }
+  .trust.ok { color: var(--ok); } .trust.warn { color: var(--warn); }
+  .trust span { color: var(--muted); }
+  .acts2 { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 14px; }
+  .btn2 { display: inline-flex; align-items: center; min-height: 44px; padding: 0 14px; border-radius: 8px; border: 1px solid var(--line); background: var(--surface); color: var(--accent); font: inherit; font-size: 14px; font-weight: 500; text-decoration: none; cursor: pointer; }
+  .box { background: var(--accent-soft); border-radius: 8px; padding: 14px 16px; margin: 12px 0 4px; max-width: 520px; }
+  .box .lb { display: block; font-size: 13px; color: var(--muted); margin: 10px 0 4px; }
+  .box .in { height: 44px; font-size: 16px; width: 100%; }
+  .box .pair { display: grid; grid-template-columns: 1fr 120px; gap: 0 10px; }
+  .box .bt { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 12px; }
+  h4.mh { margin: 24px 0 4px; font-size: 15px; }
+  .day { font-size: 13px; color: var(--muted); margin: 12px 0 2px; }
+  .ev { display: grid; grid-template-columns: 1fr auto; gap: 2px 16px; padding: 9px 0; border-top: 1px solid var(--line); min-height: 44px; color: inherit; text-decoration: none; }
+  .day + .ev { border-top: 0; }
+  .ev .s { font-size: 13px; color: var(--muted); }
+  .ev .n { font-weight: 500; white-space: nowrap; font-variant-numeric: tabular-nums; }
+  .ev .n.in { color: var(--ok); }
+</style>
+{% endblock %}
+
+{% block content %}
+{% if saved %}<div class="alert ok">Карточка записана.</div>{% endif %}
+{% if error %}<div class="alert bad">{{ error }}</div>{% endif %}
+<a href="/new/stock" style="font-size:14px;text-decoration:none">← Склад</a>
+<h3 class="title" style="margin:4px 0 0">{{ p.name }}</h3>
+<p class="meta">{{ p.product_category.name | capitalize if p.product_category else 'Без категории' }}. Единица {{ p.unit or 'не задана' }}{% if card.pack %}, {{ card.pack }}{% endif %}.{% if card.aliases %} Ещё пишут: {{ card.aliases | join(', ') }}.{% endif %}</p>
+{% if card.minor %}
+<div class="big" style="font-size:22px">Остаток не считаем</div>
+<p class="sub">{{ p.product_category.name | capitalize }} уходит в расход в день покупки.</p>
+{% else %}
+<div class="big {% if card.balance < 0 %}bad{% endif %}">{{ card.balance | qty }} {{ p.unit or '' }}</div>
+{% if not p.product_category %}<div class="trust warn">без категории <span>выберите категорию: от неё зависит, считать ли остаток</span></div>
+{% elif card.balance < -0.0005 %}<div class="trust warn">не хватает записи <span>по записям минус: похоже, не внесена покупка</span></div>
+{% elif card.missing %}<div class="trust warn">не хватает записи <span>листы кухни не внесены: {{ card.missing_text }}</span></div>
+{% else %}<div class="trust ok">сходится <span>пробелов не видно</span></div>{% endif %}
+{% endif %}
+
+{% if can_write %}
+<div class="acts2">
+  <button type="button" class="btn2" onclick="var b=document.getElementById('edit');b.hidden=!b.hidden;if(!b.hidden)b.querySelector('select').focus()">Поправить карточку</button>
+  {% if not card.minor and p.category_id %}<a class="btn2" href="/new/stock/count?cat={{ p.category_id }}">Пересчитать</a>{% endif %}
+</div>
+<form id="edit" class="box" method="post" action="/new/stock/{{ p.id }}/edit" {% if not error and p.category_id %}hidden{% endif %}>
+  <b>Карточка продукта</b>
+  <span class="lb">Категория</span>
+  <select class="in" name="category_id">
+    <option value="" {% if not p.category_id %}selected{% endif %}>— выберите —</option>
+    {% for c in card.cats %}<option value="{{ c.id }}" {% if c.id == p.category_id %}selected{% endif %}>{{ c.name | capitalize }}{% if c.is_minor %} (остаток не считаем){% endif %}</option>{% endfor %}
+  </select>
+  {% if card.locked %}<input type="hidden" name="unit" value="{{ p.unit or '' }}">
+  {% else %}<span class="lb">Единица</span><input class="in" name="unit" value="{{ p.unit or '' }}" placeholder="кг, л, шт">{% endif %}
+  <span class="lb">Фасовка, если привозят не поштучно</span>
+  <div class="pair"><input class="in" name="pack_name" value="{{ p.pack_name or '' }}" placeholder="лоток, мешок" aria-label="Как называется"><input class="in" name="pack_qty" value="{{ p.pack_qty | qty if p.pack_qty else '' }}" inputmode="decimal" placeholder="сколько {{ p.unit or '' }}" aria-label="Сколько в одной"></div>
+  <span class="lb">Как ещё пишут в чеках и на листе, через запятую</span><input class="in" name="aliases" value="" placeholder="{{ card.aliases | join(', ') if card.aliases else 'картошка, картофель молодой' }}">
+  <div class="bt"><button type="submit" class="btn">Записать</button><button type="button" class="btn ghost" onclick="document.getElementById('edit').hidden=true">Отмена</button></div>
+  {% if card.locked %}<p class="after">Единица {{ p.unit }} закрыта: по ней уже есть привозы и списания.{% if card.pack %} В чеке можно писать фасовкой: {{ card.pack }}.{% endif %}</p>{% endif %}
+</form>
+{% endif %}
+
+<h4 class="mh">Движение</h4>
+{% set ns = namespace(day=None) %}
+{% for m in card.moves %}
+  {% if m.date != ns.day %}{% set ns.day = m.date %}<div class="day">{{ m.date | human_date }}</div>{% endif %}
+  {% if m.url %}<a class="ev" href="{{ m.url }}">{% else %}<div class="ev">{% endif %}
+    <span>{{ m.title }}{% if m.sub %}<br><span class="s">{{ m.sub }}</span>{% endif %}</span>
+    <span class="n {% if m.amount > 0 %}in{% endif %}">{% if m.amount > 0 %}+{{ m.amount | qty }}{% else %}−{{ (-m.amount) | qty }}{% endif %} {{ p.unit or '' }}</span>
+  {% if m.url %}</a>{% else %}</div>{% endif %}
+{% else %}
+<p class="sub">Движений пока нет.</p>
+{% endfor %}
+{% endblock %}

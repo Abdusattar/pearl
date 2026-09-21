@@ -57,6 +57,6 @@
     <tr class="tot"><td>Осталось</td>{% for o in orgs %}{% set c = table.cols[o.id] %}<td class="{% if not c.tariff and c.income == 0 %}nd{% endif %}">{% if not c.tariff and c.income == 0 %}нет данных{% else %}{{ c.left | money }}{% endif %}</td>{% endfor %}</tr>
   </table>
   <p class="after">Общие расходы площадки (еда, свет, общие сотрудники) пока в колонке садика: правила деления придут с Настройками. Взносы и изъятия учредителей в «Осталось» не входят.</p>
-  <div class="links"><a href="/new/expenses">Расходы</a><a href="/new/cash">Касса</a><a href="/new/children">Дети</a><a href="/new/kitchen">Лист кухни</a></div>
+  <div class="links"><a href="/new/expenses">Расходы</a><a href="/new/cash">Касса</a><a href="/new/children">Дети</a><a href="/new/stock">Склад</a></div>
 </div>
 {% endblock %}

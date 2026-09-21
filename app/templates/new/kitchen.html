@@ -36,6 +36,7 @@
 {% endif %}
 {% if error %}<div class="alert bad">{{ error }}</div>{% endif %}
 
+<a href="/new/stock" style="font-size:14px;text-decoration:none">← Склад</a>
 <form method="post" action="/new/kitchen" enctype="multipart/form-data" id="sheet" autocomplete="off">
   <input type="hidden" name="date" id="date" value="{{ d.isoformat() }}">
   <div class="head">

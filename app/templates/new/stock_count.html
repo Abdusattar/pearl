@@ -1,0 +1,68 @@
+{% extends "new/base.html" %}
+{% block title %}Пересчитать склад — Жемчужина{% endblock %}
+
+{% block head %}
+<style>
+  .chips a.chip { text-decoration: none; }
+  table.cnt { width: 100%; border-collapse: collapse; margin-top: 6px; }
+  table.cnt th { text-align: right; font-weight: 500; font-size: 12px; color: var(--muted); padding: 4px 0; }
+  table.cnt th:first-child { text-align: left; }
+  table.cnt td { padding: 8px 0; border-top: 1px solid var(--line); text-align: right; font-variant-numeric: tabular-nums; vertical-align: top; }
+  table.cnt td:first-child { text-align: left; padding-top: 16px; }
+  table.cnt td.e { padding-top: 16px; white-space: nowrap; }
+  table.cnt .in { width: 110px; height: 44px; font-size: 16px; text-align: right; }
+  table.cnt .d { font-size: 13px; color: var(--muted); display: block; min-height: 16px; }
+  table.cnt .d.minus { color: var(--bad); } table.cnt .d.plus { color: var(--ok); }
+  .foot { display: flex; gap: 12px 16px; flex-wrap: wrap; margin-top: 16px; align-items: center; }
+  .foot label { font-size: 14px; color: var(--muted); }
+</style>
+{% endblock %}
+
+{% block content %}
+<a href="/new/stock" style="font-size:14px;text-decoration:none">← Склад</a>
+<h3 class="title" style="margin:4px 0 0">Пересчитать склад</h3>
+{% if error %}<div class="alert bad" style="margin-top:10px">{{ error }}</div>{% endif %}
+{% if missing %}<div class="alert warn" style="margin-top:10px">Сначала внесите листы кухни: иначе разница будет большой только потому, что расход не записан. <a href="/new/kitchen?date={{ missing[0].isoformat() }}">Внести лист</a></div>{% endif %}
+<p class="sub">Посчитайте на полке только то, в чём сомневаетесь. Пустая строка значит «не считали»: её остаток не меняется.</p>
+<div class="chips">{% for c in data.cats %}<a class="chip {% if c.id == data.current %}on{% endif %}" href="/new/stock/count?cat={{ c.id }}">{{ c.name | capitalize }}</a>{% endfor %}</div>
+{% if data.rows %}
+<form method="post" action="/new/stock/count" enctype="multipart/form-data" autocomplete="off">
+  <input type="hidden" name="cat" value="{{ data.current or '' }}">
+  <table class="cnt">
+    <tr><th>Продукт</th><th>По записям</th><th>На полке</th></tr>
+    {% for r in data.rows %}
+    <tr><td>{{ r.p.name }}</td><td class="e">{{ r.balance | qty }} {{ r.p.unit or '' }}</td>
+      <td><input type="hidden" name="product_id" value="{{ r.p.id }}"><input class="in" name="actual" value="{{ values.get(r.p.id | string, '') }}" inputmode="decimal" data-exp="{{ r.balance }}" data-u="{{ r.p.unit or '' }}" aria-label="{{ r.p.name }}, сколько на полке"><span class="d"></span></td></tr>
+    {% endfor %}
+  </table>
+  {% if can_write %}
+  <div class="foot"><button class="btn" type="submit" id="go">Записать пересчёт</button><label>Фото листа или полки, по желанию <input type="file" name="photo" accept="image/*" capture="environment" style="font-size:14px"></label></div>
+  {% endif %}
+  <p class="after">Разница запишется строкой в движении каждого продукта, остаток станет как на полке.</p>
+</form>
+{% else %}
+<p class="sub">В этой категории нет продуктов в обороте.</p>
+{% endif %}
+{% endblock %}
+
+{% block scripts %}
+<script>
+(function () {
+  function num(v) { v = (v || '').replace(/\s/g, '').replace(',', '.'); return v === '' ? null : parseFloat(v); }
+  var inputs = document.querySelectorAll('table.cnt .in'), go = document.getElementById('go');
+  function count() { var n = 0; inputs.forEach(function (i) { if (num(i.value) !== null && !isNaN(num(i.value))) n++; });
+    if (go) { go.textContent = n ? 'Записать пересчёт: ' + n + ' ' + (n % 10 === 1 && n % 100 !== 11 ? 'продукт' : (n % 10 >= 2 && n % 10 <= 4 && (n % 100 < 12 || n % 100 > 14) ? 'продукта' : 'продуктов')) : 'Записать пересчёт'; go.disabled = !n; } }
+  inputs.forEach(function (i) {
+    function upd() {
+      var d = i.nextElementSibling, v = num(i.value);
+      if (v === null || isNaN(v)) { d.textContent = v === null ? '' : 'не число'; d.className = 'd' + (v === null ? '' : ' minus'); count(); return; }
+      var diff = Math.round((v - parseFloat(i.dataset.exp)) * 1000) / 1000;
+      d.textContent = diff === 0 ? 'совпадает' : (diff > 0 ? '+' : '−') + Math.abs(diff).toLocaleString('ru-RU') + ' ' + i.dataset.u;
+      d.className = 'd ' + (diff < 0 ? 'minus' : diff > 0 ? 'plus' : '');
+      count();
+    }
+    i.addEventListener('input', upd); upd();
+  });
+})();
+</script>
+{% endblock %}

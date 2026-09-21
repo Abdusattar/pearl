@@ -14,9 +14,10 @@ import re
 from datetime import date, datetime, timedelta
 from decimal import Decimal
 
+from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
-from app.models import AuditLog, KitchenSheet, Product, User, WriteOff
+from app.models import AuditLog, KitchenSheet, Product, StockCount, User, WriteOff
 from app.services.purchases import site_orgs
 from app.services.warehouse import get_balance_map
 
@@ -93,9 +94,23 @@ def missing_days(db: Session, site_org_id: int, until: date | None = None) -> li
     """Рабочие дни без листа в окне LOOKBACK_DAYS до `until` включительно."""
     until = until or date.today()
     start = until - timedelta(days=LOOKBACK_DAYS)
+    # пересчёт склада уже привёл остаток к полке — дни до него не пробел
+    # (закрытое пересчётом не всплывает, владелец 21.09)
+    last_count = (db.query(StockCount.count_date)
+                  .filter(StockCount.organization_id == site_org_id, StockCount.status == "applied")
+                  .order_by(StockCount.count_date.desc()).first())
+    if last_count and last_count[0] >= start:
+        start = last_count[0] + timedelta(days=1)
     have = {s.date for s in db.query(KitchenSheet)
             .filter(KitchenSheet.site_org_id == site_org_id, KitchenSheet.deleted_at.is_(None),
                     KitchenSheet.date >= start).all()}
+    # день, списанный ещё старым входом (до листа кухни 17.09), внесён — иначе
+    # ложный пробел «листы не внесены» за дни, где расход уже записан
+    org_ids = {o.id for o in site_orgs(db, site_org_id)} | {site_org_id}
+    have |= {d for (d,) in db.query(WriteOff.date)
+             .filter(WriteOff.organization_id.in_(org_ids), WriteOff.deleted_at.is_(None),
+                     WriteOff.date >= start,
+                     or_(WriteOff.reason.is_(None), WriteOff.reason != "пересчёт склада")).distinct().all()}
     days = []
     d = start
     while d <= until:
