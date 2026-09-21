@@ -22,6 +22,8 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.dependencies import get_current_user, get_accessible_orgs
 from app.models import Student, Transaction, Enrollment, Group, Organization, OptimaLog
+from app.services.students import TEST_PIN_THRESHOLD
+from xml.sax.saxutils import escape
 
 router = APIRouter(prefix="/optima", tags=["optima"])
 templates = Jinja2Templates(directory=str(Path(__file__).parent.parent / "templates"))
@@ -43,8 +45,18 @@ ERR_INACTIVE    = 79   # фатальная — ребёнок выбыл
 ERR_OTHER       = 300  # фатальная — прочая ошибка поставщика
 
 
+def _fields_xml(fields: list[tuple[str, str]] | None) -> str:
+    """Отдельные поля ответа на check (просьба Optima 21.09: группа не только в comment).
+    Теги на наше усмотрение, банк подстроится."""
+    if not fields:
+        return ""
+    rows = "".join(f'        <field{i} name="{name}">{escape(value)}</field{i}>\n'
+                   for i, (name, value) in enumerate(fields, 1))
+    return f"    <fields>\n{rows}    </fields>\n"
+
+
 def _xml(osmp_txn_id: str, result: int, comment: str = "",
-         prv_txn: str = "", sum_val: str = "") -> Response:
+         prv_txn: str = "", sum_val: str = "", fields: list[tuple[str, str]] | None = None) -> Response:
     body = (
         f'<?xml version="1.0" encoding="UTF-8"?>\n'
         f'<response>\n'
@@ -53,6 +65,7 @@ def _xml(osmp_txn_id: str, result: int, comment: str = "",
         f'    <sum>{sum_val}</sum>\n'
         f'    <result>{result}</result>\n'
         f'    <comment>{comment}</comment>\n'
+        f'{_fields_xml(fields)}'
         f'</response>'
     )
     return Response(content=body, media_type="application/xml; charset=utf-8")
@@ -71,7 +84,7 @@ def optima_payment(
     client_ip = request.client.host if request.client else "unknown"
     log.info("Optima %s account=%s txn_id=%s sum=%s ip=%s", command, account, txn_id, sum, client_ip)
 
-    def respond(result: int, comment: str = "", prv_txn: str = "") -> Response:
+    def respond(result: int, comment: str = "", prv_txn: str = "", fields=None) -> Response:
         try:
             db.add(OptimaLog(
                 command=command, account=account, txn_id=txn_id, sum=sum,
@@ -80,7 +93,7 @@ def optima_payment(
             db.commit()
         except Exception:
             db.rollback()
-        return _xml(txn_id, result, comment, prv_txn=prv_txn, sum_val=sum)
+        return _xml(txn_id, result, comment, prv_txn=prv_txn, sum_val=sum, fields=fields)
 
     # Валидация PIN
     if not PIN_RE.match(account):
@@ -114,7 +127,13 @@ def optima_payment(
         if group:
             parts.append(f"группа {group}")
         comment = ", ".join(parts)
-        return respond(OK, comment)
+        # Отдельные поля — пока только тестовым PIN: тот же адрес принимает боевые
+        # оплаты садика, новый тег не должен их сломать до проверки банком (21.09).
+        fields = None
+        if student.pin.isdigit() and int(student.pin) >= TEST_PIN_THRESHOLD:
+            fields = [("fio", student.name)] + ([("organization", org_label)] if org_label else []) \
+                + ([("group", group)] if group else [])
+        return respond(OK, comment, fields=fields)
 
     # ── PAY ──────────────────────────────────────────────────────────────────
     if command == "pay":
