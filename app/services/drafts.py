@@ -105,3 +105,43 @@ def title(r: Receipt) -> dict:
     match = p.get("match")
     return {"t": ", ".join(parts), "s": match or ("фото чека" if not p else "в системе нет"),
             "warn": bool(match and match.startswith("похоже"))}
+
+
+def kitchen_rows(db: Session, r: Receipt, site_org_id: int) -> list[dict]:
+    """Строки листа кухни с фото: распознаются один раз и запоминаются в черновике.
+    Бросает исключение, если модель недоступна — вызывающий решает, что показать."""
+    p = dict(r.payload or {})
+    if p.get("rows") is not None:
+        return p["rows"]
+    from app.services import recognize as rz
+    data = (MEDIA_ROOT / r.file_path).read_bytes()
+    out = rz.recognize(db, data, rz.KITCHEN, site_org_id,
+                       mime="image/png" if r.file_path.lower().endswith(".png") else "image/jpeg")
+    rows = [{"product_id": x["product_id"], "name": x["name"] or x["raw"], "qty": x["qty"],
+             "unit": x["unit"] if x["product_id"] else "",
+             "question": (x.get("question") or {}).get("text") or "; ".join(x.get("notes") or []) or None}
+            for x in out["rows"]]
+    p["rows"] = rows
+    r.payload = p
+    return rows
+
+
+def prepare_pending(limit: int = 5) -> int:
+    """Разобрать строки свежих листов кухни сразу, как фото пришло (фоном после ответа
+    Telegram): Махабат открывает уже готовый черновик, без ожидания."""
+    from app.database import SessionLocal
+    db = SessionLocal()
+    done_n = 0
+    try:
+        todo = (db.query(Receipt).filter(Receipt.kind == KITCHEN, Receipt.ocr_status.in_(OPEN))
+                .order_by(Receipt.id).all())
+        for r in [x for x in todo if (x.payload or {}).get("rows") is None][:limit]:
+            try:
+                kitchen_rows(db, r, r.organization_id)
+                db.commit()
+                done_n += 1
+            except Exception:  # noqa: BLE001 — не вышло сейчас: разберётся при открытии
+                db.rollback()
+    finally:
+        db.close()
+    return done_n

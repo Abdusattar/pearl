@@ -63,23 +63,12 @@ def _draft_info(db: Session, r) -> dict:
 
 def _draft_rows(db: Session, site: Organization, r, balances: dict) -> tuple[list[dict], dict, str | None]:
     """Строки черновика: распознаются один раз и запоминаются в черновике."""
-    p = dict(r.payload or {})
-    cached = p.get("rows")
     note = None
-    if cached is None:
-        try:
-            data = (MEDIA_DIR.parent / r.file_path).read_bytes()
-            out = rz.recognize(db, data, rz.KITCHEN, site.id,
-                               mime="image/png" if r.file_path.lower().endswith(".png") else "image/jpeg")
-            cached = [{"product_id": x["product_id"], "name": x["name"] or x["raw"], "qty": x["qty"],
-                       "unit": x["unit"] if x["product_id"] else "",
-                       "question": (x.get("question") or {}).get("text") or "; ".join(x.get("notes") or []) or None}
-                      for x in out["rows"]]
-            p["rows"] = cached
-            r.payload = p
-            db.commit()
-        except Exception as e:  # noqa: BLE001 — модель недоступна: лист заполняется руками
-            cached, note = [], f"Фото не разобралось ({e}). Заполните строки руками, фото рядом."
+    try:
+        cached = drafts.kitchen_rows(db, r, site.id)
+        db.commit()
+    except Exception as e:  # noqa: BLE001 — модель недоступна: лист заполняется руками
+        cached, note = [], f"Фото не разобралось ({e}). Заполните строки руками, фото рядом."
     lists = {"item_product_id": [], "item_name": [], "item_qty": [], "item_unit": []}
     errors = {}
     for i, x in enumerate(cached):

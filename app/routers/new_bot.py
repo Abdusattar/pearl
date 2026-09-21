@@ -5,7 +5,7 @@ import asyncio
 import os
 from datetime import datetime
 
-from fastapi import APIRouter, Depends, Form, Request
+from fastapi import APIRouter, BackgroundTasks, Depends, Form, Request
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from sqlalchemy.orm import Session
@@ -20,7 +20,7 @@ router = APIRouter(tags=["bot"])
 
 
 @router.post("/bot/webhook/{secret}")
-async def webhook(secret: str, request: Request, db: Session = Depends(get_db)):
+async def webhook(secret: str, request: Request, background: BackgroundTasks, db: Session = Depends(get_db)):
     if secret != svc.webhook_secret():
         return JSONResponse({"ok": False}, status_code=403)
     try:
@@ -31,6 +31,10 @@ async def webhook(secret: str, request: Request, db: Session = Depends(get_db)):
         # разбор фото моделью идёт секунды — не держим цикл событий
         await run_in_threadpool(svc.handle_update, db, update)
         db.commit()
+        if (update.get("message") or {}).get("photo"):
+            # строки листа кухни — сразу, фоном, после ответа Telegram (черновик готов к открытию)
+            from app.services.drafts import prepare_pending
+            background.add_task(prepare_pending)
     except Exception as e:  # noqa: BLE001 — Telegram будет повторять, лучше ответить 200 и записать
         db.rollback()
         db.add(BotMessage(kind="error", direction="in", status="failed", text=str(e)[:500]))
@@ -59,6 +63,12 @@ async def scheduler_loop():
             finally:
                 db.close()
         except Exception:  # noqa: BLE001 — цикл не должен умирать от одной ошибки
+            pass
+        try:
+            # листы кухни, что пришли без разбора (модель была занята, сервер перезапускался)
+            from app.services.drafts import prepare_pending
+            await run_in_threadpool(prepare_pending)
+        except Exception:  # noqa: BLE001
             pass
         await asyncio.sleep(60)
 
