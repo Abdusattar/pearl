@@ -53,6 +53,17 @@
     <span class="lb">Почему</span><input class="in" name="reason" value="{{ reason }}" placeholder="если разница заметная">
     <p class="after">Насчитанное становится новой базой кармана; разница ложится строкой в историю и сигналом. Первый пересчёт каждого кармана — точка отсчёта.</p>
 
+  {% elif kind == 'bank' %}
+    <span class="lb">Счёт</span>
+    <div class="chips">{% for o, exp in bank_orgs %}<label class="chip {% if account_org_id == o.id or (not account_org_id and loop.first and bank_orgs|length == 1) %}on{% endif %}"><input type="radio" name="account_org_id" value="{{ o.id }}" data-exp="{{ exp }}" {% if account_org_id == o.id %}checked{% endif %}>{{ o.name }}</label>{% endfor %}</div>
+    <div class="fig" style="margin-top:14px"><div class="l">По записям</div><div class="v" id="expected">—</div></div>
+    <div class="fig"><div class="l">В банке сейчас</div><input class="in num" name="amount" id="actual" value="{{ amount }}" inputmode="decimal" placeholder="0" oninput="showBank()"></div>
+    <div class="fig"><div class="l">Разница</div><div class="v" id="delta">—</div><div class="w" id="deltaw"></div></div>
+    <p class="after" id="missing" hidden>Если в банке меньше из-за снятия или платежа со счёта, которые ещё не внесли, сначала внесите их: <a href="/new/cash/withdraw">Снятие со счёта</a>. Тогда разница уйдёт сама.</p>
+    <span class="lb">Когда</span><input class="in" type="date" name="date" value="{{ d.isoformat() }}" max="{{ today.isoformat() }}">
+    <span class="lb">Почему</span><input class="in" name="reason" value="{{ reason }}" placeholder="если разница заметная: комиссия, налог…">
+    <p class="after">Цифру присылает Мунара из банка. Она становится новой точкой отсчёта счёта, разница остаётся строкой в истории.</p>
+
   {% else %}
     <span class="lb">Что случилось</span>
     <div class="chips"><label class="chip {% if direction == 'fund' %}on{% endif %}"><input type="radio" name="direction" value="fund" {% if direction == 'fund' %}checked{% endif %}>Внёс(ла) в кассу</label><label class="chip {% if direction == 'withdraw' %}on{% endif %}"><input type="radio" name="direction" value="withdraw" {% if direction == 'withdraw' %}checked{% endif %}>Взял(а) из кассы</label></div>
@@ -66,7 +77,7 @@
     <p class="after">Взнос и изъятие — это капитал, не расход и не доход: в Обзоре отдельной строкой. Если учредитель заплатил поставщику своими деньгами, это записывается в «Купили» как «Заплатил учредитель».</p>
   {% endif %}
 
-  {% if can_write %}<button type="submit" class="btn full" style="margin-top:18px">{% if kind == 'recount' %}Подтвердить{% else %}Записать{% endif %}</button>{% endif %}
+  {% if can_write %}<button type="submit" class="btn full" style="margin-top:18px">{% if kind in ('recount', 'bank') %}Подтвердить{% else %}Записать{% endif %}</button>{% endif %}
   <p style="margin-top:12px"><a href="/new/cash">← Касса</a></p>
 </form>
 {% endblock %}
@@ -93,5 +104,25 @@ function showExpected() {
   w.textContent = Math.abs(d) > {{ 500 }} ? 'выше порога 500, нужна причина' : (Math.abs(d) < 0.01 ? 'сошлось' : 'мелкая разница');
 }
 showExpected();
+function showBank() {
+  var r = document.querySelector('input[name="account_org_id"]:checked') ||
+          (document.querySelectorAll('input[name="account_org_id"]').length === 1 ? document.querySelector('input[name="account_org_id"]') : null);
+  var expEl = document.getElementById('expected'); if (!expEl) return;
+  if (!r) { expEl.textContent = 'выберите счёт'; return; }
+  r.checked = true; r.closest('label.chip').classList.add('on');
+  var exp = parseFloat(r.dataset.exp || '0');
+  expEl.textContent = fmt(exp);
+  var raw = document.getElementById('actual').value.replace(/\s/g, '').replace(',', '.');
+  var act = raw === '' ? null : parseFloat(raw);
+  var dEl = document.getElementById('delta'), w = document.getElementById('deltaw'), miss = document.getElementById('missing');
+  if (act === null || isNaN(act)) { dEl.textContent = '—'; w.textContent = ''; dEl.className = 'v'; miss.hidden = true; return; }
+  var d = act - exp, big = Math.abs(d) >= 5000 || Math.abs(d) > Math.max(Math.abs(exp), 1) / 100;
+  dEl.textContent = (d > 0 ? '+' : (d < 0 ? '−' : '')) + fmt(Math.abs(d));
+  dEl.className = 'v' + (big ? ' bad' : '');
+  w.textContent = Math.abs(d) < 0.01 ? 'сошлось' : (big ? 'заметная разница, нужна причина' : 'мелкая разница, можно без причины');
+  miss.hidden = !(d < -0.01 && big);
+}
+document.querySelectorAll('input[name="account_org_id"]').forEach(function (r) { r.addEventListener('change', showBank); });
+showBank();
 </script>
 {% endblock %}

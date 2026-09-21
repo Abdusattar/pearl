@@ -143,7 +143,72 @@ def test_internal_funding_is_a_pocket_transfer(db, site, people, as_makhabat):
 
 def test_cash_page_renders(client, db, site, people, as_makhabat):
     page = client.get("/new/cash")
-    assert page.status_code == 200 and "Наличные" in page.text and "На счетах" in page.text
+    assert page.status_code == 200 and "Наличные" in page.text and "История" in page.text
+    assert "/podotchet/" not in page.text          # блок закрыт: в старый вход некуда уйти
+
+
+# ── Касса целиком (21.09) ────────────────────────────────────────────────
+
+def test_state_names_gaps_not_mismatch(db, site, people):
+    """Пробел назван словами и ведёт к событию; неподтверждённый карман — просьба
+    подтвердить; после подтверждения пробела нет, строка «сходится»."""
+    sadik, school = site
+    m, mu, _ = people
+    svc.withdraw(db, user=mu, site_org_id=sadik.id, account_org_id=sadik.id, amount=Decimal(10000), d=date.today(),
+                 pocket_user_id=mu.id)
+    st = svc.state(db, sadik.id)
+    assert [r["user"].id for r in st["cash"]["rows"]] == [mu.id]      # Махабат без денег и пересчётов не показана
+    assert not st["cash"]["ok"] and any("ни разу не подтверждали" in g["title"] for g in st["gaps"])
+    svc.recount(db, user=m, site_org_id=sadik.id, pocket_user_id=mu.id, actual=Decimal(10000), d=date.today(), reason="")
+    st = svc.state(db, sadik.id)
+    assert st["cash"]["ok"] and st["cash"]["total"] == Decimal(10000)
+    assert not any(g["where"] == "cash" for g in st["gaps"])
+
+
+def test_negative_pocket_is_missing_record_gap(db, site, people):
+    sadik, _ = site
+    m, mu, _ = people
+    svc.recount(db, user=m, site_org_id=sadik.id, pocket_user_id=m.id, actual=Decimal(0),
+                d=date.today() - timedelta(days=1), reason="")
+    svc.founder_withdraw(db, user=m, site_org_id=sadik.id, founder_id=people[2].id, pocket_user_id=m.id,
+                         amount=Decimal(3000), d=date.today())
+    g = [g for g in svc.state(db, sadik.id)["gaps"] if g["where"] == "cash"]
+    assert g and "минус 3 000" in g[0]["title"] and "не хватает записи" in g[0]["sub"]
+
+
+def test_bank_balance_needs_reason_when_big(client, db, site, people, as_makhabat):
+    sadik, school = site
+    exp = svc.expected_account(db, sadik.id)
+    r = client.post("/new/cash/bank", data={"account_org_id": sadik.id, "amount": str(exp + 20000),
+                                            "date": date.today().isoformat()}, follow_redirects=False)
+    assert r.status_code == 200 and "сначала внесите их" in r.text
+    r = client.post("/new/cash/bank", data={"account_org_id": sadik.id, "amount": str(exp + 20000),
+                                            "date": date.today().isoformat(), "reason": "налог"}, follow_redirects=False)
+    import re
+    assert r.status_code == 303, re.findall(r'alert bad">([^<]*)', r.text)
+    a = next(a for a in svc.state(db, sadik.id)["accounts"] if a["org"].id == sadik.id)
+    assert a["since"] == date.today() and a["expected"] == exp + 20000 and a["ok"]
+
+
+def test_remove_own_withdrawal_but_not_others(client, db, site, people, as_makhabat):
+    sadik, school = site
+    m, mu, _ = people
+    mine = svc.withdraw(db, user=m, site_org_id=sadik.id, account_org_id=sadik.id, amount=Decimal(5000), d=date.today(),
+                        pocket_user_id=mu.id)
+    other = svc.withdraw(db, user=mu, site_org_id=sadik.id, account_org_id=sadik.id, amount=Decimal(7000), d=date.today(),
+                         pocket_user_id=mu.id)
+    db.flush()
+    r = client.post("/new/cash/remove", data={"kind": "funding", "id": other.id, "reason": "дубль"}, follow_redirects=False)
+    assert "error=" in r.headers["location"] and other.deleted_at is None
+    r = client.post("/new/cash/remove", data={"kind": "funding", "id": mine.id, "reason": ""}, follow_redirects=False)
+    assert "error=" in r.headers["location"] and mine.deleted_at is None
+    r = client.post("/new/cash/remove", data={"kind": "funding", "id": mine.id, "reason": "внесено дважды"},
+                    follow_redirects=False)
+    assert "saved=removed" in r.headers["location"]
+    db.refresh(mine)
+    assert mine.deleted_at is not None and svc.pocket_balance(db, sadik.id, mu.id) == Decimal(7000)
+    row = next(i for i in svc.history(db, sadik.id) if i["kind"] == "funding" and i["id"] == mine.id)
+    assert row["removed"] and row["why"] == "внесено дважды"
 
 
 # ── повторы (17.09) ──────────────────────────────────────────────────────

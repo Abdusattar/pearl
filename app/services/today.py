@@ -102,10 +102,9 @@ def todo(db: Session, site_org_id: int) -> list[dict]:
 
 def now_figures(db: Session, site_org_id: int) -> dict:
     """Три цифры «Сейчас»: касса площадки, продукты на складе (основные), долги."""
-    # Касса — сумма карманов, как на экране Кассы (21.09): касса объекта по записям
-    # считается от пересчёта 8 сентября и показывала −9 392 при 7 869 на руках.
-    pk = cash.pockets(db, site_org_id)
-    counted = [r["start"]["date"] for r in pk["rows"] if r["start"]["own"] and r["start"]["date"]]
+    # Наличные и счета — из того же источника, что экран Кассы (21.09), с тем же
+    # признаком «сходится / не хватает записи»: экраны не расходятся в словах.
+    st = cash.state(db, site_org_id)
     org_ids = {o.id for o in site_orgs(db, site_org_id)} | {site_org_id}
     balances = get_product_balances(db, org_ids)
     stock_value = sum(b["balance_value"] for b in balances
@@ -113,8 +112,8 @@ def now_figures(db: Session, site_org_id: int) -> dict:
     last_count = stock_count.last_applied(db, site_org_id) if hasattr(stock_count, "last_applied") else None
     debts = supplier_debts(db, site_org_id)
     return {
-        "cash": float(pk["total"]),
-        "cash_when": f"карманы пересчитаны {_date_short(max(counted))}" if counted else "карманы ещё не пересчитывали",
+        "cash": float(st["cash"]["total"]), "cash_ok": st["cash"]["ok"],
+        "accounts": [{"name": a["org"].name, "amount": float(a["expected"]), "ok": a["ok"]} for a in st["accounts"]],
         "stock": round(stock_value),
         "stock_when": (f"пересчёт {_date_short(last_count)}" if last_count else "по приходам и листам кухни"),
         "debt": float(sum((d["debt"] for d in debts), Decimal("0"))),

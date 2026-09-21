@@ -19,7 +19,6 @@ from sqlalchemy.orm import Session
 from app.models import ExpenseCategory, Organization, Purchase, Transaction, User
 from app.services import cash, children, today
 from app.services.ledger import month_bounds
-from app.services.price_check import fmt_money
 from app.services.purchases import site_orgs
 from app.services.warehouse import get_product_balances
 
@@ -27,7 +26,6 @@ FOOD = {"продукты питания", "услуги питания", "бу�
 SALARY = {"фот", "соцфонд", "соцфонд и подоходный"}
 UTIL = {"коммунальные расходы", "электричество", "вода", "отопление", "интернет", "связь",
         "охрана", "операционные услуги", "реклама"}
-POCKET_STALE_DAYS = 7
 
 
 def visible_orgs(db: Session, site_org_id: int, user: User) -> list[Organization]:
@@ -46,20 +44,19 @@ def signals(db: Session, site_org_id: int, orgs: list[Organization]) -> list[dic
         if it["title"].startswith("Лист кухни"):
             continue  # операционное, Махабат видит в «Сегодня»
         out.append({"kind": "warn" if it["kind"] != "info" else "info", "text": it["title"], "sub": it["sub"], "url": it["url"]})
-    for p in cash.pockets(db, site_org_id)["rows"]:
-        if p["balance"] < -1:
-            out.append({"kind": "warn", "text": f"Карман {p['user'].name} в минусе: {fmt_money(float(p['balance']))}",
-                        "sub": "тратили из денег, которых в записях нет", "url": "/new/cash"})
-        elif not p["start"]["own"] or (p["days"] or 0) > POCKET_STALE_DAYS:
-            out.append({"kind": "info", "text": f"{p['user'].name} не подтверждал(а) наличные" + (f" {p['days']} дн." if p["days"] else ""),
-                        "sub": f"по записям {fmt_money(float(p['balance']))}", "url": "/new/cash"})
+    # Пробелы Кассы — те же, что видит Махабат (21.09): без «не подтверждал N дней»,
+    # пересчёт не ритуал, сигнал только там, где не хватает записи.
+    for g in cash.state(db, site_org_id)["gaps"]:
+        if g["where"] == "account" and not any(o.name in g["title"] for o in orgs):
+            continue
+        out.append({"kind": "warn", "text": g["title"], "sub": g["sub"], "url": "/new/cash"})
     return out
 
 
 def figures(db: Session, site_org_id: int, orgs: list[Organization]) -> dict:
-    acc = cash.accounts(db, site_org_id)
-    acc = [a for a in acc if a["org"].id in {o.id for o in orgs}]
-    pk = cash.pockets(db, site_org_id)
+    st = cash.state(db, site_org_id)
+    acc = [a for a in st["accounts"] if a["org"].id in {o.id for o in orgs}]
+    pk = {"total": st["cash"]["total"], "rows": st["cash"]["rows"]}
     org_ids = {o.id for o in site_orgs(db, site_org_id)} | {site_org_id}
     balances = get_product_balances(db, org_ids)
     stock = sum(b["balance_value"] for b in balances

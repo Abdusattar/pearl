@@ -24,6 +24,7 @@ FORMS = {
     "transfer": "Передать деньги",
     "recount": "Пересчёт кармана",
     "founder": "Учредители",
+    "bank": "Остаток в банке",
 }
 CASH_ROLES = WRITE_ROLES + ("founder",)   # учредители видят кассу, взносы и изъятия пишут сотрудники
 
@@ -53,8 +54,12 @@ def cash_page(request: Request, saved: str | None = None, db: Session = Depends(
     if site is None:
         return HTMLResponse("Объект не найден", status_code=404)
     ctx = _base_ctx(request, user, site, db, "cash")
-    ctx.update({"pockets": svc.pockets(db, site.id), "accounts": svc.accounts(db, site.id),
-                "recent": svc.recent(db, site.id), "saved": saved, "forms": FORMS,
+    only_checks = request.query_params.get("f") == "checks"
+    items = svc.history(db, site.id, only_checks=only_checks)
+    for it in items:
+        it["can_remove"] = user.role in WRITE_ROLES and svc.can_remove(user, it)
+    ctx.update({"st": svc.state(db, site.id), "items": items, "only_checks": only_checks,
+                "saved": saved, "error": request.query_params.get("error"), "forms": FORMS,
                 "can_write": user.role in WRITE_ROLES})
     return templates.TemplateResponse("new/cash.html", ctx)
 
@@ -75,8 +80,37 @@ def _form_ctx(request, user, site, db, kind: str, **kw) -> dict:
         "to_user_id": kw.get("to_user_id"), "pocket_user_id": kw.get("pocket_user_id", me),
         "founder_id": kw.get("founder_id"), "direction": kw.get("direction", "fund"),
         "reason": kw.get("reason", ""), "error": kw.get("error"), "can_write": user.role in WRITE_ROLES,
+        "bank_orgs": [(a["org"], a["expected"]) for a in svc.state(db, site.id)["accounts"]] if kind == "bank" else [],
     })
     return ctx
+
+
+@router.post("/cash/remove", response_class=HTMLResponse)
+async def cash_remove(request: Request, db: Session = Depends(get_db)):
+    """Убрать ошибочную запись с причиной. Свои снятия и передачи — сам, остальное
+    — владелец (21.09). Строка остаётся в истории зачёркнутой."""
+    from urllib.parse import quote
+    user = get_current_user(request, db)
+    if not user:
+        return RedirectResponse("/login", status_code=302)
+    if user.role not in WRITE_ROLES:
+        return HTMLResponse("Записывают сотрудники площадки", status_code=403)
+    site = _site(user, db)
+    if site is None:
+        return HTMLResponse("Объект не найден", status_code=404)
+    form = await request.form()
+    item_id = form.get("id") or ""
+    back = "/new/cash" + ("?f=checks" if form.get("f") == "checks" else "")
+    sep = "&" if "?" in back else "?"
+    if not item_id.isdigit():
+        return RedirectResponse(back, status_code=303)
+    try:
+        svc.remove(db, user=user, site_org_id=site.id, kind=form.get("kind") or "", item_id=int(item_id),
+                   reason=form.get("reason") or "")
+    except ValueError as e:
+        return RedirectResponse(f"{back}{sep}error={quote(str(e))}", status_code=303)
+    db.commit()
+    return RedirectResponse(f"{back}{sep}saved=removed", status_code=303)
 
 
 @router.get("/cash/{kind}", response_class=HTMLResponse)
@@ -89,7 +123,10 @@ def cash_form(kind: str, request: Request, db: Session = Depends(get_db)):
     site = _site(user, db)
     if site is None:
         return HTMLResponse("Объект не найден", status_code=404)
-    return templates.TemplateResponse("new/cash_form.html", _form_ctx(request, user, site, db, kind))
+    q = request.query_params
+    pre = {k: int(q[p]) for k, p in (("pocket_user_id", "pocket"), ("to_user_id", "to"), ("account_org_id", "org"))
+           if (q.get(p) or "").isdigit()}
+    return templates.TemplateResponse("new/cash_form.html", _form_ctx(request, user, site, db, kind, **pre))
 
 
 @router.post("/cash/{kind}", response_class=HTMLResponse)
@@ -122,7 +159,7 @@ async def cash_submit(kind: str, request: Request, db: Session = Depends(get_db)
 
     if d is None:
         return render("Дата не позже сегодняшней")
-    if kind != "recount" and amount is None:
+    if kind not in ("recount", "bank") and amount is None:
         return render("Укажите сумму")
     orgs = {o.id for o in site_orgs(db, site.id)}
     people = {p.id for p in svc.pocket_people(db, site.id)} | ({user.id} if user.role in OPERATIONAL_ROLES else set())
@@ -155,6 +192,14 @@ async def cash_submit(kind: str, request: Request, db: Session = Depends(get_db)
             svc.recount(db, user=user, site_org_id=site.id, pocket_user_id=ints["pocket_user_id"], actual=actual, d=d,
                         reason=g("reason"))
             msg = "recount"
+        elif kind == "bank":
+            actual = _amount(g("amount")) if g("amount") not in ("", "0") else Decimal("0")
+            if actual is None:
+                return render("Сколько в банке сейчас?")
+            if ints["account_org_id"] not in orgs:
+                return render("Какой счёт? Выберите")
+            svc.bank_balance(db, user=user, org_id=ints["account_org_id"], actual=actual, d=d, reason=g("reason"))
+            msg = "bank"
         else:
             if not ints["founder_id"]:
                 return render("Кто из учредителей?")
@@ -176,3 +221,4 @@ async def cash_submit(kind: str, request: Request, db: Session = Depends(get_db)
     once.remember(db, token, user.id, url)
     db.commit()
     return RedirectResponse(url, status_code=303)
+

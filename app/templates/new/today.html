@@ -21,12 +21,14 @@
   .go { font-size: 14px; color: var(--accent); font-weight: 500; white-space: nowrap; }
   .done { padding: 12px 0; font-size: 15px; color: var(--ok); }
   .fig { padding: 10px 0; border-top: 1px solid var(--line); }
-  .fig:first-of-type { border-top: 0; }
+  h4 + .fig { border-top: 0; }
   .fig .l { font-size: 13px; color: var(--muted); }
   .fig .v { font-size: 19px; font-weight: 600; font-variant-numeric: tabular-nums; }
   .fig .v span { font-size: 13px; color: var(--muted); font-weight: 400; margin-left: 3px; }
   .fig .v.bad { color: var(--bad); }
   .fig .w { font-size: 13px; color: var(--muted); }
+  .fig .w.ok { color: var(--ok); } .fig .w.warn { color: var(--warn); }
+  a.figlink { display: block; color: inherit; text-decoration: none; }
   .links { display: flex; flex-wrap: wrap; gap: 8px 18px; margin-top: 22px; font-size: 14px; }
   .links a { text-decoration: none; }
 </style>
@@ -54,14 +56,17 @@
     {% endif %}
     <div class="links">
       <a href="/new/pay">Оплатить поставщику</a>
-      <a href="/new/cash">Касса и снятия</a>
+      <a href="/new/cash/withdraw">Снятие со счёта</a>
       <a href="/warehouse/">Склад</a>
     </div>
     <p class="after">Склад пока открывается в старом входе: его экран в новом ещё впереди.</p>
   </section>
   <aside>
     <h4>Сейчас</h4>
-    <div class="fig"><div class="l">В кассе Сокулука</div><div class="v {% if figures.cash < 0 %}bad{% endif %}">{{ figures.cash | money }}<span>сом</span></div><div class="w">{{ figures.cash_when }}</div></div>
+    <a class="fig figlink" href="/new/cash"><div class="l">Наличные</div><div class="v {% if figures.cash < 0 %}bad{% endif %}">{{ figures.cash | money }}<span>сом</span></div><div class="w {{ 'ok' if figures.cash_ok else 'warn' }}">{{ 'сходится' if figures.cash_ok else 'не хватает записи' }}</div></a>
+    {% for a in figures.accounts %}
+    <a class="fig figlink" href="/new/cash"><div class="l">На счёте {{ a.name }}</div><div class="v {% if a.amount < 0 %}bad{% endif %}">{{ a.amount | money }}<span>сом</span></div><div class="w {{ 'ok' if a.ok else 'warn' }}">{{ 'сходится' if a.ok else 'не хватает записи' }}</div></a>
+    {% endfor %}
     <div class="fig"><div class="l">Продуктов на складе</div><div class="v">{{ figures.stock | money }}<span>сом</span></div><div class="w">{{ figures.stock_when }}</div></div>
     <div class="fig"><div class="l">Должны поставщикам</div><div class="v">{{ figures.debt | money }}<span>сом</span></div><div class="w">{{ figures.debt_who }}</div></div>
   </aside>
