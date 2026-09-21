@@ -94,7 +94,9 @@ def title(r: Receipt) -> dict:
     from app.services.stock import _day
     if (r.kind or RECEIPT) == KITCHEN:
         rows = p.get("rows")
-        t = "Лист кухни" + (f", {len(rows)} строк" if rows else "")
+        n = len(rows or [])
+        word = "строка" if n % 10 == 1 and n % 100 != 11 else ("строки" if 2 <= n % 10 <= 4 and not 12 <= n % 100 <= 14 else "строк")
+        t = "Лист кухни" + (f", {n} {word}" if n else "")
         return {"t": t, "s": f"за {_day(d)}" if d else "день на листе не прочитан, выберете при внесении",
                 "warn": d is None}
     parts = [p.get("supplier_name") or p.get("supplier") or "Чек"]

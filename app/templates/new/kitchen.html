@@ -22,7 +22,12 @@
   .tbl td.r .in.qty { margin-right: 4px; }
   .missing { font-size: 13px; color: var(--muted); margin: 0 0 14px; }
   .missing a { margin-right: 10px; }
-  .draft-bar { display: grid; grid-template-columns: 72px 1fr; gap: 14px; align-items: center; padding: 12px 14px; border-radius: 8px; background: var(--accent-soft); margin: 0 0 14px; }
+  .with-photo { display: grid; grid-template-columns: minmax(0, 1fr) 360px; gap: 24px; align-items: start; }
+  .photo-side { position: sticky; top: 16px; }
+  .photo-side img { width: 100%; max-height: 78vh; object-fit: contain; border-radius: 8px; border: 1px solid var(--line); background: var(--field); display: block; }
+  .photo-side .s { display: block; font-size: 13px; color: var(--muted); margin-top: 6px; }
+  @media (max-width: 1000px) { .with-photo { grid-template-columns: 1fr; } .photo-side { position: static; order: -1; } .photo-side img { max-height: 50vh; } }
+  .draft-bar { display: grid; grid-template-columns: 1fr; gap: 14px; align-items: center; padding: 12px 14px; border-radius: 8px; background: var(--accent-soft); margin: 0 0 14px; }
   .draft-bar .thumb { width: 72px; height: 72px; border-radius: 6px; overflow: hidden; display: block; background: var(--field); }
   .draft-bar .thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
   .draft-bar .s { font-size: 13px; color: var(--muted); }
@@ -45,12 +50,11 @@
 {% endif %}
 {% if error %}<div class="alert bad">{{ error }}</div>{% endif %}
 
-<a href="/new/stock" style="font-size:14px;text-decoration:none">← Склад</a>
+{% if draft %}<a href="/new/receipts" style="font-size:14px;text-decoration:none">← Из чата и с фото</a>{% else %}<a href="/new/stock" style="font-size:14px;text-decoration:none">← Склад</a>{% endif %}
 {% if draft %}
 <div class="draft-bar">
-  <a class="thumb" href="/media/{{ draft.path }}" target="_blank" aria-label="Открыть фото листа крупно"><img src="/media/{{ draft.path }}" alt=""></a>
   <span><b>{% if draft.source == 'private' %}Боту в личку{% else %}Из чата{% endif %}: {% if draft.by %}прислал(а) {{ draft.by }}{% endif %}{% if draft.at %} {{ draft.at.date() | human_date }} в {{ draft.at.strftime('%H:%M') }}{% endif %}</b><br>
-  <span class="s">Строки разобраны с фото. Проверьте каждую, поправьте, что не так, и внесите. <a href="/media/{{ draft.path }}" target="_blank">Открыть фото</a></span></span>
+  <span class="s">Строки разобраны с фото, фото справа. Проверьте каждую строку, поправьте, что не так, выберите день и внесите.</span></span>
 </div>
 {% endif %}
 <form method="post" action="/new/kitchen" enctype="multipart/form-data" id="sheet" autocomplete="off">
@@ -87,6 +91,7 @@
   <p class="missing">Не внесены ещё: {% for m in missing %}<a href="/new/kitchen?date={{ m.isoformat() }}">{{ m | human_date(true) }}</a>{% endfor %}{% if missing_total > missing|length %}и ещё {{ missing_total - missing|length }}{% endif %}</p>
   {% endif %}
 
+  {% if draft %}<div class="with-photo"><div>{% endif %}
   <table class="tbl" id="items">
     <thead><tr><th>Продукт</th><th class="r">Взяли</th><th class="r">На складе</th><th></th></tr></thead>
     <tbody>
@@ -114,6 +119,9 @@
     {% endfor %}
     </tbody>
   </table>
+  {% if draft %}</div>
+  <aside class="photo-side"><a href="/media/{{ draft.path }}" target="_blank" aria-label="Открыть фото листа во весь экран"><img src="/media/{{ draft.path }}" alt="Фото листа кухни"></a>
+    <span class="s">Сверяйте строки с фото. Нажмите — откроется во весь экран.</span></aside></div>{% endif %}
 
   <div class="foot">
     <p class="after">Списывается с одного склада Сокулука. Взяли больше, чем числится, — спишется что есть, разница запишется расхождением. Зелень, специи, хлеб, канцтовары и моющее пишите как есть: они уже в расходе с чека, остаток по ним не считаем, на листе остаются.</p>
