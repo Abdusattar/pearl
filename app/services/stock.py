@@ -12,7 +12,7 @@ from __future__ import annotations
 from datetime import date, datetime
 from decimal import Decimal
 
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 
 from app.models import (
     AuditLog, Product, ProductAlias, ProductCategory, StockCount, StockCountLine, StockCountPhoto,
@@ -72,7 +72,8 @@ def pack_text(p: Product) -> str:
 
 
 def _live_products(db: Session) -> list[Product]:
-    return db.query(Product).filter(Product.merged_into_id.is_(None), Product.retired_at.is_(None)).all()
+    return (db.query(Product).options(joinedload(Product.product_category))
+            .filter(Product.merged_into_id.is_(None), Product.retired_at.is_(None)).all())
 
 
 def state(db: Session, site_id: int) -> dict:

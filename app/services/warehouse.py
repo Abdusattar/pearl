@@ -1,7 +1,7 @@
 from decimal import Decimal
 
 from sqlalchemy import func
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 
 from app.models import Product, WarehouseReceipt, WriteOff
 
@@ -48,6 +48,7 @@ def get_product_balances(db: Session, org_ids: set) -> list[dict]:
         )
         .outerjoin(recv, Product.id == recv.c.pid)
         .outerjoin(woff, Product.id == woff.c.pid)
+        .options(joinedload(Product.product_category))   # категория нужна «Сегодня»/«Обзору» — без запроса на товар
         .filter(func.coalesce(recv.c.qty, 0) > 0)
         .order_by(Product.category.nullslast(), Product.name)
         .all()

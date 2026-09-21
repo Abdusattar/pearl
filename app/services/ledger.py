@@ -13,7 +13,7 @@ from decimal import Decimal
 from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 
-from app.models import (ExpenseCategory, Purchase, ReceiptItem, ReceiptTransaction, Supplier,
+from app.models import (ExpenseCategory, Product, Purchase, ReceiptItem, ReceiptTransaction, Supplier,
                         SupplierPayment, Transaction, User, WarehouseReceipt)
 from app.services.price_check import fmt_money
 from app.services.purchases import audit, site_orgs
@@ -95,11 +95,13 @@ def month_rows(db: Session, site_org_id: int, first: date, last: date) -> tuple[
     all_tx = [i for g in groups.values() for i in g["tx_ids"]]
     names_by_tx: dict[int, list[str]] = {}
     if all_tx:
-        rows = (db.query(WarehouseReceipt)
+        # имя товара одним запросом с приходом: r.product по строке — запрос на каждую (134 на месяц)
+        rows = (db.query(WarehouseReceipt.transaction_id, Product.name)
+                .join(Product, Product.id == WarehouseReceipt.product_id)
                 .filter(WarehouseReceipt.transaction_id.in_(all_tx), WarehouseReceipt.deleted_at.is_(None))
                 .order_by(WarehouseReceipt.id).all())
-        for r in rows:
-            names_by_tx.setdefault(r.transaction_id, []).append(r.product.name)
+        for tx_id, name in rows:
+            names_by_tx.setdefault(tx_id, []).append(name)
 
     out = []
     total = Decimal("0")
