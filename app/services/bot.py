@@ -62,7 +62,8 @@ def webhook_secret() -> str:
 # ── отправка ─────────────────────────────────────────────────────────────
 
 def send(db: Session, chat_id: int | None, text: str, kind: str, *, user_id: int | None = None,
-         job_key: str | None = None, status: str = "sent", payload: dict | None = None) -> BotMessage:
+         job_key: str | None = None, status: str = "sent", payload: dict | None = None,
+         reply_to: int | None = None) -> BotMessage:
     """Шлёт в Telegram и пишет в журнал. Без токена или chat_id — только журнал."""
     msg = BotMessage(kind=kind, job_key=job_key, chat_id=chat_id, user_id=user_id, direction="out",
                      text=text, status=status, payload=payload)
@@ -74,8 +75,11 @@ def send(db: Session, chat_id: int | None, text: str, kind: str, *, user_id: int
         msg.status = "logged"
         return msg
     try:
-        r = httpx.post(f"https://api.telegram.org/bot{token()}/sendMessage",
-                       json={"chat_id": chat_id, "text": text, "disable_web_page_preview": True}, timeout=20)
+        body = {"chat_id": chat_id, "text": text, "disable_web_page_preview": True}
+        if reply_to:
+            # ответ под сообщением; если его успели удалить — всё равно отправить
+            body["reply_parameters"] = {"message_id": reply_to, "allow_sending_without_reply": True}
+        r = httpx.post(f"https://api.telegram.org/bot{token()}/sendMessage", json=body, timeout=20)
         if r.status_code != 200:
             msg.status = "failed"
             msg.payload = {**(payload or {}), "error": r.text[:300]}
@@ -229,7 +233,10 @@ def handle_update(db: Session, update: dict) -> str | None:
                       text=text[:2000], status="received", payload={"has_photo": bool(msg.get("photo"))}))
     db.flush()
     if not is_private:
-        return None  # в группе бот только говорит; ответы — в личку
+        group = group_chat_id()
+        if group is None or chat_id != group:
+            return None  # чужие группы бот не слушает
+        return _handle_group(db, msg, user, text)
     if not user:
         reply = (f"Здравствуйте. Ваш номер в Telegram: {from_id}. Передайте его Абдусаттару, "
                  "он привяжет вас в системе, и я буду присылать вам ваши сообщения.")
@@ -260,6 +267,50 @@ def handle_update(db: Session, update: dict) -> str | None:
     else:
         reply = "Понял. Сигналы и вопросы приходят сюда сами; фото чека или листа кухни можно прислать в любой момент."
     send(db, chat_id, reply, "reply", user_id=user.id)
+    return reply
+
+
+def _handle_group(db: Session, msg: dict, user: User | None, text: str) -> str | None:
+    """Группа «Жемчужина», день 1 (21.09): понять и ответить под сообщением,
+    ничего не записывая. Всё, что бот понял, — в журнале (payload), по нему
+    владелец смотрит, как бот распознаёт, прежде чем разрешить запись."""
+    from app.services import bot_group as grp
+    site = site_for_bot(db)
+    if site is None:
+        return None
+    chat_id, message_id = msg["chat"]["id"], msg.get("message_id")
+    today_d = date.today()
+    reply, payload, kind = None, {"message_id": message_id}, None
+    try:
+        if msg.get("photo"):
+            kind = "group_photo"
+            photo = sorted(msg["photo"], key=lambda p: p.get("file_size") or 0)[-1]
+            payload["file_unique_id"] = photo.get("file_unique_id")
+            data = download_file(photo["file_id"])
+            h = compute_hash(data) if data else None
+            dup = grp.seen_photo(db, photo.get("file_unique_id"), h)
+            if data is None and dup is None:
+                return None
+            info = (grp.apply_caption(grp.read_photo(data, today_d), text)
+                    if data is not None and dup is None else {"kind": "dup"})
+            payload.update({k: (v.isoformat() if isinstance(v, date) else v) for k, v in info.items()})
+            reply = grp.photo_reply(db, site, user, info, today_d, dup=dup)
+        elif grp.worth_reading(text):
+            kind = "group_text"
+            info = grp.read_text(db, text, user, today_d)
+            payload.update({k: (v.isoformat() if isinstance(v, date) else v) for k, v in info.items()})
+            reply = grp.text_reply(db, site, user, info, today_d)
+    except Exception as e:  # noqa: BLE001 — модель или сеть упали: в группе молчим, в журнал
+        db.add(BotMessage(kind="group_error", chat_id=chat_id, user_id=user.id if user else None, direction="in",
+                          status="failed", text=str(e)[:500], payload=payload))
+        return None
+    if kind is None:
+        return None
+    payload["reply"] = reply
+    db.add(BotMessage(kind=kind, chat_id=chat_id, user_id=user.id if user else None, direction="in",
+                      text=text[:2000], status="understood" if reply else "silent", payload=payload))
+    if reply:
+        send(db, chat_id, reply, "group_reply", user_id=user.id if user else None, reply_to=message_id)
     return reply
 
 

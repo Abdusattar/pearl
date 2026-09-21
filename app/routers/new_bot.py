@@ -6,6 +6,7 @@ import os
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, Form, Request
+from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from sqlalchemy.orm import Session
 
@@ -27,7 +28,8 @@ async def webhook(secret: str, request: Request, db: Session = Depends(get_db)):
     except Exception:  # noqa: BLE001
         return JSONResponse({"ok": True})
     try:
-        svc.handle_update(db, update)
+        # разбор фото моделью идёт секунды — не держим цикл событий
+        await run_in_threadpool(svc.handle_update, db, update)
         db.commit()
     except Exception as e:  # noqa: BLE001 — Telegram будет повторять, лучше ответить 200 и записать
         db.rollback()
