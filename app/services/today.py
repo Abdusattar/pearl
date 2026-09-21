@@ -62,44 +62,74 @@ def unchecked_receipts(db: Session, site_org_id: int) -> list[Receipt]:
 
 
 def todo(db: Session, site_org_id: int) -> list[dict]:
-    """«Ждёт вас»: сигналы с ссылками. Пусто — на сегодня всё."""
+    """«Ждёт вас» (макет 21.09): одна строка на вид дела, важное сверху — листы
+    кухни, чеки с фото, пробелы Кассы, пора платить, пробелы Склада. Те же
+    пробелы, что на экранах Кассы и Склада, собраны в одном месте. `src` —
+    откуда строка (Обзор и бот фильтруют по нему). Пусто — всё внесено."""
+    from app.services import stock
     items = []
     today = date.today()
 
-    for d in kitchen.missing_days(db, site_org_id, until=today)[:3]:
-        items.append({"kind": "bad" if d < today else "warn", "url": f"/new/kitchen?date={d.isoformat()}",
-                      "title": f"Лист кухни {_day_phrase(d)} не внесён",
-                      "sub": f"{_date_short(d)}, склад без расхода за день", "go": "Внести"})
-    missing_total = len(kitchen.missing_days(db, site_org_id, until=today))
-    if missing_total > 3:
-        items[-1]["sub"] += f" · и ещё {missing_total - 3}"
+    missing = kitchen.missing_days(db, site_org_id, until=today)
+    if missing:
+        first = missing[0]
+        items.append({"src": "kitchen", "kind": "bad" if first < today else "warn",
+                      "url": f"/new/kitchen?date={first.isoformat()}",
+                      "title": ("Лист кухни не внесён: " if len(missing) == 1 else "Листы кухни не внесены: ") + stock._days_text(missing),
+                      "sub": "пока их нет, склад показывает больше, чем на полках",
+                      "go": "Внести за сегодня" if first == today else f"Внести за {_date_short(first)}"})
 
-    # Чек с фото (телефон, чат, брошенный на полпути) — строкой, открывает «Купили»,
-    # уже заполненное с фото (21.09). Старой проверки чеков больше нет.
+    # Чеки с фото — одной строкой, список на отдельном экране (туда же придут записи бота).
     receipts = unchecked_receipts(db, site_org_id)
-    names = {u.id: u.name for u in db.query(User).filter(User.id.in_({r.created_by for r in receipts if r.created_by})).all()} if receipts else {}
-    for r in receipts[:3]:
-        who = names.get(r.created_by)
-        items.append({"kind": "warn", "url": f"/new/buy?receipt={r.id}", "title": "Чек с фото не внесён",
-                      "sub": (f"прислал(а) {who} " if who else "") + (_date_short(r.created_at.date()) if r.created_at else ""),
-                      "go": "Внести"})
-    if len(receipts) > 3:
-        items[-1]["sub"] += f" · и ещё {len(receipts) - 3}"
+    if receipts:
+        last = receipts[0]
+        who = db.get(User, last.created_by).name if last.created_by and db.get(User, last.created_by) else None
+        n = len(receipts)
+        items.append({"src": "receipts", "kind": "warn", "url": "/new/receipts",
+                      "title": f"{n} {_plural(n, 'чек', 'чека', 'чеков')} с фото не {'внесён' if n == 1 else 'внесены'}",
+                      "sub": "последний " + (f"прислал(а) {who} " if who else "") + (_date_short(last.created_at.date()) if last.created_at else ""),
+                      "go": "Разобрать"})
+
+    for g in cash.state(db, site_org_id)["gaps"]:
+        items.append({"src": "cash", "kind": "warn", "url": g["url"], "title": g["title"], "sub": g["sub"], "go": g["go"],
+                      "where": g["where"]})
 
     for s in supplier_debts(db, site_org_id):
         if s["since"] and (today - s["since"]).days >= DEBT_OLD_DAYS:
-            items.append({"kind": "warn", "url": f"/new/pay?supplier={s['id']}",
-                          "title": f"{s['name']}: пора платить",
-                          "sub": f"{fmt_money(float(s['debt']))} сом, долг с {_date_short(s['since'])}", "go": "Оплатить"})
+            items.append({"src": "debt", "kind": "warn", "url": f"/new/pay?supplier={s['id']}",
+                          "title": f"{s['name']}: пора платить {fmt_money(float(s['debt']))}",
+                          "sub": f"долг с {_date_short(s['since'])}", "go": "Оплатить"})
+
+    for g in stock.state(db, site_org_id)["gaps"]:
+        if g["title"].startswith("Лист"):
+            continue   # листы кухни уже первой строкой
+        items.append({"src": "stock", "kind": "warn", "url": g["url"], "title": g["title"], "sub": g["sub"], "go": g["go"]})
 
     active = stock_count.get_active(db, site_org_id)
     if active:
         pr = stock_count.progress(db, active.id)
         days = (today - active.count_date).days
-        items.append({"kind": "bad" if days >= STALE_COUNT_DAYS else "warn", "url": "/warehouse/count/",
+        items.append({"src": "count", "kind": "bad" if days >= STALE_COUNT_DAYS else "warn", "url": "/warehouse/count/",
                       "title": f"Пересчёт склада начат {_date_short(active.count_date)}, не закончен",
                       "sub": f"{pr['marked']} из {pr['total']} отмечено, {days} дн.", "go": "Продолжить"})
     return items
+
+
+def _plural(n: int, one: str, few: str, many: str) -> str:
+    if n % 10 == 1 and n % 100 != 11:
+        return one
+    if 2 <= n % 10 <= 4 and not 12 <= n % 100 <= 14:
+        return few
+    return many
+
+
+def kitchen_action(db: Session, site_org_id: int) -> dict:
+    """Кнопка «Лист кухни»: первый невнесённый день, иначе сегодня."""
+    missing = kitchen.missing_days(db, site_org_id)
+    d = missing[0] if missing else date.today()
+    late = bool(missing) and d < date.today()
+    return {"url": f"/new/kitchen?date={d.isoformat()}", "late": late,
+            "sub": f"за {_date_short(d)} не внесён" if late else "за сегодня"}
 
 
 def now_figures(db: Session, site_org_id: int) -> dict:
@@ -115,6 +145,7 @@ def now_figures(db: Session, site_org_id: int) -> dict:
     debts = supplier_debts(db, site_org_id)
     return {
         "cash": float(st["cash"]["total"]), "cash_ok": st["cash"]["ok"],
+        "pockets": [{"name": r["user"].name, "amount": float(r["balance"])} for r in st["cash"]["rows"]],
         "accounts": [{"name": a["org"].name, "amount": float(a["expected"]), "ok": a["ok"]} for a in st["accounts"]],
         "stock": round(stock_value),
         "stock_when": (f"пересчёт {_date_short(last_count)}" if last_count else "по приходам и листам кухни"),

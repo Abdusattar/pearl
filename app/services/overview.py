@@ -41,8 +41,8 @@ def visible_orgs(db: Session, site_org_id: int, user: User) -> list[Organization
 def signals(db: Session, site_org_id: int, orgs: list[Organization]) -> list[dict]:
     out = []
     for it in today.todo(db, site_org_id):
-        if it["title"].startswith("Лист кухни"):
-            continue  # операционное, Махабат видит в «Сегодня»
+        if it.get("src") in ("kitchen", "stock", "cash"):
+            continue  # листы и склад — операционное, Махабат видит в «Сегодня»; касса — ниже, с фильтром по объектам
         out.append({"kind": "warn" if it["kind"] != "info" else "info", "text": it["title"], "sub": it["sub"], "url": it["url"]})
     # Пробелы Кассы — те же, что видит Махабат (21.09): без «не подтверждал N дней»,
     # пересчёт не ритуал, сигнал только там, где не хватает записи.

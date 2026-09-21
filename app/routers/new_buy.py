@@ -241,12 +241,14 @@ async def receipt_skip(receipt_id: int, request: Request, db: Session = Depends(
     reason = (form.get("reason") or "").strip()
     if rc is None:
         return RedirectResponse("/new/today", status_code=303)
+    back = str(form.get("back") or "")
+    back = back if back.startswith("/new/") else ""
     if not reason:
         return RedirectResponse(f"/new/buy?receipt={rc.id}&skip_error=1", status_code=303)
     rc.ocr_status = "rejected"
     svc.audit(db, "receipt", rc.id, "update", user.id, {"ocr_status": "rejected", "reason": reason})
     db.commit()
-    return RedirectResponse("/new/today?skipped=1", status_code=303)
+    return RedirectResponse(f"{back or '/new/today'}?skipped=1", status_code=303)
 
 
 def _int_or_none(v) -> int | None:

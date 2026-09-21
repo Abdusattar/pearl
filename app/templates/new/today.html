@@ -3,76 +3,75 @@
 
 {% block head %}
 <style>
-  .head { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 6px; }
-  .head .s { font-size: 13px; color: var(--muted); }
-  .actions { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin: 14px 0 26px; }
-  @media (max-width: 520px) { .actions { grid-template-columns: 1fr; } }
-  .big { display: block; padding: 20px; border-radius: 8px; background: var(--accent); color: var(--on-accent); text-decoration: none; min-height: 44px; }
-  .big:hover { background: var(--accent-hover); }
-  .side { grid-column: 1 / -1; display: flex; align-items: baseline; gap: 4px 14px; flex-wrap: wrap; padding: 14px 20px; min-height: 48px; border-radius: 8px; background: var(--accent-soft); color: var(--accent); text-decoration: none; }
-  .side .t { font-size: 16px; font-weight: 600; } .side .s { font-size: 14px; color: var(--muted); }
-  .big .t { font-size: 18px; font-weight: 600; display: block; }
-  .big .s { font-size: 13px; color: var(--on-accent); opacity: .9; display: block; margin-top: 4px; }
-  .cols { display: grid; grid-template-columns: 1fr 250px; gap: 30px; }
+  .acts { display: grid; grid-template-columns: 1.3fr 1fr 1fr; gap: 12px; margin: 16px 0 8px; }
+  @media (max-width: 640px) { .acts { grid-template-columns: 1fr; } }
+  .act { display: block; padding: 16px 18px; border-radius: 8px; min-height: 44px; color: inherit; text-decoration: none; }
+  .act .t { font-size: 17px; font-weight: 600; display: block; }
+  .act .s { font-size: 13px; display: block; margin-top: 4px; }
+  .act.main { background: var(--accent); color: var(--on-accent); }
+  .act.main:hover { background: var(--accent-hover); }
+  .act.main .s { opacity: .9; }
+  .act.sec { background: var(--accent-soft); color: var(--accent); }
+  .act.sec .s { color: var(--muted); } .act.sec .s.warn { color: var(--warn); }
+  .more { font-size: 14px; color: var(--muted); display: flex; flex-wrap: wrap; gap: 4px 16px; align-items: center; }
+  .more a { min-height: 36px; display: inline-flex; align-items: center; text-decoration: none; }
+  .cols { display: grid; grid-template-columns: 1fr 250px; gap: 30px; margin-top: 22px; }
   @media (max-width: 760px) { .cols { grid-template-columns: 1fr; } }
-  .todo a { display: grid; grid-template-columns: 10px 1fr auto; gap: 4px 16px; align-items: center; padding: 10px 0; border-top: 1px solid var(--line); color: inherit; text-decoration: none; min-height: 48px; }
-  .todo a:first-of-type { border-top: 0; }
-  .todo .d { width: 10px; height: 10px; border-radius: 50%; background: var(--warn); }
-  .todo .d.bad { background: var(--bad); } .todo .d.info { background: var(--accent); }
+  .todo a { display: grid; grid-template-columns: 1fr auto; gap: 4px 16px; align-items: center; padding: 12px 14px; margin-top: 8px; border-radius: 8px; background: var(--warn-soft); color: inherit; text-decoration: none; min-height: 52px; }
+  .todo a.bad { background: var(--bad-soft, #fbeceb); }
   .todo .t { font-size: 15px; } .todo .s { font-size: 13px; color: var(--muted); }
   .go { font-size: 14px; color: var(--accent); font-weight: 500; white-space: nowrap; }
-  .done { padding: 12px 0; font-size: 15px; color: var(--ok); }
-  .fig { padding: 10px 0; border-top: 1px solid var(--line); }
+  @media (max-width: 520px) { .todo a { grid-template-columns: 1fr; } }
+  .clean { display: flex; align-items: baseline; gap: 8px; color: var(--ok); padding: 12px 0; }
+  .clean::before { content: ""; width: 9px; height: 9px; border-radius: 50%; background: currentColor; flex: none; transform: translateY(-1px); }
+  .clean span { color: var(--muted); }
+  .fig { padding: 10px 0; border-top: 1px solid var(--line); display: block; color: inherit; text-decoration: none; }
   h4 + .fig { border-top: 0; }
   .fig .l { font-size: 13px; color: var(--muted); }
-  .fig .v { font-size: 19px; font-weight: 600; font-variant-numeric: tabular-nums; }
+  .fig .v { font-size: 20px; font-weight: 600; font-variant-numeric: tabular-nums; }
   .fig .v span { font-size: 13px; color: var(--muted); font-weight: 400; margin-left: 3px; }
   .fig .v.bad { color: var(--bad); }
-  .fig .w { font-size: 13px; color: var(--muted); }
+  .fig .w { display: flex; align-items: baseline; gap: 6px; font-size: 13px; }
+  .fig .w::before { content: ""; flex: none; width: 8px; height: 8px; border-radius: 50%; background: currentColor; transform: translateY(-1px); }
   .fig .w.ok { color: var(--ok); } .fig .w.warn { color: var(--warn); }
-  a.figlink { display: block; color: inherit; text-decoration: none; }
-  .links { display: flex; flex-wrap: wrap; gap: 8px 18px; margin-top: 22px; font-size: 14px; }
-  .links a { text-decoration: none; }
+  .fig .who { font-size: 13px; color: var(--muted); margin-top: 2px; }
+  h4.tt { margin: 0 0 6px; }
 </style>
 {% endblock %}
 
 {% block content %}
 {% if request.query_params.get('skipped') %}<div class="alert ok">Чек отложен: вносить не будем, он остался в базе с причиной.</div>{% endif %}
-<div class="head"><h3 class="title" style="margin:0">{{ today | human_date(true) | capitalize }}</h3><span class="s">{{ site_line }}</span></div>
+<h3 class="title" style="margin:0">{{ today | human_date(true) | capitalize }}</h3>
 {% if can_write %}
-<div class="actions">
-  <a class="big" href="/new/buy"><span class="t">Купили</span><span class="s">{{ buy_sub }}</span></a>
-  <a class="big" href="/new/kitchen"><span class="t">Лист кухни за сегодня</span><span class="s">Что повара взяли на готовку</span></a>
-  <a class="side" href="/new/nocheck"><span class="t">Расход без чека</span><span class="s">такси, доставка, свет, вода, ремонт</span></a>
+<div class="acts">
+  <a class="act main" href="/new/buy"><span class="t">Купили</span><span class="s">{{ buy_sub }}</span></a>
+  <a class="act sec" href="{{ kitchen.url }}"><span class="t">Лист кухни</span><span class="s {% if kitchen.late %}warn{% endif %}">{{ kitchen.sub }}</span></a>
+  <a class="act sec" href="/new/nocheck"><span class="t">Расход без чека</span><span class="s">такси, доставка, свет, вода</span></a>
 </div>
+<div class="more"><span>Ещё:</span><a href="/new/pay">Оплатить поставщику</a><a href="/new/cash/withdraw">Снятие со счёта</a><a href="/new/cash/transfer">Передать деньги</a></div>
 {% endif %}
 <div class="cols">
   <section>
-    <h4>Ждёт вас</h4>
+    <h4 class="tt">Ждёт вас</h4>
     {% if todo %}
     <div class="todo">
       {% for it in todo %}
-      <a href="{{ it.url }}"><span class="d {{ it.kind }}"></span><span><span class="t">{{ it.title }}</span><br><span class="s">{{ it.sub }}</span></span><span class="go">{{ it.go }}</span></a>
+      <a class="{{ 'bad' if it.kind == 'bad' }}" href="{{ it.url }}"><span><span class="t">{{ it.title }}</span><br><span class="s">{{ it.sub }}</span></span>{% if can_write %}<span class="go">{{ it.go }}</span>{% endif %}</a>
       {% endfor %}
     </div>
     {% else %}
-    <div class="done">На сегодня всё. Листы кухни внесены, чеки проверены, долги свежие.</div>
+    <div class="clean">Всё внесено <span>пробелов не видно</span></div>
     {% endif %}
-    <div class="links">
-      <a href="/new/pay">Оплатить поставщику</a>
-      <a href="/new/cash/withdraw">Снятие со счёта</a>
-      <a href="/new/stock">Склад</a>
-    </div>
   </section>
   <aside>
-    <h4>Сейчас</h4>
-    <a class="fig figlink" href="/new/cash"><div class="l">Наличные</div><div class="v {% if figures.cash < 0 %}bad{% endif %}">{{ figures.cash | money }}<span>сом</span></div><div class="w {{ 'ok' if figures.cash_ok else 'warn' }}">{{ 'сходится' if figures.cash_ok else 'не хватает записи' }}</div></a>
+    <h4 class="tt">Сейчас</h4>
+    <a class="fig" href="/new/cash"><div class="l">Наличные</div><div class="v {% if figures.cash < 0 %}bad{% endif %}">{{ figures.cash | money }}<span>сом</span></div><div class="w {{ 'ok' if figures.cash_ok else 'warn' }}">{{ 'сходится' if figures.cash_ok else 'не хватает записи' }}</div>{% if figures.pockets %}<div class="who">{% for p in figures.pockets %}{{ p.name }} {{ p.amount | money }}{% if not loop.last %}, {% endif %}{% endfor %}</div>{% endif %}</a>
     {% for a in figures.accounts %}
-    <a class="fig figlink" href="/new/cash"><div class="l">На счёте {{ a.name }}</div><div class="v {% if a.amount < 0 %}bad{% endif %}">{{ a.amount | money }}<span>сом</span></div><div class="w {{ 'ok' if a.ok else 'warn' }}">{{ 'сходится' if a.ok else 'не хватает записи' }}</div></a>
+    <a class="fig" href="/new/cash"><div class="l">На счёте {{ a.name }}</div><div class="v {% if a.amount < 0 %}bad{% endif %}">{{ a.amount | money }}<span>сом</span></div><div class="w {{ 'ok' if a.ok else 'warn' }}">{{ 'сходится' if a.ok else 'не хватает записи' }}</div></a>
     {% endfor %}
     {% if founder %}
-    <div class="fig"><div class="l">Продуктов на складе</div><div class="v">{{ figures.stock | money }}<span>сом</span></div><div class="w">{{ figures.stock_when }}</div></div>
-    <div class="fig"><div class="l">Должны поставщикам</div><div class="v">{{ figures.debt | money }}<span>сом</span></div><div class="w">{{ figures.debt_who }}</div></div>
+    <div class="fig"><div class="l">Продуктов на складе</div><div class="v">{{ figures.stock | money }}<span>сом</span></div><div class="who">{{ figures.stock_when }}</div></div>
+    <div class="fig"><div class="l">Должны поставщикам</div><div class="v">{{ figures.debt | money }}<span>сом</span></div><div class="who">{{ figures.debt_who }}</div></div>
     {% endif %}
   </aside>
 </div>
