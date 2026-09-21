@@ -33,6 +33,6 @@
 {% endif %}
 {% if history %}
 <h4 style="margin-top:22px">История цен</h4>
-<div class="hist">{% for h in history %}<div><span>с {{ h.from | human_date }} {{ h.from.year }}<br><span class="s">{{ ('поставил(а) ' ~ h.by) if h.by else 'без автора' }}</span></span><span class="n">{{ h.price | money }}</span></div>{% endfor %}</div>
+<div class="hist">{% for h in history %}<div><span>с {{ h.from | human_date }} {{ h.from.year }}<br><span class="s">{{ h.note or (('поставил(а) ' ~ h.by) if h.by else 'без автора') }}</span></span><span class="n">{{ h.price | money }}</span></div>{% endfor %}</div>
 {% endif %}
 {% endblock %}

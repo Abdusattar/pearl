@@ -29,7 +29,8 @@ def _day(d: date) -> str:
 
 
 def month_label(d: date) -> str:
-    return f"{MONTHS_NOM[d.month - 1]} {d.year}"
+    """«октября 2026» — для «с …»."""
+    return f"{MONTHS_GEN[d.month - 1]} {d.year}"
 
 
 def tuition(db: Session, org_id: int) -> Service | None:
@@ -56,10 +57,20 @@ def tariff_months(db: Session, org_id: int) -> list[date]:
 def history(db: Session, svc: Service | None) -> list[dict]:
     if svc is None:
         return []
+    org = db.get(Organization, svc.organization_id)
+    legacy = Decimal(org.legacy_tariff_price) if org and org.legacy_tariff_price is not None else None
     names = {u.id: u.name for u in db.query(User).all()}
     rows = (db.query(ServicePriceHistory).filter(ServicePriceHistory.service_id == svc.id)
             .order_by(ServicePriceHistory.effective_date.desc(), ServicePriceHistory.id.desc()).all())
-    return [{"price": r.price, "from": r.effective_date, "by": names.get(r.changed_by)} for r in rows]
+    out = []
+    for r in rows:
+        note = None
+        if legacy is not None and r.changed_by is None and Decimal(r.price) == legacy:
+            note = f"переходный для зачисленных до {_day(org.legacy_tariff_cutoff)}" if org.legacy_tariff_cutoff else "переходный"
+            if org.legacy_tariff_until:
+                note += f", до {_day(org.legacy_tariff_until)}"
+        out.append({"price": r.price, "from": r.effective_date, "by": names.get(r.changed_by), "note": note})
+    return out
 
 
 def overview(db: Session, site_id: int) -> dict:
