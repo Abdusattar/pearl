@@ -22,6 +22,7 @@
 
 {% block content %}
 {% if skipped %}<div class="alert ok">Не вносим: черновик остался в истории с причиной.</div>{% endif %}
+{% if done in ('purchase', 'service') %}<div class="alert ok">{{ 'Покупка' if done == 'purchase' else 'Расход' }} внесён{{ 'а' if done == 'purchase' else '' }}.{% if done_id %} <a href="/new/buy/{{ done_id }}">Открыть</a>{% endif %}</div>{% endif %}
 {% if done == 'kitchen' %}<div class="alert ok">Лист кухни внесён{% if done_day %} за {{ done_day[8:10] }}.{{ done_day[5:7] }}{% endif %}: склад списал строки.</div>{% endif %}
 <a href="/new/today" style="font-size:14px;text-decoration:none">← Сегодня</a>
 <h3 class="title" style="margin:4px 0 0">Из чата и с фото</h3>

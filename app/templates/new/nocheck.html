@@ -11,18 +11,46 @@
   .phone .chips { margin-bottom: 0; }
   .more { margin-top: 8px; font-size: 14px; color: var(--muted); display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
   .more .chips { margin: 0; }
+  .top { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; font-size: 14px; }
+  .top a { min-height: 36px; display: inline-flex; align-items: center; }
+  .quiet { background: none; border: 0; color: var(--muted); font: inherit; font-size: 14px; cursor: pointer; padding: 0; min-height: 36px; }
+  .skipbox { display: flex; gap: 8px; flex-wrap: wrap; margin: 8px 0 0; padding: 12px 14px; border-radius: 8px; background: var(--field); max-width: 560px; }
+  .skipbox[hidden] { display: none; }
+  .skipbox .in { flex: 1 1 240px; height: 44px; font-size: 16px; }
+  .who { color: var(--muted); font-size: 14px; margin: 0 0 8px; }
+  .with-photo { display: grid; grid-template-columns: minmax(0, 560px) 340px; gap: 28px; align-items: start; }
+  .photo-side { position: sticky; top: 16px; }
+  .photo-side img { width: 100%; max-height: 78vh; object-fit: contain; border-radius: 8px; border: 1px solid var(--line); background: var(--field); display: block; }
+  .photo-side .s { display: block; font-size: 13px; color: var(--muted); margin-top: 6px; }
+  @media (max-width: 1000px) { .with-photo { grid-template-columns: 1fr; } .photo-side { position: static; order: -1; } .photo-side img { max-height: 50vh; } }
 </style>
 {% endblock %}
 
 {% block content %}
+{% if draft %}
+<div class="top"><a class="back" href="/new/receipts">← Из чата и с фото</a>{% if can_write %}<button class="quiet" type="button" onclick="var s=document.getElementById('skip');s.hidden=!s.hidden;if(!s.hidden)s.querySelector('input').focus()">Не вносить</button>{% endif %}</div>
+{% if can_write %}
+<form class="skipbox" id="skip" method="post" action="/new/receipt/{{ draft.id }}/skip" hidden>
+  <input type="hidden" name="back" value="/new/receipts">
+  <input class="in" name="reason" required maxlength="200" placeholder="Почему: уже внесено, дубль, не наше" aria-label="Почему не вносить">
+  <button class="btn ghost" type="submit">Не вносить</button>
+</form>
+{% endif %}
+<h3 class="title" style="margin-top:6px">Услуга {% if draft.source == 'private' %}от бота{% else %}из чата{% endif %}</h3>
+<p class="who">{% if draft.by %}Прислал(а) {{ draft.by }}{% endif %}{% if draft.at %} {{ draft.at.date() | human_date }} в {{ draft.at.strftime('%H:%M') }}{% endif %}. Кому и сколько — с фото; выберите, что это, и откуда деньги.</p>
+<div class="with-photo">
+<div>
+{% else %}
 <a class="back" href="/new/expenses">← Расходы</a>
 <h3 class="title" style="margin-top:6px">{% if replaces or legacy %}Поправить расход{% else %}Расход без чека{% endif %}</h3>
+{% endif %}
 {% if error %}<div class="alert bad">{{ error }}</div>{% endif %}
 {% if legacy %}<div class="alert warn">Поправляете запись «{{ legacy.title }}» от {{ legacy.date | human_date }} на {{ legacy.total | money }}. После «Записать» она заменится, прежняя останется в истории. <a href="/new/expenses">Отмена</a></div>{% endif %}
 {% if replaces %}<div class="alert warn">Поправляете расход «{{ replaces.note or '' }}» у {{ replaces.supplier.name }} от {{ replaces.date | human_date }} на {{ replaces.total | money }}. После «Записать» он заменится, прежняя версия останется в истории. <a href="/new/buy/{{ replaces.id }}">Отмена</a></div>{% endif %}
 <form method="post" action="/new/nocheck" class="phone" id="nocheck" autocomplete="off">
   <input type="hidden" name="replaces_id" value="{{ replaces.id if replaces else '' }}">
   <input type="hidden" name="replaces_legacy" value="{{ legacy.key if legacy else '' }}">
+  <input type="hidden" name="draft_id" value="{{ draft.id if draft else '' }}">
   {% include "new/_repeat.html" %}
 
   <label class="lb" for="amount">Сколько</label>
@@ -60,6 +88,12 @@
   {% if can_write %}<button type="submit" class="btn full" style="margin-top:22px">Записать</button>{% endif %}
   <p class="after">Ремонт без выбора школы или садика не запишется: стройка идёт на объект, не в общее.</p>
 </form>
+{% if draft %}
+</div>
+<aside class="photo-side"><a href="/media/{{ draft.path }}" target="_blank" aria-label="Открыть фото во весь экран"><img src="/media/{{ draft.path }}" alt="Фото чека"></a>
+  <span class="s">Нажмите — откроется во весь экран.</span></aside>
+</div>
+{% endif %}
 {% endblock %}
 
 {% block scripts %}

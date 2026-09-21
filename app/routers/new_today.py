@@ -57,6 +57,8 @@ def receipts_page(request: Request, db: Session = Depends(get_db)):
         p = r.payload or {}
         if (r.kind or "receipt") == drafts.KITCHEN:
             url = f"/new/kitchen?draft={r.id}"
+        elif r.kind == drafts.SERVICE:
+            url = f"/new/nocheck?draft={r.id}"
         else:
             url = f"/new/buy?receipt={r.id}" + (f"&supplier={p['supplier_id']}" if p.get("supplier_id") else "")
         rows.append({"r": r, "by": names.get(r.created_by), "date": r.created_at.date() if r.created_at else None,
@@ -65,5 +67,5 @@ def receipts_page(request: Request, db: Session = Depends(get_db)):
     ctx = _base_ctx(request, user, site, db, "today")
     ctx.update({"rows": rows, "can_write": user.role in WRITE_ROLES,
                 "skipped": request.query_params.get("skipped"), "done": request.query_params.get("done"),
-                "done_day": request.query_params.get("day")})
+                "done_day": request.query_params.get("day"), "done_id": request.query_params.get("id")})
     return templates.TemplateResponse("new/receipts.html", ctx)

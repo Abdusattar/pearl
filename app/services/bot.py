@@ -387,6 +387,10 @@ def intake_photo(db: Session, site: Organization, author: User | None, data: byt
     if kind is None:
         return reply, info, None
     extra = {}
+    if kind == drafts.SERVICE:
+        supplier = grp.find_supplier(db, info.get("supplier"))
+        if supplier is not None:
+            extra["supplier_id"], extra["supplier_name"] = supplier.id, supplier.name
     if kind == drafts.RECEIPT:
         supplier = grp.find_supplier(db, info.get("supplier"))
         if supplier is not None:
@@ -402,7 +406,7 @@ def intake_photo(db: Session, site: Organization, author: User | None, data: byt
     draft = drafts.create(db, site_org_id=site.id, author=author, data=data, kind=kind, source=source,
                           info={**info, **extra}, file_unique_id=file_unique_id)
     tail = " Черновик у Махабат на проверке."
-    return ((reply or ("Лист кухни." if kind == drafts.KITCHEN else "Чек.")) + tail), info, draft
+    return ((reply or ({drafts.KITCHEN: "Лист кухни.", drafts.SERVICE: "Услуга."}.get(kind, "Чек."))) + tail), info, draft
 
 
 def owner_copy(db: Session, text: str) -> None:

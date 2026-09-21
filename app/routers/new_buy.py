@@ -204,10 +204,10 @@ def buy_form(request: Request, supplier: int | None = None, other: int = 0, rece
     if receipt and rc is None:
         return RedirectResponse("/new/today", status_code=302)   # уже внесён или отложен
     if rc is not None and sup is not None:
-        path = MEDIA_DIR.parent / rc.file_path
         try:
-            out = rz.recognize(db, path.read_bytes(), rz.RECEIPT, site.id, sup.id,
-                               mime="image/png" if path.suffix.lower() == ".png" else "image/jpeg")
+            from app.services import drafts
+            out = drafts.receipt_rows(db, rc, site.id, sup.id)   # разобрано заранее — сразу, иначе сейчас
+            db.commit()
             lists, questions, hints = svc.rows_from_recognized(out["rows"])
             rows = svc.buy_rows_as_submitted(db, lists, questions or None, hints) if out["rows"] else []
             recognized = out.get("amount")
@@ -431,9 +431,18 @@ async def buy_submit(request: Request, photo: UploadFile | None = File(None), db
     if rc_done is not None and rc_done.source in ("chat", "private"):
         from app.services.bot import owner_copy
         owner_copy(db, f"{user.name}: чек из чата внесён — {supplier.name}, {fmt_money(float(purchase.total))}.")
+        url = f"/new/receipts?done=purchase&id={purchase.id}"
     once.remember(db, token, user.id, url)
     db.commit()
     return RedirectResponse(url, status_code=303)
+
+
+def _draft_photo(db: Session, purchase_id: int) -> str | None:
+    """Расход без чека из черновика-фото: фото живёт в черновике, не в чеке покупки
+    (иначе запись перестала бы быть «без чека» и не поправлялась бы своей формой)."""
+    r = (db.query(Receipt).filter(Receipt.result_type == "purchase", Receipt.result_id == purchase_id)
+         .order_by(Receipt.id.desc()).first())
+    return r.file_path if r else None
 
 
 @router.get("/buy/{purchase_id}", response_class=HTMLResponse)
@@ -452,7 +461,8 @@ def purchase_card(purchase_id: int, request: Request, saved: int = 0, db: Sessio
         "next_version": db.query(Purchase).filter(Purchase.replaces_id == purchase.id).first(),
         "p": purchase, "lines": svc.purchase_lines(db, purchase), "saved": bool(saved),
         "supplier_debt": float(get_supplier_balance(db, purchase.supplier_id)),
-        "photo": receipt.file_path if receipt and receipt.file_path != "manual" else None,
+        "photo": (receipt.file_path if receipt and receipt.file_path != "manual"
+                  else _draft_photo(db, purchase.id)),
         "can_write": user.role in WRITE_ROLES,
     })
     return templates.TemplateResponse("new/purchase.html", ctx)

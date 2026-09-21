@@ -9,6 +9,7 @@ from app.models import KitchenSheet, Organization, Product, Receipt, User, Wareh
 from app.routers import new_buy as buy_router
 from app.routers import new_kitchen as kitchen_router
 from app.routers import new_today as today_router
+from app.routers import new_expenses as exp_router
 from app.services import bot as svc
 from app.services import bot_group as grp
 from app.services import drafts
@@ -41,7 +42,7 @@ def people(db, site, monkeypatch, tmp_path):
     monkeypatch.setattr(svc, "download_file", lambda file_id: b"photo-" + file_id.encode())
     monkeypatch.setattr(drafts, "MEDIA_ROOT", tmp_path)
     monkeypatch.setattr(kitchen_router, "MEDIA_DIR", tmp_path / "kitchen")
-    for r in (kitchen_router, today_router, buy_router):
+    for r in (kitchen_router, today_router, buy_router, exp_router):
         monkeypatch.setattr(r, "get_current_user", lambda request, db: m)
     monkeypatch.setattr(buy_router, "resolve_org", lambda org_id, user, db: site)
     return m, n
@@ -95,11 +96,51 @@ def test_purchase_photo_draft_knows_supplier_and_match(db, site, people, monkeyp
     assert r.payload["supplier_id"] == s.id and r.payload["match"] == "в системе нет"
 
 
-def test_other_photo_is_not_a_draft(db, site, people, monkeypatch):
+def test_salary_or_bank_photo_is_not_a_draft(db, site, people, monkeypatch):
     m, _ = people
-    _model(monkeypatch, {"kind": "service", "supplier": "Электрик", "amount": 1500})
-    svc.handle_update(db, _upd(m, "s1"))
+    _model(monkeypatch, {"kind": "salary"})
+    svc.handle_update(db, _upd(m, "z1"))
     assert db.query(Receipt).filter_by(organization_id=site.id).count() == 0
+
+
+def test_service_photo_becomes_nocheck_draft_and_enters(client, db, site, people, monkeypatch):
+    from app.models import Purchase
+    m, n = people
+    _model(monkeypatch, {"kind": "service", "supplier": "Такси тест-чр", "amount": 200, "date": date.today().isoformat()})
+    svc.handle_update(db, _upd(n, "s1"))
+    r = db.query(Receipt).filter_by(organization_id=site.id, kind="service").one()
+    page = client.get(f"/new/nocheck?draft={r.id}")
+    assert page.status_code == 200 and "Услуга из чата" in page.text and 'value="200"' in page.text and "Такси тест-чр" in page.text
+    res = client.post("/new/nocheck", data={"amount": "200", "kind": "delivery", "what": "такси", "supplier_name": "Такси тест-чр",
+                                            "for_org": "shared", "payment": "cash", "payer_id": str(m.id),
+                                            "date": date.today().isoformat(), "draft_id": str(r.id)}, follow_redirects=False)
+    assert res.status_code == 303 and res.headers["location"].startswith("/new/receipts?done=service")
+    db.refresh(r)
+    purchase = db.get(Purchase, r.result_id)
+    assert r.ocr_status == "confirmed" and r.result_type == "purchase" and purchase.receipt_id is None   # остаётся «без чека»
+    card = client.get(f"/new/buy/{purchase.id}")
+    assert r.file_path in card.text                                                     # фото видно на карточке
+
+
+def test_receipt_rows_recognized_once_before_opening(client, db, site, people, monkeypatch):
+    from app.models import Supplier
+    m, n = people
+    s = Supplier(name="Халиматест2 Чр", phone="0000")
+    db.add(s)
+    db.flush()
+    _model(monkeypatch, {"kind": "purchase", "supplier": "Халиматест2 Чр", "amount": 300})
+    svc.handle_update(db, _upd(m, "p2"))
+    r = db.query(Receipt).filter_by(organization_id=site.id, kind="receipt").one()
+    calls = []
+
+    def fake(db_, data, kind, site_id, supplier_id=None, mime="image/jpeg"):
+        calls.append(kind)
+        return {"rows": [{"product_id": None, "name": "Лук", "raw": "лук", "qty": 10, "unit": "кг", "price": 30,
+                          "total": 300, "question": None, "notes": [], "is_new": True}], "amount": 300}
+    monkeypatch.setattr(rz, "recognize", fake)
+    drafts.receipt_rows(db, r, site.id, s.id)                       # как prepare_pending фоном
+    page = client.get(f"/new/buy?receipt={r.id}&supplier={s.id}")
+    assert page.status_code == 200 and "Лук" in page.text and calls == ["receipt"]   # при открытии модель не звали
 
 
 def test_makhabat_checks_edits_and_enters_kitchen_draft(client, db, site, people, carrot, monkeypatch):

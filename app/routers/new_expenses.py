@@ -145,8 +145,15 @@ def _nocheck_ctx(request, user, site, db, **kw) -> dict:
         "account_org_id": kw.get("account_org_id"), "founder_id": kw.get("founder_id"),
         "d": kw.get("d", date.today()), "error": kw.get("error"), "repeat": kw.get("repeat"),
         "repeat_back": "/new/expenses", "replaces": kw.get("replaces"), "legacy": kw.get("legacy"),
+        "draft": kw.get("draft"),
     })
     return ctx
+
+
+def _nocheck_draft(db: Session, r) -> dict:
+    from app.models import User
+    who = db.get(User, r.created_by) if r.created_by else None
+    return {"id": r.id, "path": r.file_path, "by": who.name if who else None, "at": r.created_at, "source": r.source}
 
 
 def _legacy_key(v: str | None) -> tuple[str, int] | None:
@@ -191,6 +198,24 @@ def nocheck_form(request: Request, edit: int | None = None, legacy: str | None =
                   legacy={"key": f"{lk[0]}:{lk[1]}", "title": c["supplier"].name if c["supplier"] else (c["note"] or "расход"),
                           "date": c["date"], "total": c["total"]})
         return templates.TemplateResponse("new/nocheck.html", _nocheck_ctx(request, user, site, db, **kw))
+    draft_id = request.query_params.get("draft")
+    if draft_id and draft_id.isdigit():
+        from app.services import drafts
+        r = drafts.open_draft(db, {o.id for o in site_orgs(db, site.id)} | {site.id}, int(draft_id), drafts.SERVICE)
+        if r is None:
+            return RedirectResponse("/new/receipts", status_code=302)   # уже внесён или отложен
+        p = r.payload or {}
+        d = None
+        if isinstance(p.get("date"), str) and len(p["date"]) == 10:
+            try:
+                d = date.fromisoformat(p["date"])
+            except ValueError:
+                d = None
+        amount = p.get("amount")
+        kw = dict(amount=(f"{float(amount):g}".replace(".", ",") if amount else ""),
+                  supplier_name=p.get("supplier_name") or p.get("supplier") or "", d=d or date.today(),
+                  draft=_nocheck_draft(db, r))
+        return templates.TemplateResponse("new/nocheck.html", _nocheck_ctx(request, user, site, db, **kw))
     if edit is None:
         return templates.TemplateResponse("new/nocheck.html", _nocheck_ctx(request, user, site, db))
     old = _live_nocheck(db, site, edit)
@@ -224,6 +249,11 @@ async def nocheck_submit(request: Request, db: Session = Depends(get_db)):
               for_org=g("for_org") or "shared", payment=g("payment") or "cash",
               payer_id=num("payer_id") or default_pocket(db, site.id, user), account_org_id=num("account_org_id"),
               founder_id=num("founder_id"), d=d or date.today(), replaces=_live_nocheck(db, site, num("replaces_id")))
+    from app.services import drafts
+    draft = (drafts.open_draft(db, {o.id for o in site_orgs(db, site.id)} | {site.id}, num("draft_id"), drafts.SERVICE)
+             if num("draft_id") else None)
+    if draft is not None:
+        kw["draft"] = _nocheck_draft(db, draft)
     if g("replaces_id") and kw["replaces"] is None:
         return HTMLResponse("Этот расход уже поправили или убрали — откройте его заново", status_code=409)
     lk = _legacy_key(g("replaces_legacy"))
@@ -291,6 +321,11 @@ async def nocheck_submit(request: Request, db: Session = Depends(get_db)):
     if old_tx_ids:
         keep_entry_time(db, purchase, old_tx_ids)
     url = f"/new/buy/{purchase.id}?saved=1"
+    if draft is not None:
+        drafts.done(db, draft, user=user, result_type="purchase", result_id=purchase.id)
+        from app.services.bot import owner_copy
+        owner_copy(db, f"{user.name}: услуга из чата внесена — {supplier.name}, {amount:,.0f}.".replace(",", " "))
+        url = f"/new/receipts?done=service&id={purchase.id}"
     once.remember(db, token, user.id, url)
     db.commit()
     return RedirectResponse(url, status_code=303)

@@ -17,9 +17,9 @@ from app.services.ocr import compute_hash
 from app.services.purchases import audit
 
 MEDIA_ROOT = Path(__file__).parent.parent.parent / "media"
-RECEIPT, KITCHEN = "receipt", "kitchen"
+RECEIPT, KITCHEN, SERVICE = "receipt", "kitchen", "service"
 OPEN = ("pending", "processed")          # ждёт проверки
-KIND_FROM_BOT = {"purchase": RECEIPT, "kitchen": KITCHEN}   # шаг 1: чек и лист кухни
+KIND_FROM_BOT = {"purchase": RECEIPT, "kitchen": KITCHEN, "service": SERVICE}   # чек товара, лист кухни, услуга
 
 
 def find_same(db: Session, file_hash: str | None, file_unique_id: str | None) -> Receipt | None:
@@ -43,7 +43,7 @@ def create(db: Session, *, site_org_id: int, author: User | None, data: bytes, k
     """Сохранить фото и завести черновик. Дубль проверяет вызывающий (find_same)."""
     h = compute_hash(data)
     month = datetime.now().strftime("%Y-%m")
-    sub = "receipts" if kind == RECEIPT else "kitchen/inbox"
+    sub = "kitchen/inbox" if kind == KITCHEN else "receipts"
     folder = MEDIA_ROOT / sub / month
     folder.mkdir(parents=True, exist_ok=True)
     fname = f"{h[:12]}{ext}"
@@ -99,6 +99,13 @@ def title(r: Receipt) -> dict:
         t = "Лист кухни" + (f", {n} {word}" if n else "")
         return {"t": t, "s": f"за {_day(d)}" if d else "день на листе не прочитан, выберете при внесении",
                 "warn": d is None}
+    if (r.kind or RECEIPT) == SERVICE:
+        parts = ["Услуга: " + (p.get("supplier_name") or p.get("supplier") or "кому — не прочитано")]
+        if d:
+            parts.append(_day(d))
+        if money(p.get("amount")):
+            parts.append(money(p.get("amount")))
+        return {"t": ", ".join(parts), "s": "расход без чека, не на склад", "warn": False}
     parts = [p.get("supplier_name") or p.get("supplier") or "Чек"]
     if d:
         parts.append(_day(d))
@@ -128,18 +135,44 @@ def kitchen_rows(db: Session, r: Receipt, site_org_id: int) -> list[dict]:
     return rows
 
 
+def receipt_rows(db: Session, r: Receipt, site_org_id: int, supplier_id: int) -> dict:
+    """Строки чека с фото под поставщика: распознаются один раз и запоминаются.
+    Возвращает ответ распознавания ({"rows", "amount"}) в виде, который ждёт «Купили»."""
+    import json
+    p = dict(r.payload or {})
+    cached = p.get("receipt_rec")
+    if cached is not None and cached.get("supplier_id") == supplier_id:
+        return cached
+    from app.services import recognize as rz
+    data = (MEDIA_ROOT / r.file_path).read_bytes()
+    out = rz.recognize(db, data, rz.RECEIPT, site_org_id, supplier_id,
+                       mime="image/png" if r.file_path.lower().endswith(".png") else "image/jpeg")
+    rec = json.loads(json.dumps({"rows": out["rows"], "amount": out.get("amount")}, default=float))
+    rec["supplier_id"] = supplier_id
+    p["receipt_rec"] = rec
+    r.payload = p
+    return rec
+
+
 def prepare_pending(limit: int = 5) -> int:
-    """Разобрать строки свежих листов кухни сразу, как фото пришло (фоном после ответа
-    Telegram): Махабат открывает уже готовый черновик, без ожидания."""
+    """Разобрать строки свежих черновиков сразу, как фото пришло (фоном после ответа
+    Telegram и раз в минуту): лист кухни — всегда, чек — если поставщик узнан.
+    Махабат открывает уже готовый черновик, без ожидания."""
     from app.database import SessionLocal
     db = SessionLocal()
     done_n = 0
     try:
-        todo = (db.query(Receipt).filter(Receipt.kind == KITCHEN, Receipt.ocr_status.in_(OPEN))
+        todo = (db.query(Receipt).filter(Receipt.kind.in_((KITCHEN, RECEIPT)), Receipt.ocr_status.in_(OPEN),
+                                         Receipt.source.isnot(None))
                 .order_by(Receipt.id).all())
-        for r in [x for x in todo if (x.payload or {}).get("rows") is None][:limit]:
+        need = [x for x in todo if (x.kind == KITCHEN and (x.payload or {}).get("rows") is None)
+                or (x.kind == RECEIPT and (x.payload or {}).get("supplier_id") and (x.payload or {}).get("receipt_rec") is None)]
+        for r in need[:limit]:
             try:
-                kitchen_rows(db, r, r.organization_id)
+                if r.kind == KITCHEN:
+                    kitchen_rows(db, r, r.organization_id)
+                else:
+                    receipt_rows(db, r, r.organization_id, int(r.payload["supplier_id"]))
                 db.commit()
                 done_n += 1
             except Exception:  # noqa: BLE001 — не вышло сейчас: разберётся при открытии
