@@ -96,6 +96,6 @@ def test_schedule_is_idempotent(db, site, people, monkeypatch):
     assert svc.run_scheduled(db, friday) == []
     asks = db.query(BotMessage).filter_by(kind="pocket_ask", user_id=m.id).all()
     assert len(asks) == 1 and asks[0].status == "logged"   # без токена — только журнал
-    monday = datetime(2026, 9, 21, 9, 1)
+    monday = datetime(2030, 9, 16, 9, 1)   # не сегодняшний: локальный сервер пишет свои задачи в ту же базу
     sent = svc.run_scheduled(db, monday)
-    assert "group_signals:2026-09-21" in sent and "founders:2026-09-21" in sent
+    assert "group_signals:2030-09-16" in sent and "founders:2030-09-16" in sent

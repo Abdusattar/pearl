@@ -69,7 +69,7 @@ def test_expense_leaves_payer_pocket(client, db, site, people, as_makhabat):
     assert svc.pocket_balance(db, sadik.id, mu.id) == Decimal(9500)
     assert svc.pocket_balance(db, sadik.id, m.id) == Decimal(-3000)
     p = svc.pockets(db, sadik.id)
-    assert p["total"] == Decimal(6500) and abs(p["unassigned"]) < 1
+    assert p["total"] == Decimal(6500) and abs(p["found"]) < 1
 
 
 def test_transfer_moves_between_pockets(client, db, site, people, as_makhabat):
@@ -138,7 +138,7 @@ def test_internal_funding_is_a_pocket_transfer(db, site, people, as_makhabat):
     p = svc.pockets(db, sadik.id)
     by = {r["user"].id: r["balance"] for r in p["rows"]}
     assert by[m.id] == Decimal(250000 - 34375) and by[mu.id] == Decimal(34375)
-    assert p["total"] == Decimal(250000) and abs(p["unassigned"]) < 1
+    assert p["total"] == Decimal(250000) and abs(p["found"]) < 1
 
 
 def test_cash_page_renders(client, db, site, people, as_makhabat):
@@ -199,3 +199,15 @@ def test_same_transfer_again_asks(client, db, site, people, as_makhabat):
     r = client.post("/new/cash/transfer", data=data, follow_redirects=False)
     assert r.status_code == 200 and "Такое уже записано: передача 5 000" in r.text
     assert db.query(CashTransfer).filter(CashTransfer.to_user_id == m.id).count() == 1
+
+
+def test_total_follows_pocket_recount_not_old_cash_base(db, site, people):
+    """21.09: касса −9 392 при 7 869 на руках — итог обязан быть суммой карманов."""
+    sadik, _ = site
+    m = people[0]
+    svc.recount(db, user=m, site_org_id=sadik.id, pocket_user_id=m.id, actual=Decimal(5000), d=date.today(),
+                reason="нашли больше")
+    p = svc.pockets(db, sadik.id)
+    assert p["total"] == sum(r["balance"] for r in p["rows"])
+    assert p["found"] == p["total"] - p["records"]
+    assert p["total"] >= Decimal(5000)

@@ -113,8 +113,13 @@ def pockets(db: Session, site_org_id: int) -> dict:
         rows.append({"user": u, "balance": bal, "start": start, "days": days,
                      "flag": "bad" if bal < -1 else ("warn" if (not start["own"] or (days or 0) > 7) else "")})
         total += bal
+    # Итог — сумма карманов, не касса объекта по записям (владелец 21.09): пересчёт
+    # кармана — факт, а касса объекта считается от своего пересчёта 8 сентября и
+    # пересчётов карманов не видит (18.09 показала −9 392 при 7 869 на руках).
+    # Разница не прячется: «найдено против записей» — то, что пересчёты нашли
+    # сверх записей (плюс) или недосчитались (минус), причина — в Корректировках.
     net = podotchet.get_cash_state(db, site_org_id)["net"]
-    return {"rows": rows, "total": net, "unassigned": net - total}
+    return {"rows": rows, "total": total, "records": net, "found": total - net}
 
 
 def accounts(db: Session, site_org_id: int) -> list[dict]:

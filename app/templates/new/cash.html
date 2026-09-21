@@ -41,8 +41,8 @@
       <div class="w">{% if p.start.own %}пересчитано {{ p.start.date | human_date }}{% if p.days and p.days > 7 %}<span class="tag warn">не подтверждали {{ p.days }} дн.</span>{% endif %}{% else %}карман ни разу не пересчитывали<span class="tag warn">нужен пересчёт</span>{% endif %}{% if p.balance < -1 %}<span class="tag bad">в минусе</span>{% endif %}</div>
     </div>
     {% endfor %}
-    {% if pockets.unassigned|abs >= 1 %}
-    <div class="fig"><div class="l">Не разнесено по карманам</div><div class="v">{{ pockets.unassigned | money }}<span>сом</span></div><div class="w">разница между кассой объекта и суммой карманов; уйдёт после пересчёта карманов</div></div>
+    {% if pockets.found|abs >= 1 %}
+    <div class="fig"><div class="l">Пересчёты против записей</div><div class="v">{% if pockets.found > 0 %}+{{ pockets.found | money }}{% else %}−{{ (-pockets.found) | money }}{% endif %}<span>сом</span></div><div class="w">{% if pockets.found > 0 %}на руках нашли больше, чем по записям{% else %}на руках меньше, чем по записям{% endif %}: какой-то расход или снятие записан не так. Причина — в <a href="/podotchet/corrections">Корректировках</a></div></div>
     {% endif %}
     <h4 style="margin-top:22px">На счетах, {{ accounts | sum(attribute='expected') | money }}</h4>
     {% for a in accounts %}
