@@ -292,7 +292,7 @@ def test_photo_receipt_opens_buy_draft_and_can_be_skipped(client, db, site, staf
     item = next(i for i in today_svc.todo(db, site.id) if i["src"] == "receipts")
     assert item["title"] == "Из чата и с фото: 1 ждёт проверки" and staff.name in item["sub"] and item["url"] == "/new/receipts"
     page = client.get(f"/new/buy?receipt={rc.id}")
-    assert page.status_code == 200 and "выберите, у кого купили" in page.text and f"receipt={rc.id}" in page.text
+    assert page.status_code == 200 and "выберите, у кого купили" in page.text.lower() and f"receipt={rc.id}" in page.text
     assert "Не вносить" in page.text
     r = client.post(f"/new/receipt/{rc.id}/skip", data={"reason": ""}, follow_redirects=False)
     assert "skip_error" in r.headers["location"] and rc.ocr_status == "pending"

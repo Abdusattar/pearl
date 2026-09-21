@@ -115,7 +115,7 @@ def test_makhabat_checks_edits_and_enters_kitchen_draft(client, db, site, people
                           "question": {"text": "«морк» — это Морковь?"}, "notes": []}]}
     monkeypatch.setattr(rz, "recognize", fake_recognize)
     page = client.get(f"/new/kitchen?draft={r.id}")
-    assert page.status_code == 200 and "Из чата" in page.text and "на листе дня нет" in page.text
+    assert page.status_code == 200 and "Из чата" in page.text and "день на листе не прочитан" in page.text
     assert carrot.name in page.text and "это Морковь?" in page.text
     client.get(f"/new/kitchen?draft={r.id}")
     assert calls == ["kitchen"]                          # распознаётся один раз, дальше из черновика

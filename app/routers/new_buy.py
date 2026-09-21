@@ -184,7 +184,7 @@ def open_receipt(db: Session, site: Organization, receipt_id: int | None) -> Rec
 def _draft(db: Session, r: Receipt) -> dict:
     who = db.get(User, r.created_by) if r.created_by else None
     return {"id": r.id, "path": r.file_path, "by": who.name if who else None,
-            "date": r.created_at.date() if r.created_at else None}
+            "date": r.created_at.date() if r.created_at else None, "source": r.source}
 
 
 @router.get("/buy", response_class=HTMLResponse)

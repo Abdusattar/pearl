@@ -22,6 +22,26 @@
   .tbl td.r .in.qty { margin-right: 4px; }
   .missing { font-size: 13px; color: var(--muted); margin: 0 0 14px; }
   .missing a { margin-right: 10px; }
+  .top { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; font-size: 14px; }
+  .top a { text-decoration: none; min-height: 36px; display: inline-flex; align-items: center; }
+  .quiet { background: none; border: 0; color: var(--muted); font: inherit; font-size: 14px; cursor: pointer; padding: 0; min-height: 36px; }
+  .skipbox { display: flex; gap: 8px; flex-wrap: wrap; margin: 8px 0 0; padding: 12px 14px; border-radius: 8px; background: var(--field); }
+  .skipbox[hidden] { display: none; }
+  .skipbox .in { flex: 1 1 240px; height: 44px; font-size: 16px; }
+  .who { color: var(--muted); font-size: 14px; margin: 0 0 12px; }
+  #items.numbered tbody { counter-reset: r; }
+  #items.numbered tr.row { counter-increment: r; }
+  #items.numbered tr.row td.ac { position: relative; padding-left: 30px; }
+  #items.numbered tr.row td.ac::before { content: counter(r); position: absolute; left: 4px; top: 14px; font-size: 13px; color: var(--muted); font-variant-numeric: tabular-nums; }
+  #items tr.flag td { background: var(--warn-soft); }
+  #items tr.flag td:first-child { box-shadow: inset 3px 0 0 var(--warn); }
+  #items tr.flag.now td { background: color-mix(in srgb, var(--warn-soft) 70%, var(--warn) 30%); }
+  .hint .yes { background: none; border: 0; color: var(--accent); font: inherit; cursor: pointer; padding: 0 0 0 6px; min-height: 28px; }
+  .checkbar { position: sticky; bottom: 0; margin: 16px -4px 0; background: var(--surface); border-top: 1px solid var(--line); z-index: 5; }
+  .checkbar .cb-in { display: flex; gap: 10px 16px; align-items: center; flex-wrap: wrap; padding: 10px 4px; }
+  .checkbar .left { flex: 1 1 260px; font-size: 14px; }
+  .checkbar .left b { color: var(--warn); font-weight: 600; }
+  .checkbar .left.ok { color: var(--ok); }
   .with-photo { display: grid; grid-template-columns: minmax(0, 1fr) 360px; gap: 24px; align-items: start; }
   .photo-side { position: sticky; top: 16px; }
   .photo-side img { width: 100%; max-height: 78vh; object-fit: contain; border-radius: 8px; border: 1px solid var(--line); background: var(--field); display: block; }
@@ -50,24 +70,25 @@
 {% endif %}
 {% if error %}<div class="alert bad">{{ error }}</div>{% endif %}
 
-{% if draft %}<a href="/new/receipts" style="font-size:14px;text-decoration:none">← Из чата и с фото</a>{% else %}<a href="/new/stock" style="font-size:14px;text-decoration:none">← Склад</a>{% endif %}
 {% if draft %}
-<div class="draft-bar">
-  <span><b>{% if draft.source == 'private' %}Боту в личку{% else %}Из чата{% endif %}: {% if draft.by %}прислал(а) {{ draft.by }}{% endif %}{% if draft.at %} {{ draft.at.date() | human_date }} в {{ draft.at.strftime('%H:%M') }}{% endif %}</b><br>
-  <span class="s">Строки разобраны с фото, фото справа. Проверьте каждую строку, поправьте, что не так, выберите день и внесите.</span></span>
-</div>
+<div class="top"><a href="/new/receipts">← Из чата и с фото</a>{% if can_write %}<button class="quiet" type="button" onclick="var s=document.getElementById('skip');s.hidden=!s.hidden;if(!s.hidden)s.querySelector('input').focus()">Не вносить этот лист</button>{% endif %}</div>
+{% if can_write %}
+<form class="skipbox" id="skip" method="post" action="/new/receipt/{{ draft.id }}/skip" hidden>
+  <input type="hidden" name="back" value="/new/receipts">
+  <input class="in" name="reason" required maxlength="200" placeholder="Почему: уже внесён, дубль, не наш лист" aria-label="Почему не вносить">
+  <button class="btn ghost" type="submit">Не вносить</button>
+</form>
 {% endif %}
+{% else %}<a href="/new/stock" style="font-size:14px;text-decoration:none">← Склад</a>{% endif %}
 <form method="post" action="/new/kitchen" enctype="multipart/form-data" id="sheet" autocomplete="off">
   {% if draft %}
   <input type="hidden" name="draft_id" value="{{ draft.id }}">
   {% if ask_replace %}<input type="hidden" name="replace_ok" value="1">{% endif %}
-  <div class="head">
-    <h3 class="title" style="margin:0">Лист кухни</h3>
-    {% if can_write %}<button type="submit" class="btn">Внести лист кухни</button>{% endif %}
-  </div>
+  <h3 class="title" style="margin:6px 0 2px">Лист кухни {% if draft.source == 'private' %}от бота{% else %}из чата{% endif %}</h3>
+  <p class="who">{% if draft.by %}Прислал(а) {{ draft.by }}{% endif %}{% if draft.at %} {{ draft.at.date() | human_date }} в {{ draft.at.strftime('%H:%M') }}{% endif %}. Строки идут в том же порядке, что на фото.</p>
   <div class="meta">
     <span>День <input class="in {% if need_day %}need{% endif %}" type="date" name="date" id="date" value="{{ '' if need_day else d.isoformat() }}" max="{{ today.isoformat() }}" required style="width:auto;height:40px">
-      {% if need_day %}<span class="hint" style="display:inline;margin-left:6px">на листе дня нет — выберите</span>{% endif %}</span>
+      {% if need_day %}<span class="hint" style="display:inline;margin-left:6px">день на листе не прочитан — выберите</span>{% endif %}</span>
   {% else %}
   <input type="hidden" name="date" id="date" value="{{ d.isoformat() }}">
   <div class="head">
@@ -92,17 +113,18 @@
   {% endif %}
 
   {% if draft %}<div class="with-photo"><div>{% endif %}
-  <table class="tbl" id="items">
+  <table class="tbl {% if draft %}numbered{% endif %}" id="items">
     <thead><tr><th>Продукт</th><th class="r">Взяли</th><th class="r">На складе</th><th></th></tr></thead>
     <tbody>
     {% for r in rows %}
-    <tr class="row {% if r.minor %}minor{% endif %}">
+    <tr class="row {% if r.minor %}minor{% endif %} {% if draft and r.name and (r.error or not r.qty) %}flag{% endif %}">
       <td class="ac">
         <input type="hidden" name="item_product_id" value="{{ r.product_id or '' }}">
         <input class="in wide name" name="item_name" value="{{ r.name }}" placeholder="{% if loop.last %}Ещё продукт…{% else %}Продукт{% endif %}">
         <div class="dd"></div>
         <span class="hint mute minor-hint" {% if not r.minor %}hidden{% endif %}>учтено, остаток не считаем</span>
-        <span class="hint bad err" {% if not r.error %}hidden{% endif %}>{{ r.error or '' }}</span>
+        <span class="hint bad err" {% if not r.error %}hidden{% endif %}>{{ r.error or '' }}{% if draft and r.error and r.product_id %} <button type="button" class="yes" onclick="okRow(this)">Верно</button>{% endif %}</span>
+        {% if draft and r.name and not r.qty and not r.error %}<span class="hint bad noqty">количество не прочиталось — сверьте с фото</span>{% endif %}
         <span class="hint over" hidden></span>
       </td>
       <td class="r">
@@ -123,19 +145,20 @@
   <aside class="photo-side"><a href="/media/{{ draft.path }}" target="_blank" aria-label="Открыть фото листа во весь экран"><img src="/media/{{ draft.path }}" alt="Фото листа кухни"></a>
     <span class="s">Сверяйте строки с фото. Нажмите — откроется во весь экран.</span></aside></div>{% endif %}
 
+  {% if draft %}
+  <div class="checkbar"><div class="cb-in">
+    <span class="left" id="left"></span>
+    <button class="btn ghost" type="button" id="nextflag" onclick="nextFlag()">К следующей</button>
+    {% if can_write %}<button type="submit" class="btn">Внести лист кухни</button>{% endif %}
+  </div></div>
+  {% else %}
   <div class="foot">
     <p class="after">Списывается с одного склада Сокулука. Взяли больше, чем числится, — спишется что есть, разница запишется расхождением. Зелень, специи, хлеб, канцтовары и моющее пишите как есть: они уже в расходе с чека, остаток по ним не считаем, на листе остаются.</p>
     {% if can_write %}<aside><button type="submit" class="btn full">Внести лист кухни</button></aside>{% endif %}
   </div>
+  {% endif %}
 </form>
-{% if draft and can_write %}
-<details class="skip"><summary>Не вносить этот лист</summary>
-  <form method="post" action="/new/receipt/{{ draft.id }}/skip">
-    <input type="hidden" name="back" value="/new/receipts">
-    <input class="in" name="reason" required maxlength="200" placeholder="Почему: уже внесён, дубль, не наш лист" aria-label="Почему не вносить">
-    <button class="btn ghost" type="submit">Не вносить</button>
-  </form></details>
-{% endif %}
+
 {% endblock %}
 
 {% block scripts %}
@@ -204,6 +227,45 @@ function addRow() { var tr = document.createElement('tr'); tr.className = 'row';
 function ensureEmptyRow() { var rows = document.querySelectorAll('#items tr.row'); var last = rows[rows.length - 1]; if (!last || last.querySelector('.name').value.trim()) addRow(); }
 function removeRow(btn) { btn.closest('tr').remove(); ensureEmptyRow(); }
 document.querySelectorAll('#items tr.row').forEach(function (tr) { initRow(tr); checkRow(tr); });
+var checking = !!document.getElementById('left'), curFlag = -1;
+function rowFlag(tr) {
+  var name = tr.querySelector('.name').value.trim();
+  if (!name) return false;
+  var err = tr.querySelector('.err'), q = tr.querySelector('.qty').value.trim();
+  return (err && !err.hidden) || !q;
+}
+function recheck() {
+  if (!checking) return;
+  var n = 0;
+  document.querySelectorAll('#items tr.row').forEach(function (tr) {
+    var f = rowFlag(tr); tr.classList.toggle('flag', f); if (!f) tr.classList.remove('now'); if (f) n++;
+    var nq = tr.querySelector('.noqty'); if (nq && tr.querySelector('.qty').value.trim()) nq.remove();
+  });
+  var day = document.getElementById('date'), parts = [];
+  if (day && !day.value) parts.push('выберите день');
+  if (n) parts.push(n + ' ' + (n % 10 === 1 && n % 100 !== 11 ? 'строка ждёт' : (n % 10 >= 2 && n % 10 <= 4 && (n % 100 < 12 || n % 100 > 14) ? 'строки ждут' : 'строк ждут')) + ' ответа');
+  var left = document.getElementById('left');
+  left.className = 'left' + (parts.length ? '' : ' ok');
+  left.innerHTML = parts.length ? 'Осталось: <b>' + parts.join(', ') + '</b>' : 'Всё проверено — можно вносить';
+  document.getElementById('nextflag').hidden = !n;
+}
+function nextFlag() {
+  var f = Array.prototype.slice.call(document.querySelectorAll('#items tr.flag'));
+  if (!f.length) return;
+  f.forEach(function (t) { t.classList.remove('now'); });
+  curFlag = (curFlag + 1) % f.length;
+  var tr = f[curFlag]; tr.classList.add('now');
+  tr.scrollIntoView({ block: 'center', behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });
+  (tr.querySelector('.err:not([hidden])') ? tr.querySelector('.name') : tr.querySelector('.qty')).focus();
+}
+function okRow(btn) { btn.closest('.err').hidden = true; recheck(); }
+if (checking) {
+  document.getElementById('items').addEventListener('input', function () { setTimeout(recheck, 0); });
+  document.getElementById('items').addEventListener('click', function () { setTimeout(recheck, 250); });
+  var dayIn = document.getElementById('date');
+  if (dayIn) dayIn.addEventListener('input', function () { this.classList.toggle('need', !this.value); recheck(); });
+  recheck();
+}
 ensureEmptyRow();
 </script>
 {% endblock %}
