@@ -216,3 +216,24 @@ def test_double_submit_of_reconciliation_saves_once(client, db, org):
     ).all()
     assert len(saved) == 1
     assert saved[0].actual_amount == Decimal("3500")
+
+
+def test_bank_payment_after_account_reconciliation_same_day_counts(db, org):
+    """18.09: остаток в банке 1,65 внесён в 16:13, оплата Optima 3 500 пришла в 17:22 —
+    она ещё не в том остатке и должна прибавиться; расход того же дня — нет."""
+    from app.models import Student
+    d = date(2026, 9, 18)
+    kid = Student(organization_id=org.id, name="Ребёнок счёт-тест", pin="8991", status="active")
+    db.add(kid)
+    db.flush()
+    db.add(Reconciliation(organization_id=org.id, kind="account", date=d, expected_amount=Decimal("0"),
+                          actual_amount=Decimal("1.65"), delta=Decimal("0"), created_at=datetime(2026, 9, 18, 16, 13)))
+    db.add(Transaction(organization_id=org.id, type="income", amount=Decimal("3500"), date=d, student_id=kid.id,
+                       external_txn_id="opt-same-day-after", created_at=datetime(2026, 9, 18, 17, 22)))
+    db.add(Transaction(organization_id=org.id, type="income", amount=Decimal("5000"), date=d, student_id=kid.id,
+                       external_txn_id="opt-same-day-before", created_at=datetime(2026, 9, 18, 14, 57)))
+    db.add(Transaction(organization_id=org.id, type="expense", amount=Decimal("4865"), date=d, paid_directly=True,
+                       created_at=datetime(2026, 9, 18, 18, 0)))
+    db.flush()
+    exp = podotchet.get_expected_balance(db, org.id, date(2026, 9, 21))["expected"]
+    assert Decimal(exp) == Decimal("3501.65")

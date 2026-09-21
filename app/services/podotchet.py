@@ -294,9 +294,17 @@ def get_expected_balance(db: Session, organization_id: int, as_of: date_cls) -> 
         CashFunding.source_transaction_id.isnot(None), CashFunding.deleted_at.is_(None),
     ).scalar_subquery()
 
+    # Платёж банка (Optima) несёт точное время прихода: пришедший в день сверки
+    # позже неё — ещё не в остатке банка (18.09: сверка в 16:13, оплата 3 500 в
+    # 17:22 выпала из счёта). Снятия и расходы вносят задним числом — для них
+    # день сверки по-прежнему «уже учтён».
+    after_snapshot = Transaction.date > since
+    if snapshot is not None and snapshot.created_at is not None:
+        after_snapshot = or_(after_snapshot, and_(Transaction.date == since, Transaction.external_txn_id.isnot(None),
+                                                  Transaction.created_at > snapshot.created_at))
     income = db.query(func.coalesce(func.sum(Transaction.amount), 0)).filter(
         Transaction.organization_id == organization_id, Transaction.type == "income",
-        Transaction.date > since, Transaction.date <= as_of, Transaction.deleted_at.is_(None),
+        after_snapshot, Transaction.date <= as_of, Transaction.deleted_at.is_(None),
         Transaction.id.notin_(cash_income_txn_ids),
     ).scalar()
 
