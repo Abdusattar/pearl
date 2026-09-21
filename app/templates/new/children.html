@@ -3,37 +3,54 @@
 
 {% block head %}
 <style>
-  .head { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 6px; }
-  .tag { display: inline-block; font-size: 12px; padding: 2px 8px; border-radius: 999px; background: var(--warn-soft); color: var(--warn); margin-left: 6px; vertical-align: middle; }
-  .day { font-size: 13px; font-weight: 600; color: var(--muted); padding: 14px 0 4px; }
-  .row { display: grid; grid-template-columns: 1fr auto; gap: 4px 16px; align-items: baseline; padding: 9px 0; border-top: 1px solid var(--line); color: inherit; text-decoration: none; min-height: 44px; }
-  .day + .row { border-top: 0; }
-  .row .t { font-size: 15px; } .row .s { font-size: 13px; color: var(--muted); }
-  .n { font-size: 15px; font-weight: 500; font-variant-numeric: tabular-nums; text-align: right; white-space: nowrap; }
-  .st { font-size: 13px; color: var(--muted); text-align: right; display: block; }
+  .grp { font-size: 13px; color: var(--muted); padding: 16px 0 2px; }
+  .row { display: grid; grid-template-columns: 1fr auto; gap: 2px 16px; align-items: baseline; padding: 10px 0; border-top: 1px solid var(--line); color: inherit; text-decoration: none; min-height: 48px; }
+  .grp + .row { border-top: 0; }
+  .row .s { font-size: 13px; color: var(--muted); }
+  .row .r { text-align: right; }
+  .n { font-weight: 500; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .st { font-size: 13px; color: var(--muted); display: block; }
   .st.debt { color: var(--warn); } .st.bad { color: var(--bad); } .st.ok { color: var(--ok); } .st.over { color: var(--accent); }
-  form.find { display: inline-flex; gap: 6px; }
-  form.find .in { height: 40px; width: 200px; }
+  .find { margin: 4px 0 0; }
+  .find .in { width: 100%; height: 52px; font-size: 18px; padding: 0 16px; border-radius: 10px; }
+  .links { display: flex; gap: 20px; flex-wrap: wrap; font-size: 14px; margin: 10px 0 4px; }
+  .links a { min-height: 40px; display: inline-flex; align-items: center; text-decoration: none; }
+  .hit { display: block; margin: 10px 0 0; padding: 12px 16px; border-radius: 10px; background: var(--field); color: inherit; text-decoration: none; }
+  .hit .who { font-size: 14px; color: var(--muted); }
+  .hit .say { font-size: 18px; font-weight: 600; margin: 2px 0; }
+  .hit.debt { background: var(--warn-soft); } .hit.ok { background: var(--ok-soft); } .hit.over { background: var(--accent-soft); }
 </style>
 {% endblock %}
 
 {% block content %}
-<div class="head"><h3 class="title" style="margin:0">Дети</h3></div>
-<p class="sub">{{ current.name }}: {{ data.count }} детей{% if data.tariff %}, должны нам <b>{{ data.debt_total | money }}</b>{% if data.old_total > 0 %}, из них старше месяца {{ data.old_total | money }}{% endif %}{% else %}<span class="tag">тариф не заведён</span> — долга нет, пока Айжан не заведёт тариф по классам{% endif %}.</p>
-<div class="chips">
-  {% for o in orgs %}<a class="chip {% if o.id == current.id and not debt %}on{% endif %}" href="/new/children?org={{ o.id }}">{{ o.name }}</a>{% endfor %}
-  <a class="chip {% if debt %}on{% endif %}" href="/new/children?org={{ current.id }}&debt={{ 0 if debt else 1 }}">Только с долгом</a>
-  <form class="find" method="get" action="/new/children"><input type="hidden" name="org" value="{{ current.id }}"><input class="in" name="q" value="{{ q }}" placeholder="Найти по имени или PIN"></form>
+<h3 class="title" style="margin:0">Дети</h3>
+<div class="chips" style="margin-top:10px">
+  {% for o in orgs %}<a class="chip {% if o.id == current.id %}on{% endif %}" href="/new/children?org={{ o.id }}">{{ o.name }}</a>{% endfor %}
+  {% if data.tariff %}<a class="chip {% if debt %}on{% endif %}" href="/new/children?org={{ current.id }}{% if not debt %}&debt=1{% endif %}{% if q %}&q={{ q | urlencode }}{% endif %}">Только с долгом</a>{% endif %}
 </div>
-<div class="links" style="display:flex;gap:18px;flex-wrap:wrap;font-size:14px;margin-bottom:6px"><a href="/income/">Оплаты через банк</a><a href="/new/children/add?org={{ current.id }}">Добавить ребёнка</a></div>
+<p class="sub">{{ data.count }} {{ data.count | plural('ребёнок', 'ребёнка', 'детей') }}{% if data.tariff %}, должны нам <b>{{ data.debt_total | money }}</b>{% if data.old_total > 0.5 %}, из них старше месяца {{ data.old_total | money }}{% endif %}.{% else %}. Тариф ещё не заведён, поэтому долгов не видно: они появятся, когда тариф заведут.{% endif %}</p>
+<form class="find" method="get" action="/new/children">
+  <input type="hidden" name="org" value="{{ current.id }}">{% if debt %}<input type="hidden" name="debt" value="1">{% endif %}
+  <input class="in" name="q" value="{{ q }}" placeholder="Фамилия, имя или группа" aria-label="Фамилия, имя или группа" autocomplete="off" {% if q %}autofocus{% endif %}>
+</form>
+<div class="links"><a href="/new/children/payments">Оплаты родителей</a>{% if can_write %}<a href="/new/children/add?org={{ current.id }}">Добавить ребёнка</a>{% endif %}{% if q %}<a href="/new/children?org={{ current.id }}">Показать всех</a>{% endif %}</div>
 
-{% for g in data.groups %}
-<div class="day">{{ g.name }}, {{ g.total }}</div>
-{% for r in g.rows %}
-<a class="row" href="/new/children/{{ r.s.id }}"><span><span class="t">{{ r.s.name }}</span>{% if r.sub %}<br><span class="s">{{ r.sub }}</span>{% endif %}</span><span><span class="n">{% if data.tariff %}{{ (r.balance if r.balance > 0 else 0) | money }}{% else %}—{% endif %}</span><span class="st {{ r.kind }}">{% if data.tariff %}{{ r.status }}{% else %}тариф не заведён{% endif %}</span></span></a>
-{% endfor %}
+{% if data.hits %}
+  {% for r in data.hits %}
+  <a class="hit {{ 'debt' if r.answer.kind == 'debt' else r.answer.kind }}" href="/new/children/{{ r.s.id }}">
+    <div class="who">{{ r.s.name }}{% if r.group != 'Без группы' %}, «{{ r.group }}»{% endif %}{% if r.s.status == 'frozen' %}, заморожен{% endif %}</div>
+    <div class="say">{{ r.answer.say }}</div>
+    {% if r.answer.more %}<div class="who">{{ r.answer.more }}</div>{% endif %}
+  </a>
+  {% endfor %}
 {% else %}
-<p class="sub" style="margin-top:14px">Никого не нашлось.</p>
-{% endfor %}
-<p class="after">Оплата ложится на самый старый долг; «август и сентябрь» значит, что не закрыты оба. Имя и родителя пока правят в старом входе.</p>
+  {% for g in data.groups %}
+  <div class="grp">{{ '«' ~ g.name ~ '»' if g.name != 'Без группы' else g.name }}, {{ g.total }} {{ g.total | plural('ребёнок', 'ребёнка', 'детей') }}</div>
+  {% for r in g.rows %}
+  <a class="row" href="/new/children/{{ r.s.id }}"><span>{{ r.s.name }}{% if r.sub %}<br><span class="s">{{ r.sub }}</span>{% endif %}</span><span class="r">{% if not data.tariff %}<span class="st">тариф не заведён</span>{% elif r.balance > 0.5 %}<span class="n">{{ r.balance | money }}</span><span class="st {{ r.kind }}">{{ r.status }}</span>{% else %}<span class="st {{ r.kind }}">{{ r.status }}</span>{% endif %}</span></a>
+  {% endfor %}
+  {% else %}
+  <p class="sub" style="margin-top:14px">{% if q %}Никого не нашлось. Проверьте фамилию или наберите имя.{% elif debt %}Должников нет.{% else %}Детей пока нет.{% endif %}</p>
+  {% endfor %}
+{% endif %}
 {% endblock %}

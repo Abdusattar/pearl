@@ -56,6 +56,19 @@ def human_date(d: date | None, with_weekday: bool = False) -> str:
 templates.env.filters["human_date"] = human_date
 
 
+def plural(n, one: str, few: str, many: str) -> str:
+    """1 ребёнок, 2 ребёнка, 5 детей."""
+    n = abs(int(n or 0))
+    if n % 10 == 1 and n % 100 != 11:
+        return one
+    if 2 <= n % 10 <= 4 and not 12 <= n % 100 <= 14:
+        return few
+    return many
+
+
+templates.env.filters["plural"] = plural
+
+
 def _site(user: User, db: Session) -> Organization | None:
     org = resolve_org(None, user, db)
     if org is None:

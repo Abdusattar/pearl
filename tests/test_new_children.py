@@ -40,7 +40,7 @@ def amir(db, site):
     g = Group(organization_id=site.id, name="Средняя тест-дт", type="kindergarten_group")
     db.add(g)
     db.flush()
-    s = Student(organization_id=site.id, name="Капаров Амир тест-дт", pin="9977", status="active", discount_amount=500,
+    s = Student(organization_id=site.id, name="Капаров Амир тест-дт", pin="8977", status="active", discount_amount=500,
                 discount_reason="второй ребёнок")
     db.add(s)
     db.flush()
@@ -74,15 +74,14 @@ def test_two_unpaid_months_is_bad(db, site, staff, amir):
     assert svc.children_list(db, site)["old_total"] == 9500
 
 
-def test_card_events_and_months(client, db, site, staff, amir):
+def test_card_months_show_which_payment_closed_what(client, db, site, staff, amir):
     card = svc.child_card(db, amir)
     assert card["balance"] == 9500 and card["kind"] == "debt"
-    assert card["months"][0]["left"] == 9500 and card["months"][1]["left"] == 0 and card["months"][1]["paid"] == 9500
-    texts = [e["text"] for e in card["events"]]
-    assert any("Оплата через банк" in t for t in texts) and any(t.startswith("Начислено за") for t in texts)
-    assert any(t.startswith("Зачислен") for t in texts)
+    assert card["months"][0]["left"] == 9500 and "оплат пока не было" in card["months"][0]["text"]
+    assert card["months"][1]["left"] == 0 and "пришло 9 500" in card["months"][1]["text"] and "через банк" in card["months"][1]["text"]
     page = client.get(f"/new/children/{amir.id}")
-    assert page.status_code == 200 and "Долг 9 500" in page.text and "Принять наличные" in page.text
+    assert page.status_code == 200 and f"Должны 9 500 за {svc.month_name(date.today())}" in page.text
+    assert "Принять наличные" in page.text and "Имя и родитель" in page.text
 
 
 def test_accept_cash_closes_oldest_debt_and_fills_pocket(client, db, site, staff, amir):
@@ -104,7 +103,7 @@ def test_no_tariff_means_no_debt_text(db, site, staff):
     school = Organization(name="Школа тест-дт", type="school", parent_id=site.parent_id, site_id=site.id)
     db.add(school)
     db.flush()
-    db.add(Student(organization_id=school.id, name="Ученик тест-дт", pin="9978", status="active"))
+    db.add(Student(organization_id=school.id, name="Ученик тест-дт", pin="8978", status="active"))
     db.flush()
     data = svc.children_list(db, school)
     assert data["tariff"] is None and data["count"] == 1
@@ -121,3 +120,71 @@ def test_same_cash_again_asks_and_token_repeat_writes_once(client, db, site, sta
     r = client.post(f"/new/children/{amir.id}/cash", data={**data, "form_token": "tok-child-000000000000002"},
                     follow_redirects=False)
     assert r.status_code == 200 and "Такое уже записано" in r.text and count() == n0 + 1
+
+
+def _main(html: str) -> str:
+    return html[html.index("<main"):] if "<main" in html else html
+
+
+def test_search_by_surname_parent_and_group(client, db, site, staff, amir):
+    amir.parent_name = "Капарова Айгуль"
+    db.flush()
+    hits = svc.children_list(db, site, q="Капаров")["hits"]
+    assert [h["s"].id for h in hits] == [amir.id]
+    assert hits[0]["answer"]["say"] == f"Должны 9 500 за {svc.month_name(date.today())}"
+    assert "последняя оплата" in hits[0]["answer"]["more"]
+    assert [h["s"].id for h in svc.children_list(db, site, q="Капарова")["hits"]] == [amir.id]   # мама
+    by_group = svc.children_list(db, site, q="Средняя")
+    assert by_group["hits"] == [] and by_group["groups"][0]["rows"][0]["s"].id == amir.id
+    assert svc.children_list(db, site, q="977")["shown"] == 0 and svc.children_list(db, site, q="8977")["shown"] == 1
+    tot = svc.children_list(db, site, q="нет такого")
+    assert tot["shown"] == 0 and tot["debt_total"] == 9500          # итог сверху — по всем детям
+    page = client.get(f"/new/children?org={site.id}&q=Капаров")
+    assert page.status_code == 200 and "Должны 9 500" in page.text
+
+
+def test_recent_payment_answers_first(db, site, staff, amir):
+    db.add(Transaction(organization_id=site.id, type="income", amount=5000, student_id=amir.id, date=date.today(),
+                       external_txn_id="opt-test-дт-2"))
+    db.flush()
+    a = svc.children_list(db, site, q="Капаров")["hits"][0]["answer"]
+    assert a["say"].startswith("Дошло") and "Ещё должны 4 500" in a["say"]
+
+
+def test_test_pin_children_hidden(db, site, staff, amir):
+    db.add(Student(organization_id=site.id, name="Тестов Тестомир тест-дт", pin="9901", status="active"))
+    db.flush()
+    assert svc.children_list(db, site)["count"] == 1
+
+
+def test_payments_page_month_feed(client, db, site, staff, amir):
+    this = date.today().replace(day=1)
+    prev = (this - timedelta(days=1)).replace(day=1)
+    t = Student(organization_id=site.id, name="Тестов Тестомир тест-дт", pin="9902", status="active")
+    db.add(t)
+    db.flush()
+    db.add(Transaction(organization_id=site.id, type="income", amount=35, student_id=t.id, date=prev + timedelta(days=5)))
+    db.flush()
+    data = svc.payments_month(db, [site], prev)
+    assert data["count"] == 1 and data["total"] == 9500
+    assert data["days"][0]["rows"][0]["after"] == f"ещё должны 9 500 за {svc.month_name(date.today())}"
+    page = client.get(f"/new/children/payments?month={prev.strftime('%Y-%m')}")
+    assert page.status_code == 200 and "Оплаты родителей" in page.text and "9 500" in page.text
+    assert "Тестомир" not in page.text
+
+
+def test_edit_name_and_parent_in_new(client, db, site, staff, amir):
+    r = client.post(f"/new/children/{amir.id}/info", data={"last_name": "Капаров", "first_name": "Амирхан", "patronymic": "",
+                                                          "parent_name": "Капарова Айгуль", "parent_contact": "0555 12 34 56"},
+                    follow_redirects=False)
+    assert r.status_code == 303 and "saved=6" in r.headers["location"]
+    db.refresh(amir)
+    assert amir.name == "Капаров Амирхан" and amir.parent_contact == "0555 12 34 56"
+    r = client.post(f"/new/children/{amir.id}/info", data={"last_name": "", "first_name": "Амир"}, follow_redirects=False)
+    assert "err=" in r.headers["location"]
+
+
+def test_children_block_has_no_old_links(client, db, site, staff, amir):
+    for url in (f"/new/children?org={site.id}", f"/new/children/{amir.id}", "/new/children/payments"):
+        html = _main(client.get(url).text)
+        assert "/income/" not in html and "/students/" not in html, url

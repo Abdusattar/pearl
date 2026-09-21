@@ -1,0 +1,31 @@
+{% extends "new/base.html" %}
+{% block title %}Оплаты родителей — Жемчужина{% endblock %}
+
+{% block head %}
+<style>
+  h3 .m { color: var(--muted); font-weight: 400; white-space: nowrap; }
+  h3 .m a { color: var(--muted); padding: 0 8px; text-decoration: none; display: inline-block; min-width: 32px; text-align: center; }
+  .day { font-size: 13px; color: var(--muted); margin: 16px 0 2px; }
+  .row { display: grid; grid-template-columns: 1fr auto; gap: 2px 16px; padding: 10px 0; border-top: 1px solid var(--line); min-height: 48px; color: inherit; text-decoration: none; }
+  .day + .row { border-top: 0; }
+  .row .s { font-size: 13px; color: var(--muted); }
+  .row .s.ok { color: var(--ok); } .row .s.debt { color: var(--warn); } .row .s.over { color: var(--accent); }
+  .row .n { font-weight: 500; text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
+</style>
+{% endblock %}
+
+{% block content %}
+<a href="/new/children" style="font-size:14px;text-decoration:none">← Дети</a>
+<h3 class="title" style="margin:4px 0 0">Оплаты родителей <span class="m"><a href="/new/children/payments?month={{ prev }}" aria-label="Прошлый месяц">‹</a>{{ month_label }}{% if next %}<a href="/new/children/payments?month={{ next }}" aria-label="Следующий месяц">›</a>{% endif %}</span></h3>
+{% if data.count %}
+<p class="sub">Пришло от родителей за {{ month_label }} <b>{{ data.total | money }}</b>{% if data.by_org %}: {% for o, v in data.by_org %}{{ o.name }} {{ v | money }}{% if not loop.last %}, {% endif %}{% endfor %}{% endif %}. {{ data.count }} {{ data.count | plural('оплата', 'оплаты', 'оплат') }}.</p>
+{% for d in data.days %}
+<div class="day">{{ d.date | human_date(true) }}</div>
+{% for r in d.rows %}
+<a class="row" href="/new/children/{{ r.s.id }}"><span>{{ r.s.name }}{% if r.group %}, «{{ r.group }}»{% endif %}{% if r.after %}<br><span class="s {{ r.kind }}">{{ r.after }}</span>{% endif %}</span><span class="n">{{ r.t.amount | money }}</span></a>
+{% endfor %}
+{% endfor %}
+{% else %}
+<p class="sub">За {{ month_label }} оплат от родителей не было.</p>
+{% endif %}
+{% endblock %}

@@ -1,7 +1,7 @@
-"""Новый вход `/new/children`: список детей, карточка, приём наличных (макет блок 5)."""
+"""Новый вход `/new/children`: список детей, карточка, оплаты родителей, приём наличных (блок «Дети», 21.09)."""
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, timedelta
 from decimal import Decimal, InvalidOperation
 
 from fastapi import APIRouter, Depends, Form, Request
@@ -59,6 +59,30 @@ def child_add_form(request: Request, org: int | None = None, db: Session = Depen
     ctx.update({"orgs": orgs, "current": current, "groups": _groups(db, current.id), "today": date.today(),
                 "form": {}, "similar": [], "error": None, "can_write": user.role in WRITE_ROLES})
     return templates.TemplateResponse("new/child_add.html", ctx)
+
+
+@router.get("/children/payments", response_class=HTMLResponse)
+def payments_page(request: Request, month: str | None = None, db: Session = Depends(get_db)):
+    """Оплаты родителей за месяц (заменяет старый /income/, 21.09)."""
+    user = get_current_user(request, db)
+    if not user:
+        return RedirectResponse("/login", status_code=302)
+    site = _site(user, db)
+    if site is None:
+        return HTMLResponse("Объект не найден", status_code=404)
+    today = date.today()
+    try:
+        m = date.fromisoformat(f"{month}-01") if month else today.replace(day=1)
+    except ValueError:
+        m = today.replace(day=1)
+    m = min(m, today.replace(day=1))
+    prev = (m - timedelta(days=1)).replace(day=1)
+    nxt = (m.replace(day=28) + timedelta(days=4)).replace(day=1)
+    ctx = _base_ctx(request, user, site, db, "children")
+    ctx.update({"data": svc.payments_month(db, _orgs_for(user, site, db), m), "month": m,
+                "month_label": svc.month_name(m) + ("" if m.year == today.year else f" {m.year}"),
+                "prev": prev.strftime("%Y-%m"), "next": nxt.strftime("%Y-%m") if nxt <= today else None})
+    return templates.TemplateResponse("new/child_payments.html", ctx)
 
 
 @router.get("/children/{student_id}", response_class=HTMLResponse)
@@ -249,3 +273,25 @@ def child_group(student_id: int, request: Request, group_id: str = Form(""), on_
     svc.move_group(db, user=user, student=student, group_id=int(group_id), d=d)
     db.commit()
     return RedirectResponse(f"/new/children/{student.id}?saved=5", status_code=303)
+
+
+@router.post("/children/{student_id}/info")
+def child_info(student_id: int, request: Request, last_name: str = Form(""), first_name: str = Form(""),
+               patronymic: str = Form(""), parent_name: str = Form(""), parent_contact: str = Form(""),
+               db: Session = Depends(get_db)):
+    user = get_current_user(request, db)
+    if not user:
+        return RedirectResponse("/login", status_code=302)
+    if user.role not in WRITE_ROLES:
+        return HTMLResponse("Нет прав", status_code=403)
+    site = _site(user, db)
+    student = _student_for(db, user, site, student_id) if site else None
+    if student is None:
+        return HTMLResponse("Ребёнок не найден", status_code=404)
+    try:
+        svc.set_info(db, user=user, student=student, last_name=last_name, first_name=first_name, patronymic=patronymic,
+                     parent_name=parent_name, parent_contact=parent_contact)
+    except ValueError as e:
+        return RedirectResponse(f"/new/children/{student.id}?err={e}", status_code=303)
+    db.commit()
+    return RedirectResponse(f"/new/children/{student.id}?saved=6", status_code=303)

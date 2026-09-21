@@ -3,126 +3,132 @@
 
 {% block head %}
 <style>
-  .card .meta b.debt { color: var(--warn); } .card .meta b.bad { color: var(--bad); } .card .meta b.ok { color: var(--ok); }
-  .two { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; }
-  @media (max-width: 760px) { .two { grid-template-columns: 1fr; } }
-  .ev { display: grid; grid-template-columns: 110px 1fr auto; gap: 4px 14px; padding: 8px 0; border-top: 1px solid var(--line); font-size: 14px; align-items: baseline; }
-  .ev:first-of-type { border-top: 0; }
-  .ev .dt { color: var(--muted); font-size: 13px; white-space: nowrap; }
-  .ev .n { font-variant-numeric: tabular-nums; white-space: nowrap; }
-  .ev.payment .n { color: var(--ok); }
-  .month { width: 100%; border-collapse: collapse; font-size: 14px; font-variant-numeric: tabular-nums; }
-  .month th { text-align: right; font-weight: 500; color: var(--muted); font-size: 12px; padding: 4px 0; }
-  .month th:first-child, .month td:first-child { text-align: left; }
-  .month td { padding: 6px 0; border-top: 1px solid var(--line); text-align: right; }
-  .month td.debt { color: var(--warn); }
-  .cash { background: var(--accent-soft); border-radius: 8px; padding: 14px 16px; margin: 0 0 16px; max-width: 520px; }
-  .cash .lb { display: block; font-size: 13px; color: var(--muted); margin: 10px 0 4px; }
-  .cash .in { height: 44px; font-size: 16px; }
-  .cash .in.num { width: 140px; text-align: right; }
+  .meta { color: var(--muted); margin: 6px 0 0; }
+  .state { font-size: 22px; font-weight: 600; margin: 14px 0 2px; }
+  .state.debt { color: var(--warn); } .state.bad { color: var(--bad); } .state.ok { color: var(--ok); } .state.over { color: var(--accent); }
+  .acts2 { display: flex; gap: 10px 18px; flex-wrap: wrap; align-items: center; margin: 14px 0 4px; }
+  .more { display: flex; gap: 4px 18px; flex-wrap: wrap; font-size: 14px; }
+  .more button { background: none; border: 0; padding: 0; font: inherit; color: var(--accent); cursor: pointer; min-height: 44px; }
+  .more .away { color: var(--muted); }
+  .box { background: var(--accent-soft); border-radius: 8px; padding: 14px 16px; margin: 12px 0 4px; max-width: 520px; }
+  .box .lb { display: block; font-size: 13px; color: var(--muted); margin: 10px 0 4px; }
+  .box .in { height: 44px; font-size: 16px; width: 100%; }
+  .box .in.num { width: 140px; text-align: right; }
+  .box .pair { display: grid; grid-template-columns: 1fr 1fr; gap: 0 10px; }
+  .box .bt { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 12px; }
+  h4.mh { margin: 24px 0 4px; font-size: 15px; }
+  .mon { padding: 10px 0; border-top: 1px solid var(--line); }
+  .mh + .mon { border-top: 0; }
+  .mon .t { display: flex; justify-content: space-between; gap: 16px; }
+  .mon .t b { font-weight: 500; }
+  .mon .v { font-size: 13px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .mon .v.ok { color: var(--ok); } .mon .v.debt { color: var(--warn); } .mon .v.bad { color: var(--bad); }
+  .mon .s { font-size: 13px; color: var(--muted); margin-top: 2px; }
 </style>
 {% endblock %}
 
 {% block content %}
-{% if saved == 1 %}<div class="alert ok">Оплата записана: у ребёнка событие «оплата наличными», деньги в кармане.</div>
+{% if saved == 1 %}<div class="alert ok">Оплата записана, деньги в кармане. На счёт они не попадали.</div>
 {% elif saved == 2 %}<div class="alert ok">Ребёнок заведён, PIN {{ s.pin }}. Начисление пойдёт с текущего месяца.</div>
 {% elif saved == 3 %}<div class="alert ok">Скидка записана, следующее начисление её учтёт.</div>
 {% elif saved == 4 %}<div class="alert ok">Статус записан.</div>
-{% elif saved == 5 %}<div class="alert ok">Группа записана.</div>{% endif %}
+{% elif saved == 5 %}<div class="alert ok">Группа записана.</div>
+{% elif saved == 6 %}<div class="alert ok">Имя и родитель записаны.</div>{% endif %}
 {% if error %}<div class="alert bad">{{ error }}</div>{% endif %}
-<p style="margin:0 0 10px"><a href="/new/children?org={{ s.organization_id }}">← Дети</a></p>
-<div class="card">
-  <h3>{{ s.name }}</h3>
-  <div class="meta">{{ org.name }}{% if card.group %}, {{ card.group }}{% endif %}.
-    {% if card.tariff is not none %}Тариф {{ card.tariff | money }}{% if s.discount_amount and s.discount_amount > 0 %}, скидка {{ s.discount_amount | money }}{% if s.discount_reason %} ({{ s.discount_reason }}){% endif %}{% endif %}.{% else %}Тариф не заведён.{% endif %}
-    {% if s.parent_name %}Родитель: {{ s.parent_name }}.{% endif %} PIN {{ s.pin }}.
-    {% if s.status == 'frozen' %}Заморожен.{% endif %}
-    {% if card.balance > 0.5 %}<b class="{{ card.kind }}">Долг {{ card.balance | money }}: {{ card.status }}.</b>{% elif card.overpaid > 0.5 %}<b class="ok">Переплата {{ card.overpaid | money }}, закроет следующий месяц.</b>{% else %}<b class="ok">Долга нет.</b>{% endif %}
-  </div>
-  <div class="acts">
-    {% if can_write %}<button type="button" class="btn" onclick="document.getElementById('cash').hidden=false;this.hidden=true;document.querySelector('#cash input[name=amount]').focus()" {% if cash_open %}hidden{% endif %}>Принять наличные</button>{% endif %}
-    {% if can_write %}
-    <button type="button" class="btn ghost" onclick="openBox('discount')">Скидка</button>
-    <button type="button" class="btn ghost" onclick="openBox('group')">Перевести в группу</button>
-    {% if s.status == 'active' %}<button type="button" class="btn ghost" onclick="openBox('freeze')">Заморозить</button>{% else %}<button type="button" class="btn ghost" onclick="openBox('return')">Вернулся</button>{% endif %}
-    {% endif %}
-    <a class="btn ghost" href="/students/{{ s.id }}/edit">Имя и родитель</a>
-    {% if can_write and s.status != 'inactive' %}<button type="button" class="btn quiet right" onclick="openBox('leave')">Выбыл</button>{% endif %}
-  </div>
-  {% if can_write %}
-  <form id="box-discount" class="cash" method="post" action="/new/children/{{ s.id }}/discount" hidden>
-    <b>Скидка на тариф</b>
-    <span class="lb">Сумма в месяц, сом</span><input class="in num" name="amount" value="{{ s.discount_amount | money if s.discount_amount else '' }}" inputmode="decimal" placeholder="0">
-    <span class="lb">Причина</span><input class="in" name="reason" value="{{ s.discount_reason or '' }}" placeholder="второй ребёнок, ребёнок сотрудника…" style="width:100%">
-    <div style="margin-top:12px"><button type="submit" class="btn">Записать</button> <button type="button" class="btn ghost" onclick="closeBox('discount')">Отмена</button></div>
-    <p class="after">Ноль убирает скидку. Применяется со следующего начисления; текущий месяц не пересчитывается.</p>
-  </form>
-  <form id="box-group" class="cash" method="post" action="/new/children/{{ s.id }}/group" hidden>
-    <b>Перевести в группу</b>
-    <span class="lb">Куда</span><select class="in" name="group_id" style="width:100%">{% for g in groups %}<option value="{{ g.id }}" {% if g.name == card.group %}selected{% endif %}>{{ g.name }}</option>{% endfor %}</select>
-    <span class="lb">С какого дня</span><input class="in" type="date" name="on_date" value="{{ today.isoformat() }}" max="{{ today.isoformat() }}">
-    <div style="margin-top:12px"><button type="submit" class="btn">Записать</button> <button type="button" class="btn ghost" onclick="closeBox('group')">Отмена</button></div>
-  </form>
-  <form id="box-freeze" class="cash" method="post" action="/new/children/{{ s.id }}/status" hidden>
-    <input type="hidden" name="status" value="frozen"><b>Заморозить</b>
-    <span class="lb">С какого дня</span><input class="in" type="date" name="on_date" value="{{ today.isoformat() }}">
-    <span class="lb">Почему</span><input class="in" name="reason" placeholder="уехали до весны…" style="width:100%">
-    <div style="margin-top:12px"><button type="submit" class="btn">Записать</button> <button type="button" class="btn ghost" onclick="closeBox('freeze')">Отмена</button></div>
-    <p class="after">Место держится, начисляется половина тарифа со следующего месяца. Текущий месяц оплачивается полностью.</p>
-  </form>
-  <form id="box-return" class="cash" method="post" action="/new/children/{{ s.id }}/status" hidden>
-    <input type="hidden" name="status" value="active"><b>Вернулся</b>
-    <span class="lb">С какого дня</span><input class="in" type="date" name="on_date" value="{{ today.isoformat() }}">
-    <div style="margin-top:12px"><button type="submit" class="btn">Записать</button> <button type="button" class="btn ghost" onclick="closeBox('return')">Отмена</button></div>
-    {% if s.status == 'inactive' %}<p class="after">Выбывший вернётся без группы: переведите его в группу после.</p>{% endif %}
-  </form>
-  <form id="box-leave" class="cash" method="post" action="/new/children/{{ s.id }}/status" hidden>
-    <input type="hidden" name="status" value="inactive"><b>Выбыл</b>
-    <span class="lb">С какого дня</span><input class="in" type="date" name="on_date" value="{{ today.isoformat() }}">
-    <span class="lb">Почему</span><input class="in" name="reason" placeholder="переехали, другой садик…" style="width:100%">
-    <div style="margin-top:12px"><button type="submit" class="btn quiet">Да, выбыл</button> <button type="button" class="btn ghost" onclick="closeBox('leave')">Отмена</button></div>
-    <p class="after">Группа закрывается этой датой, новых начислений не будет. Долг, если есть, остаётся на карточке.</p>
-  </form>
-  {% endif %}
-  {% if can_write %}
-  <form id="cash" class="cash" method="post" action="/new/children/{{ s.id }}/cash" {% if not cash_open %}hidden{% endif %}>
-    <b>Принять наличные</b>
-    {% include "new/_repeat.html" %}
-    <span class="lb">Сколько</span><input class="in num" name="amount" value="{{ amount }}" inputmode="decimal" placeholder="{% if card.balance > 0.5 %}{{ card.balance | money }}{% else %}0{% endif %}">
-    <span class="lb">За что</span><input class="in" name="what" value="{{ what }}" placeholder="{{ org.name | lower }} за {{ month }}, канцелярия, проезд…" style="width:100%">
-    <span class="lb">Когда</span><input class="in" type="date" name="pay_date" value="{{ pay_date.isoformat() }}" max="{{ today.isoformat() }}">
-    <span class="lb">В чей карман</span>
-    <select class="in" name="pocket_user_id">{% for u in pockets %}<option value="{{ u.id }}" {% if u.id == pocket_user_id %}selected{% endif %}>{{ u.name }}{% if u.id == current_user.id %} (вы){% endif %}</option>{% endfor %}{% if current_user.role in ('staff', 'manager', 'director') and current_user.id not in pockets|map(attribute='id')|list %}<option value="{{ current_user.id }}" selected>{{ current_user.name }} (вы)</option>{% endif %}</select>
-    <div style="margin-top:12px"><button type="submit" class="btn">Записать</button> <button type="button" class="btn ghost" onclick="document.getElementById('cash').hidden=true;document.querySelector('.acts .btn').hidden=false">Отмена</button></div>
-    <p class="after">Оплата ляжет на самый старый долг. Деньги попадут в выбранный карман, на счёт они не попадали.</p>
-  </form>
-  {% endif %}
-  <div class="two">
-    <section>
-      <h4>События</h4>
-      {% for e in card.events %}
-      <div class="ev {{ e.kind }}"><span class="dt">{{ e.date | human_date }}</span><span>{{ e.text }}</span><span class="n">{% if e.amount is not none %}{% if e.kind == 'payment' %}+{% endif %}{{ e.amount | money }}{% endif %}</span></div>
-      {% else %}<div class="ev"><span class="dt"></span><span class="s">Событий пока нет.</span><span></span></div>{% endfor %}
-    </section>
-    <section>
-      <h4>По месяцам</h4>
-      {% if card.months %}
-      <table class="month">
-        <tr><th>Месяц</th><th>Начислено</th><th>Оплачено</th><th>Долг</th></tr>
-        {% for m in card.months %}
-        <tr><td>{{ m.period.strftime('%m.%Y') }}</td><td>{{ m.charged | money }}</td><td>{{ m.paid | money }}</td><td class="{% if m.left > 0.5 %}debt{% endif %}">{{ m.left | money }}</td></tr>
-        {% endfor %}
-      </table>
-      {% else %}<p class="sub">Начислений нет.</p>{% endif %}
-      <p class="after">Сумму долга руками не правят: меняется событие, долг пересчитывается сам. Скидка, заморозка и «выбыл» пока через старый вход.</p>
-    </section>
+<a class="back" href="/new/children?org={{ s.organization_id }}" style="font-size:14px;text-decoration:none">← Дети</a>
+<h3 class="title" style="margin:4px 0 0">{{ s.name }}</h3>
+<p class="meta">{{ org.name }}{% if card.group %}, «{{ card.group }}»{% endif %}.
+  {% if card.tariff is not none %}Тариф {{ card.tariff | money }}{% if s.discount_amount and s.discount_amount > 0 %}, скидка {{ s.discount_amount | money }}{% if s.discount_reason %} ({{ s.discount_reason }}){% endif %}{% endif %}.{% else %}Тариф не заведён.{% endif %}
+  {% if s.status == 'frozen' %}Заморожен: половина тарифа.{% elif s.status == 'inactive' %}Выбыл.{% endif %}
+  PIN {{ s.pin }}.{% if s.parent_name or s.parent_contact %} Родитель: {{ s.parent_name or '' }}{% if s.parent_name and s.parent_contact %}, {% endif %}{{ s.parent_contact or '' }}.{% endif %}</p>
+<div class="state {{ card.kind if card.tariff is not none else '' }}">{% if card.tariff is none %}Тариф не заведён{% elif card.balance > 0.5 %}Должны {{ card.balance | money }} за {{ card.debt_months }}{% elif card.overpaid > 0.5 %}Переплата {{ card.overpaid | money }}, уйдёт на следующий месяц{% else %}Долга нет{% endif %}</div>
+
+{% if can_write %}
+<div class="acts2">
+  <button type="button" class="btn" onclick="openBox('cash')">Принять наличные</button>
+  <div class="more">
+    <button type="button" onclick="openBox('discount')">Скидка</button>
+    <button type="button" onclick="openBox('group')">Перевести в группу</button>
+    {% if s.status == 'active' %}<button type="button" onclick="openBox('freeze')">Заморозить</button>{% else %}<button type="button" onclick="openBox('return')">Вернулся</button>{% endif %}
+    <button type="button" onclick="openBox('info')">Имя и родитель</button>
+    {% if s.status != 'inactive' %}<button type="button" class="away" onclick="openBox('leave')">Выбыл</button>{% endif %}
   </div>
 </div>
+
+<form id="box-cash" class="box" method="post" action="/new/children/{{ s.id }}/cash" {% if not cash_open %}hidden{% endif %}>
+  <b>Принять наличные</b>
+  {% include "new/_repeat.html" %}
+  <span class="lb">Сколько</span><input class="in num" name="amount" value="{{ amount }}" inputmode="decimal" aria-label="Сколько">
+  <span class="lb">За что</span><input class="in" name="what" value="{{ what }}" placeholder="{{ org.name | lower }} за {{ month }}, канцелярия…" aria-label="За что">
+  <span class="lb">Когда</span><input class="in" type="date" name="pay_date" value="{{ pay_date.isoformat() }}" max="{{ today.isoformat() }}" style="width:auto">
+  <span class="lb">В чей карман</span>
+  <select class="in" name="pocket_user_id">{% for u in pockets %}<option value="{{ u.id }}" {% if u.id == pocket_user_id %}selected{% endif %}>{{ u.name }}{% if u.id == current_user.id %} (вы){% endif %}</option>{% endfor %}{% if current_user.role in ('staff', 'manager', 'director') and current_user.id not in pockets|map(attribute='id')|list %}<option value="{{ current_user.id }}" selected>{{ current_user.name }} (вы)</option>{% endif %}</select>
+  <div class="bt"><button type="submit" class="btn">Записать</button><button type="button" class="btn ghost" onclick="closeBox('cash')">Отмена</button></div>
+  <p class="after">Оплата ляжет на самый старый долг.</p>
+</form>
+<form id="box-info" class="box" method="post" action="/new/children/{{ s.id }}/info" hidden>
+  <b>Имя и родитель</b>
+  <div class="pair"><span><span class="lb">Фамилия</span><input class="in" name="last_name" value="{{ s.last_name or (s.name.split(' ')[0] if s.name else '') }}" required></span>
+  <span><span class="lb">Имя</span><input class="in" name="first_name" value="{{ s.first_name or (s.name.split(' ')[1] if s.name and s.name.split(' ')|length > 1 else '') }}" required></span></div>
+  <span class="lb">Отчество, если есть</span><input class="in" name="patronymic" value="{{ s.patronymic or '' }}">
+  <span class="lb">Родитель</span><input class="in" name="parent_name" value="{{ s.parent_name or '' }}">
+  <span class="lb">Телефон</span><input class="in" name="parent_contact" value="{{ s.parent_contact or '' }}" inputmode="tel">
+  <div class="bt"><button type="submit" class="btn">Записать</button><button type="button" class="btn ghost" onclick="closeBox('info')">Отмена</button></div>
+</form>
+<form id="box-discount" class="box" method="post" action="/new/children/{{ s.id }}/discount" hidden>
+  <b>Скидка на тариф</b>
+  <span class="lb">Сумма в месяц, сом</span><input class="in num" name="amount" value="{{ s.discount_amount | money if s.discount_amount else '' }}" inputmode="decimal" aria-label="Сумма скидки">
+  <span class="lb">Причина</span><input class="in" name="reason" value="{{ s.discount_reason or '' }}" placeholder="второй ребёнок, ребёнок сотрудника…" aria-label="Причина скидки">
+  <div class="bt"><button type="submit" class="btn">Записать</button><button type="button" class="btn ghost" onclick="closeBox('discount')">Отмена</button></div>
+  <p class="after">Ноль убирает скидку. Действует со следующего начисления, текущий месяц не пересчитывается.</p>
+</form>
+<form id="box-group" class="box" method="post" action="/new/children/{{ s.id }}/group" hidden>
+  <b>Перевести в группу</b>
+  <span class="lb">Куда</span><select class="in" name="group_id">{% for g in groups %}<option value="{{ g.id }}" {% if g.name == card.group %}selected{% endif %}>{{ g.name }}</option>{% endfor %}</select>
+  <span class="lb">С какого дня</span><input class="in" type="date" name="on_date" value="{{ today.isoformat() }}" max="{{ today.isoformat() }}" style="width:auto">
+  <div class="bt"><button type="submit" class="btn">Записать</button><button type="button" class="btn ghost" onclick="closeBox('group')">Отмена</button></div>
+</form>
+<form id="box-freeze" class="box" method="post" action="/new/children/{{ s.id }}/status" hidden>
+  <input type="hidden" name="status" value="frozen"><b>Заморозить</b>
+  <span class="lb">С какого дня</span><input class="in" type="date" name="on_date" value="{{ today.isoformat() }}" style="width:auto">
+  <span class="lb">Почему</span><input class="in" name="reason" placeholder="уехали до весны…" aria-label="Почему">
+  <div class="bt"><button type="submit" class="btn">Записать</button><button type="button" class="btn ghost" onclick="closeBox('freeze')">Отмена</button></div>
+  <p class="after">Место держится, со следующего месяца начисляется половина тарифа. Текущий месяц оплачивается полностью.</p>
+</form>
+<form id="box-return" class="box" method="post" action="/new/children/{{ s.id }}/status" hidden>
+  <input type="hidden" name="status" value="active"><b>Вернулся</b>
+  <span class="lb">С какого дня</span><input class="in" type="date" name="on_date" value="{{ today.isoformat() }}" style="width:auto">
+  <div class="bt"><button type="submit" class="btn">Записать</button><button type="button" class="btn ghost" onclick="closeBox('return')">Отмена</button></div>
+  {% if s.status == 'inactive' %}<p class="after">Выбывший вернётся без группы: переведите его в группу после.</p>{% endif %}
+</form>
+<form id="box-leave" class="box" method="post" action="/new/children/{{ s.id }}/status" hidden>
+  <input type="hidden" name="status" value="inactive"><b>Выбыл</b>
+  <span class="lb">С какого дня</span><input class="in" type="date" name="on_date" value="{{ today.isoformat() }}" style="width:auto">
+  <span class="lb">Почему</span><input class="in" name="reason" placeholder="переехали, другой садик…" aria-label="Почему">
+  <div class="bt"><button type="submit" class="btn quiet">Да, выбыл</button><button type="button" class="btn ghost" onclick="closeBox('leave')">Отмена</button></div>
+  <p class="after">Группа закрывается этой датой, новых начислений не будет. Долг, если есть, остаётся.</p>
+</form>
+{% endif %}
+
+<h4 class="mh">По месяцам</h4>
+{% for m in card.months %}
+<div class="mon">
+  <div class="t"><b>{{ m.name }}</b><span class="v {% if m.left > 0.5 %}{{ 'bad' if m.old else 'debt' }}{% else %}ok{% endif %}">{% if m.left > 0.5 %}осталось {{ m.left | money }}{% else %}оплачен{% endif %}</span></div>
+  <div class="s">{{ m.text }}</div>
+</div>
+{% else %}
+<p class="sub">Начислений пока нет.{% if card.tariff is none %} Они появятся, когда заведут тариф.{% endif %}</p>
+{% endfor %}
+{% if card.since %}<p class="after">Зачислен(а) {{ card.since | human_date }}{% if card.since.year != today.year %} {{ card.since.year }}{% endif %}.</p>{% endif %}
 {% endblock %}
 
 {% block scripts %}
 <script>
-function openBox(n) { document.querySelectorAll('form.cash').forEach(function (f) { f.hidden = f.id !== 'box-' + n && f.id !== 'cash' ? true : f.hidden; }); var b = document.getElementById('box-' + n); if (b) { b.hidden = false; var i = b.querySelector('input:not([type=hidden]), select'); if (i) i.focus(); } }
+function openBox(n) {
+  document.querySelectorAll('form.box').forEach(function (f) { f.hidden = f.id !== 'box-' + n; });
+  var b = document.getElementById('box-' + n);
+  if (b) { var i = b.querySelector('input:not([type=hidden]), select'); if (i) i.focus(); }
+}
 function closeBox(n) { var b = document.getElementById('box-' + n); if (b) b.hidden = true; }
 </script>
 {% endblock %}
