@@ -1,0 +1,64 @@
+{% extends "new/base.html" %}
+{% block title %}Сотрудники и оклады — Жемчужина{% endblock %}
+
+{% block head %}
+<style>
+  .head { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; }
+  .emp { border-top: 1px solid var(--line); }
+  .emp > summary { list-style: none; display: grid; grid-template-columns: 1fr auto; gap: 2px 16px; padding: 10px 0; min-height: 52px; align-items: center; cursor: pointer; }
+  .emp > summary::-webkit-details-marker { display: none; }
+  .emp .s { font-size: 13px; color: var(--muted); }
+  .emp .n { font-weight: 500; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .emp.gone .t, .emp.gone .n { color: var(--muted); text-decoration: line-through; }
+  .box { background: var(--accent-soft); border-radius: 8px; padding: 14px 16px; margin: 0 0 12px; max-width: 560px; }
+  .box .lb { display: block; font-size: 13px; color: var(--muted); margin: 8px 0 4px; }
+  .box .in { height: 44px; font-size: 16px; }
+  .box .in.num { width: 160px; text-align: right; }
+  .box .bt { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 12px; align-items: center; }
+  .box form + form { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--line); }
+  .hist { font-size: 13px; color: var(--muted); margin-top: 8px; }
+</style>
+{% endblock %}
+
+{% block content %}
+{% if saved %}<div class="alert ok">{{ saved }}</div>{% endif %}
+{% if error %}<div class="alert bad">{{ error }}</div>{% endif %}
+<a href="/new/salary" style="font-size:14px;text-decoration:none">← Зарплата</a>
+<div class="head" style="margin-top:4px"><h3 class="title" style="margin:0">Сотрудники и оклады</h3>
+  {% if can_write %}<button class="btn" type="button" onclick="var b=document.getElementById('add');b.hidden=!b.hidden;if(!b.hidden)b.querySelector('input[name=name]').focus()">Добавить сотрудника</button>{% endif %}</div>
+<p class="sub">Отсюда берётся ведомость. Оклад меняется с месяца: прошлые ведомости не меняются.</p>
+{% if can_write %}
+<form id="add" class="box" method="post" action="/new/salary/staff" autocomplete="off" {% if not error or open_id %}hidden{% endif %}>
+  <b>Новый сотрудник</b>
+  {% if orgs|length > 1 %}<span class="lb">Объект</span><select class="in" name="org_id" style="width:auto">{% for o in orgs %}<option value="{{ o.id }}">{{ o.name }}</option>{% endfor %}</select>{% endif %}
+  <span class="lb">Имя</span><input class="in" name="name" required maxlength="150">
+  <span class="lb">Должность</span><input class="in" name="role" placeholder="воспитатель, повар…" maxlength="100">
+  <span class="lb">Оклад в месяц</span><input class="in num" name="salary" inputmode="decimal" required>
+  <span class="lb">Работает с</span><input class="in" type="date" name="started" value="{{ today.isoformat() }}" style="width:auto">
+  <div class="bt"><button class="btn" type="submit">Записать</button><button class="btn ghost" type="button" onclick="document.getElementById('add').hidden=true">Отмена</button></div>
+</form>
+{% endif %}
+
+{% for r in rows %}
+<details class="emp {% if r.e.ended_on %}gone{% endif %}" {% if open_id == r.e.id %}open{% endif %}>
+  <summary><span><span class="t">{{ r.e.full_name }}{% if r.e.role %}, {{ r.e.role }}{% endif %}</span><br><span class="s">{% if r.e.ended_on %}уволен(а) {{ r.e.ended_on | human_date }}{% else %}{{ r.how or 'ещё не выдавали' }}{% endif %}{% if r.org %}, {{ r.org }}{% endif %}</span></span><span class="n">{{ r.salary | money }}</span></summary>
+  {% if can_write and not r.e.ended_on %}
+  <div class="box">
+    <form method="post" action="/new/salary/staff/{{ r.e.id }}/salary">
+      <span class="lb">Новый оклад</span><input class="in num" name="salary" value="{{ r.salary | money }}" inputmode="decimal" aria-label="Новый оклад">
+      <span class="lb">С какого месяца</span>
+      <select class="in" name="month" style="width:auto">{% for m in months %}<option value="{{ m.strftime('%Y-%m') }}" {% if m == this %}selected{% endif %}>с {{ m | human_date | replace('1 ', '', 1) }}</option>{% endfor %}</select>
+      <div class="bt"><button class="btn" type="submit">Записать оклад</button></div>
+    </form>
+    <form method="post" action="/new/salary/staff/{{ r.e.id }}/end">
+      <span class="lb">Уволен(а): последний рабочий день</span><input class="in" type="date" name="ended" value="{{ today.isoformat() }}" style="width:auto">
+      <div class="bt"><button class="btn quiet" type="submit">Уволен(а)</button><span class="after" style="margin:0">В прошлых ведомостях и выдачах человек остаётся.</span></div>
+    </form>
+    {% if r.history %}<div class="hist">Оклады: {% for h in r.history if h.from_month.year > 2000 %}{{ h.amount | money }} с {{ h.from_month.strftime('%m.%Y') }}{% if not loop.last %}; {% endif %}{% endfor %}</div>{% endif %}
+  </div>
+  {% endif %}
+</details>
+{% else %}
+<p class="sub" style="margin-top:14px">Сотрудников пока нет: добавьте первого.</p>
+{% endfor %}
+{% endblock %}

@@ -10,7 +10,7 @@ from decimal import Decimal
 from sqlalchemy.orm import Session
 
 from app.models import Receipt, Supplier, User
-from app.services import cash, kitchen, stock_count
+from app.services import cash, kitchen, rules, stock_count
 from app.services.price_check import fmt_money
 from app.services.purchases import site_orgs, suggest_suppliers
 from app.services.supplier_ledger import _bulk_ledger_buckets
@@ -95,7 +95,7 @@ def todo(db: Session, site_org_id: int) -> list[dict]:
                       "where": g["where"]})
 
     for s in supplier_debts(db, site_org_id):
-        if s["since"] and (today - s["since"]).days >= DEBT_OLD_DAYS:
+        if s["since"] and (today - s["since"]).days >= rules.debt_old_days(db):
             items.append({"src": "debt", "kind": "warn", "url": f"/new/pay?supplier={s['id']}",
                           "title": f"{s['name']}: пора платить {fmt_money(float(s['debt']))}",
                           "sub": f"долг с {_date_short(s['since'])}", "go": "Оплатить"})

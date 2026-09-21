@@ -1,0 +1,103 @@
+{% extends "new/base.html" %}
+{% block title %}Настройки — Жемчужина{% endblock %}
+
+{% block head %}
+<style>
+  h4.sec { margin: 26px 0 2px; font-size: 15px; }
+  .set { border-top: 1px solid var(--line); }
+  h4.sec + .set { border-top: 0; }
+  .set > summary, .set > .row { list-style: none; display: grid; grid-template-columns: 1fr auto; gap: 2px 16px; align-items: center; padding: 10px 0; min-height: 52px; }
+  .set > summary { cursor: pointer; }
+  .set > summary::-webkit-details-marker { display: none; }
+  .set .t { font-size: 15px; } .set .v { font-size: 14px; color: var(--muted); }
+  .set .v.warn { color: var(--warn); }
+  .set .go { font-size: 14px; font-weight: 500; color: var(--accent); white-space: nowrap; min-height: 44px; display: inline-flex; align-items: center; text-decoration: none; }
+  .set[open] > summary .go { color: var(--muted); }
+  .box { background: var(--accent-soft); border-radius: 8px; padding: 14px 16px; margin: 0 0 12px; max-width: 560px; }
+  .box .lb { display: block; font-size: 13px; color: var(--muted); margin: 8px 0 4px; }
+  .box .in { height: 44px; font-size: 16px; }
+  .box .in.num { width: 160px; text-align: right; }
+  .box .bt { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 12px; align-items: center; }
+  .checks { display: flex; flex-wrap: wrap; gap: 6px 18px; }
+  .checks label { display: inline-flex; align-items: center; gap: 8px; min-height: 40px; font-size: 15px; cursor: pointer; }
+  .checks input { width: 20px; height: 20px; }
+  .people { font-size: 14px; }
+</style>
+{% endblock %}
+
+{% block content %}
+{% if saved %}<div class="alert ok">{{ saved }}</div>{% endif %}
+{% if error %}<div class="alert bad">{{ error }}</div>{% endif %}
+<h3 class="title" style="margin:0">Настройки</h3>
+<p class="sub">Правила, по которым система считает. Меняются редко, видите только вы.</p>
+
+<h4 class="sec">Тарифы</h4>
+{% for t in s.tariffs %}
+<div class="set"><div class="row"><span><span class="t">{{ t.org.name }}, обучение</span><br>
+  {% if t.svc %}<span class="v">{{ t.svc.price | money }} в месяц{% if t.legacy %}; {{ t.legacy }}{% endif %}{% if t.pending %}; с {{ t.pending.from.strftime('%m.%Y') }} — {{ t.pending.price | money }}{% endif %}</span>
+  {% elif t.pending %}<span class="v">с {{ t.pending.from.strftime('%m.%Y') }} — {{ t.pending.price | money }} в месяц (включится в начале месяца)</span>
+  {% else %}<span class="v warn">тариф не заведён: пока его нет, долгов не видно</span>{% endif %}</span>
+  <a class="go" href="/new/settings/tariff/{{ t.org.id }}">{{ 'Изменить' if t.svc or t.pending else 'Завести' }}</a></div></div>
+{% endfor %}
+{% for f in s.frozen if f.org.id in s.tariffs|map(attribute='org.id')|list %}
+<details class="set"><summary><span><span class="t">Заморозка{% if s.frozen|length > 1 %}, {{ f.org.name }}{% endif %}</span><br><span class="v">{% if f.percent is not none %}{{ f.percent | money }} % тарифа со следующего месяца{% else %}не задано{% endif %}</span></span><span class="go">Изменить</span></summary>
+  <form class="box" method="post" action="/new/settings/frozen"><input type="hidden" name="org_id" value="{{ f.org.id }}">
+    <span class="lb">Сколько процентов тарифа платит замороженный ребёнок</span><input class="in num" name="percent" value="{{ f.percent | money if f.percent is not none else '' }}" inputmode="decimal" aria-label="Процент при заморозке">
+    <div class="bt"><button class="btn" type="submit">Записать</button><span class="after" style="margin:0">Текущий месяц не пересчитывается.</span></div></form></details>
+{% endfor %}
+{% for x in s.singles %}
+<details class="set"><summary><span><span class="t">{{ x.svc.name }}{% if s.orgs|length > 1 %}, {{ x.org.name }}{% endif %}</span><br><span class="v">разовая, {{ x.svc.price | money }}</span></span><span class="go">Изменить</span></summary>
+  <form class="box" method="post" action="/new/settings/service/{{ x.svc.id }}">
+    <span class="lb">Цена</span><input class="in num" name="price" value="{{ x.svc.price | money }}" inputmode="decimal" aria-label="Цена">
+    <div class="bt"><button class="btn" type="submit">Записать</button></div></form></details>
+{% endfor %}
+
+<h4 class="sec">Деньги</h4>
+{% for h in s.holders %}
+<details class="set"><summary><span><span class="t">Наличные {{ h.org.name }} держит</span><br><span class="v">{{ h.user.name if h.user else 'не назначено' }}</span></span><span class="go">Изменить</span></summary>
+  <form class="box" method="post" action="/new/settings/holder"><input type="hidden" name="org_id" value="{{ h.org.id }}">
+    <span class="lb">Кто держит наличные объекта</span>
+    <select class="in" name="user_id" style="width:auto"><option value="">— никто —</option>{% for u in users %}<option value="{{ u.id }}" {% if h.user and h.user.id == u.id %}selected{% endif %}>{{ u.name }}</option>{% endfor %}</select>
+    <div class="bt"><button class="btn" type="submit">Записать</button></div></form></details>
+{% endfor %}
+{% for key in ['pocket_delta_threshold', 'debt_old_days'] %}{% set r = RULES[key] %}
+<details class="set"><summary><span><span class="t">{{ r.title }}</span><br><span class="v">{% if key == 'pocket_delta_threshold' %}больше {{ s.rules[key] | money }} {{ r.unit }} — спросим причину{% else %}старше {{ s.rules[key] }} {{ r.unit }}{% endif %}</span></span><span class="go">Изменить</span></summary>
+  <form class="box" method="post" action="/new/settings/rule"><input type="hidden" name="key" value="{{ key }}">
+    <span class="lb">{{ r.title }}, {{ r.unit }}</span><input class="in num" name="value" value="{{ s.rules[key] }}" inputmode="decimal" aria-label="{{ r.title }}">
+    <div class="bt"><button class="btn" type="submit">Записать</button></div></form></details>
+{% endfor %}
+
+<h4 class="sec">Зарплата</h4>
+<details class="set"><summary><span><span class="t">Выдача</span><br><span class="v">{{ s.rules.pay_day }}-го числа, за прошлый месяц</span></span><span class="go">Изменить</span></summary>
+  <form class="box" method="post" action="/new/settings/rule"><input type="hidden" name="key" value="pay_day">
+    <span class="lb">Какого числа выдаём</span><input class="in num" name="value" value="{{ s.rules.pay_day }}" inputmode="numeric" aria-label="День выдачи">
+    <div class="bt"><button class="btn" type="submit">Записать</button><span class="after" style="margin:0">После этого числа невыданная зарплата подсвечивается.</span></div></form></details>
+<details class="set"><summary><span><span class="t">Удержания при переводе на карту</span><br><span class="v">соцфонд {{ s.rules.socfond_rate }} %, подоходный {{ s.rules.income_tax_rate }} %, вычет {{ s.rules.tax_deduction | money }}</span></span><span class="go">Изменить</span></summary>
+  <div class="box">
+    {% for key in ['socfond_rate', 'income_tax_rate', 'tax_deduction'] %}{% set r = RULES[key] %}
+    <form method="post" action="/new/settings/rule" class="bt" style="margin-top:6px"><input type="hidden" name="key" value="{{ key }}">
+      <span style="min-width:170px">{{ r.title }}, {{ r.unit }}</span><input class="in num" name="value" value="{{ s.rules[key] }}" inputmode="decimal" aria-label="{{ r.title }}"><button class="btn ghost" type="submit">Записать</button></form>
+    {% endfor %}
+    <p class="after">По ним система подсказывает удержание, когда зарплату перевели на карту.</p>
+  </div></details>
+<div class="set"><div class="row"><span><span class="t">Сотрудники и оклады</span><br><span class="v">ведёт Махабат в Расходах → Зарплата</span></span><a class="go" href="/new/salary/staff">Открыть</a></div></div>
+
+<h4 class="sec">Склад</h4>
+<details class="set"><summary><span><span class="t">Остаток не считаем</span><br><span class="v">{{ s.minor | map(attribute='name') | join(', ') or 'по всем считаем' }}</span></span><span class="go">Изменить</span></summary>
+  <form class="box" method="post" action="/new/settings/minor">
+    <span class="lb">Отмеченное уходит в расход в день покупки, остаток по нему не ведём</span>
+    <div class="checks">{% for c in s.cats %}<label><input type="checkbox" name="minor" value="{{ c.id }}" {% if c.is_minor %}checked{% endif %}>{{ c.name }}</label>{% endfor %}</div>
+    <div class="bt"><button class="btn" type="submit">Записать</button></div></form></details>
+<details class="set"><summary><span><span class="t">Кухня работает</span><br><span class="v">{{ s.weekdays_text }}</span></span><span class="go">Изменить</span></summary>
+  <form class="box" method="post" action="/new/settings/rule"><input type="hidden" name="key" value="kitchen_weekdays">
+    <span class="lb">В эти дни ждём лист кухни</span>
+    <div class="checks">{% for d in range(7) %}<label><input type="checkbox" name="day" value="{{ d }}" {% if d in s.rules.kitchen_weekdays %}checked{% endif %}>{{ WEEKDAYS[d] }}</label>{% endfor %}</div>
+    <div class="bt"><button class="btn" type="submit">Записать</button></div></form></details>
+
+<h4 class="sec">Доступ</h4>
+{% for u in s.people %}
+<div class="set"><div class="row people"><span><span class="t">{{ u.name }}, {{ role_text[u.role] }}</span><br><span class="v">{{ role_sees[u.role] }}</span></span><span></span></div></div>
+{% endfor %}
+<p class="after">Менять роли и пароли пока — через меня: скажите, кого и как.</p>
+<p class="after"><a href="/new/settings/bot">Бот в чате «Жемчужина»</a></p>
+{% endblock %}

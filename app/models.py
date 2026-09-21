@@ -564,10 +564,35 @@ class Employee(Base):
     role            = Column(String(100))
     salary          = Column(Numeric(12, 2), nullable=False)
     status          = Column(String(20), nullable=False, default="active")  # active|terminated
+    started_on      = Column(Date)   # с 21.09: даты работы, чтобы «Уволен» не стирал человека из прошлых ведомостей
+    ended_on        = Column(Date)
     created_by      = Column(Integer, ForeignKey("users.id"))
     created_at      = Column(DateTime, server_default=func.now())
 
     organization = relationship("Organization")
+
+
+class EmployeeSalary(Base):
+    """Оклад с месяца (21.09): смена оклада не переписывает прошлые ведомости.
+    Нет строки на месяц — берётся Employee.salary (как было до истории)."""
+    __tablename__ = "employee_salaries"
+    id          = Column(Integer, primary_key=True)
+    employee_id = Column(Integer, ForeignKey("employees.id"), nullable=False)
+    amount      = Column(Numeric(12, 2), nullable=False)
+    from_month  = Column(Date, nullable=False)
+    created_by  = Column(Integer, ForeignKey("users.id"))
+    created_at  = Column(DateTime, server_default=func.now())
+
+
+class AppSetting(Base):
+    """Правила бизнеса, которые владелец меняет в Настройках (21.09): пороги,
+    день зарплаты, ставки удержаний, рабочие дни кухни, отложенные тарифы.
+    Значение по умолчанию — в app/services/rules.py."""
+    __tablename__ = "app_settings"
+    key        = Column(String(60), primary_key=True)
+    value      = Column(JSONB, nullable=False)
+    updated_by = Column(Integer, ForeignKey("users.id"))
+    updated_at = Column(DateTime, server_default=func.now())
 
 
 class RecurringExpenseTemplate(Base):

@@ -23,11 +23,12 @@ from app.models import (CapitalWithdrawal, CashFunding, CashTransfer, Organizati
                         SupplierPayment, Transaction, User)
 from app.services import podotchet
 from app.services.podotchet import PODOTCHET_START_DATE, _not_yet_counted, get_cash_baseline
+from app.services import rules
 from app.services.price_check import fmt_money
 from app.services.purchases import audit, founders, pocket_users, site_orgs
 
 POCKET = "pocket"
-POCKET_DELTA_THRESHOLD = Decimal("500")   # выше — нужна причина (макет 4б); потом в Настройки
+POCKET_DELTA_THRESHOLD = Decimal("500")   # по умолчанию; действующий порог — rules.pocket_delta_threshold (Настройки)
 ZERO = Decimal("0")
 
 
@@ -211,8 +212,9 @@ def recount(db: Session, *, user: User, site_org_id: int, pocket_user_id: int, a
     """Пересчёт кармана: насчитанное — новая база; разница остаётся фактом."""
     expected = pocket_balance(db, site_org_id, pocket_user_id)
     delta = actual - expected
-    if abs(delta) > POCKET_DELTA_THRESHOLD and not (reason or "").strip():
-        raise ValueError(f"Разница {delta:+.0f} выше порога {POCKET_DELTA_THRESHOLD:.0f}: напишите, что произошло")
+    limit = rules.pocket_delta_threshold(db)   # из Настроек (21.09)
+    if abs(delta) > limit and not (reason or "").strip():
+        raise ValueError(f"Разница {delta:+.0f} выше порога {limit:.0f}: напишите, что произошло")
     rec = Reconciliation(organization_id=site_org_id, kind=POCKET, subject_id=pocket_user_id, date=d,
                          expected_amount=expected, actual_amount=actual, delta=delta,
                          reason=(reason or "").strip() or None, created_by=user.id)

@@ -1,7 +1,8 @@
 """Новый вход `/new/salary`: ведомость и выдача зарплаты (макет 4в, 17.09)."""
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, timedelta
+from urllib.parse import quote
 from decimal import Decimal, InvalidOperation
 
 from fastapi import APIRouter, Depends, Request
@@ -141,3 +142,109 @@ def salary_remove(tx_id: int, request: Request, db: Session = Depends(get_db)):
         svc.remove(db, user=user, tx=tx)
         db.commit()
     return RedirectResponse(f"/new/salary?month={period:%Y-%m}&open={emp.id}&saved=remove", status_code=303)
+
+
+# ── сотрудники и оклады (21.09) ─────────────────────────────────────────────
+
+def _staff_ctx(request, user, site, db, **kw) -> dict:
+    ctx = _base_ctx(request, user, site, db, "expenses")
+    orgs = svc.payroll_orgs(db, user, site.id)
+    this = date.today().replace(day=1)
+    nxt = (this.replace(day=28) + timedelta(days=4)).replace(day=1)
+    ctx.update({"rows": svc.staff_list(db, orgs), "orgs": orgs, "today": date.today(),
+                "months": [svc.prev_month(this), this, nxt], "this": this,
+                "can_write": user.role in WRITE_ROLES, "error": kw.get("error"), "saved": kw.get("saved"),
+                "open_id": kw.get("open_id")})
+    return ctx
+
+
+def _staff_user(request, db):
+    user = get_current_user(request, db)
+    if not user:
+        return None, None, RedirectResponse("/login", status_code=302)
+    if user.role not in SALARY_ROLES:
+        return None, None, RedirectResponse("/new/today", status_code=302)
+    site = _site(user, db)
+    if site is None:
+        return None, None, HTMLResponse("Объект не найден", status_code=404)
+    return user, site, None
+
+
+def _my_employee(db, user, site, employee_id: int) -> Employee | None:
+    e = db.get(Employee, employee_id)
+    allowed = {o.id for o in svc.payroll_orgs(db, user, site.id)}
+    return e if e is not None and e.organization_id in allowed else None
+
+
+@router.get("/salary/staff", response_class=HTMLResponse)
+def staff_page(request: Request, saved: str | None = None, err: str | None = None, open: int | None = None,
+               db: Session = Depends(get_db)):
+    user, site, stop = _staff_user(request, db)
+    if stop:
+        return stop
+    return templates.TemplateResponse("new/salary_staff.html",
+                                      _staff_ctx(request, user, site, db, saved=saved, error=err, open_id=open))
+
+
+@router.post("/salary/staff")
+async def staff_add(request: Request, db: Session = Depends(get_db)):
+    user, site, stop = _staff_user(request, db)
+    if stop:
+        return stop
+    if user.role not in WRITE_ROLES:
+        return HTMLResponse("Нет прав", status_code=403)
+    form = await request.form()
+    orgs = svc.payroll_orgs(db, user, site.id)
+    oid = str(form.get("org_id") or "")
+    org = next((o for o in orgs if str(o.id) == oid), orgs[0] if orgs else None)
+    try:
+        started = date.fromisoformat(str(form.get("started") or "")) if form.get("started") else None
+        if org is None:
+            raise ValueError("Нет объекта для сотрудника")
+        token = once.clean(str(form.get("form_token") or ""))
+        if done := once.done_url(db, token):
+            return RedirectResponse(done, status_code=303)
+        e = svc.add_employee(db, user=user, org=org, name=str(form.get("name") or ""), role=str(form.get("role") or ""),
+                             salary_raw=str(form.get("salary") or ""), started=started)
+    except ValueError as ex:
+        return RedirectResponse(f"/new/salary/staff?err={quote(str(ex))}", status_code=303)
+    url = f"/new/salary/staff?saved={quote('Сотрудник добавлен: ' + e.full_name)}"
+    once.remember(db, token, user.id, url)
+    db.commit()
+    return RedirectResponse(url, status_code=303)
+
+
+@router.post("/salary/staff/{employee_id}/salary")
+async def staff_salary(employee_id: int, request: Request, db: Session = Depends(get_db)):
+    user, site, stop = _staff_user(request, db)
+    if stop:
+        return stop
+    e = _my_employee(db, user, site, employee_id) if user.role in WRITE_ROLES else None
+    if e is None:
+        return HTMLResponse("Сотрудник не найден", status_code=404)
+    form = await request.form()
+    try:
+        m = date.fromisoformat(f"{form.get('month')}-01")
+        svc.set_salary(db, user=user, e=e, amount_raw=str(form.get("salary") or ""), from_month=m)
+    except ValueError as ex:
+        return RedirectResponse(f"/new/salary/staff?open={e.id}&err={quote(str(ex))}", status_code=303)
+    db.commit()
+    return RedirectResponse(f"/new/salary/staff?saved={quote('Оклад записан: ' + e.full_name)}", status_code=303)
+
+
+@router.post("/salary/staff/{employee_id}/end")
+async def staff_end(employee_id: int, request: Request, db: Session = Depends(get_db)):
+    user, site, stop = _staff_user(request, db)
+    if stop:
+        return stop
+    e = _my_employee(db, user, site, employee_id) if user.role in WRITE_ROLES else None
+    if e is None:
+        return HTMLResponse("Сотрудник не найден", status_code=404)
+    form = await request.form()
+    try:
+        d = date.fromisoformat(str(form.get("ended") or ""))
+    except ValueError:
+        return RedirectResponse(f"/new/salary/staff?open={e.id}&err={quote('Укажите последний рабочий день')}", status_code=303)
+    svc.end_employee(db, user=user, e=e, d=d)
+    db.commit()
+    return RedirectResponse(f"/new/salary/staff?saved={quote(e.full_name + ': уволен(а), в прошлых ведомостях остаётся')}", status_code=303)

@@ -24,10 +24,12 @@ from __future__ import annotations
 from datetime import date, datetime, timedelta
 from decimal import Decimal
 
+from sqlalchemy import and_, or_
 from sqlalchemy.orm import Session
 
 from app.dependencies import get_accessible_orgs
-from app.models import AuditLog, Employee, ExpenseCategory, Organization, Transaction, User
+from app.models import AuditLog, Employee, EmployeeSalary, ExpenseCategory, Organization, Transaction, User
+from app.services import rules
 from app.services.payroll import payroll_category_id
 from app.services.purchases import audit, site_orgs
 
@@ -44,14 +46,17 @@ INCOME_TAX_RATE = Decimal("0.10")     # подоходный, с суммы по
 TAX_DEDUCTION = Decimal("650")        # стандартный вычет
 
 
-def withholding_from_card(card: Decimal) -> dict | None:
+def withholding_from_card(card: Decimal, rates: dict | None = None) -> dict | None:
     """Сколько банк удержал, если на карту пришло `card`. Обратный счёт:
     на карту = начислено − соцфонд − подоходный."""
     if card <= 0:
         return None
-    keep = (1 - SOCFOND_RATE) * (1 - INCOME_TAX_RATE)
-    gross = ((card - INCOME_TAX_RATE * TAX_DEDUCTION) / keep).quantize(Decimal("1"))
-    soc = (gross * SOCFOND_RATE).quantize(Decimal("1"))
+    soc_rate = rates["soc"] if rates else SOCFOND_RATE
+    tax_rate = rates["tax"] if rates else INCOME_TAX_RATE
+    deduction = rates["deduction"] if rates else TAX_DEDUCTION
+    keep = (1 - soc_rate) * (1 - tax_rate)
+    gross = ((card - tax_rate * deduction) / keep).quantize(Decimal("1"))
+    soc = (gross * soc_rate).quantize(Decimal("1"))
     tax = gross - card - soc
     return {"gross": gross, "soc": soc, "tax": tax, "total": gross - card}
 
@@ -83,11 +88,36 @@ def payroll_orgs(db: Session, user: User, site_org_id: int) -> list[Organization
             if o.id in allowed and (o.type != "school" or user.role in SCHOOL_PAYROLL_ROLES)]
 
 
+
+def staff_for_month(db: Session, org_ids: list[int], period: date) -> list[Employee]:
+    """Кто работал в месяце ведомости: уволенный после начала месяца в ней остаётся,
+    принятый после его конца — ещё нет (21.09: «Уволен» не стирает прошлое)."""
+    if not org_ids:
+        return []
+    nxt = (period.replace(day=28) + timedelta(days=4)).replace(day=1)
+    return (db.query(Employee)
+            .filter(Employee.organization_id.in_(org_ids),
+                    or_(Employee.ended_on >= period, and_(Employee.ended_on.is_(None), Employee.status == "active")),
+                    or_(Employee.started_on.is_(None), Employee.started_on < nxt))
+            .order_by(Employee.full_name).all())
+
+
+def salary_map(db: Session, ids: list[int], period: date) -> dict[int, Decimal]:
+    """Оклад на месяц: последняя строка истории с from_month ≤ месяца; нет — Employee.salary."""
+    out: dict[int, Decimal] = {}
+    if not ids:
+        return out
+    for row in (db.query(EmployeeSalary).filter(EmployeeSalary.employee_id.in_(ids), EmployeeSalary.from_month <= period)
+                .order_by(EmployeeSalary.from_month, EmployeeSalary.id).all()):
+        out[row.employee_id] = Decimal(row.amount)
+    return out
+
 def sheet(db: Session, orgs: list[Organization], period: date, today: date | None = None) -> dict:
     today = today or date.today()
     org_ids = [o.id for o in orgs]
-    employees = (db.query(Employee).filter(Employee.organization_id.in_(org_ids), Employee.status == "active")
-                 .order_by(Employee.full_name).all()) if org_ids else []
+    employees = staff_for_month(db, org_ids, period)
+    salaries = salary_map(db, [e.id for e in employees], period)
+    rates = rules.tax_rates(db)
     ids = [e.id for e in employees]
     pays = (db.query(Transaction).filter(Transaction.employee_id.in_(ids), Transaction.period == period,
                                          Transaction.type == "expense", Transaction.deleted_at.is_(None))
@@ -102,16 +132,16 @@ def sheet(db: Session, orgs: list[Organization], period: date, today: date | Non
         mine = by_emp.get(e.id, [])
         soc = sum((Decimal(t.amount) for t in mine if soc_id and t.category_id == soc_id), ZERO)
         issued = sum((Decimal(t.amount) for t in mine), ZERO) - soc
-        salary = Decimal(e.salary or 0)
+        salary = salaries.get(e.id, Decimal(e.salary or 0))
         card = sum((Decimal(t.amount) for t in mine if t.paid_directly and not (soc_id and t.category_id == soc_id)), ZERO)
-        calc = withholding_from_card(card) if not soc else None   # подсказка, пока удержание не записано
+        calc = withholding_from_card(card, rates) if not soc else None   # подсказка, пока удержание не записано
         rows.append({"employee": e, "org": names.get(e.organization_id) if len(orgs) > 1 else None,
                      "salary": salary, "issued": issued, "socfond": soc, "card": card, "calc": calc,
                      "pays": [_pay_row(db, t, soc_id) for t in mine]})
     salary_total = sum((r["salary"] for r in rows), ZERO)
     issued_total = sum((r["issued"] for r in rows), ZERO)
     unpaid = sum(1 for r in rows if not r["issued"])
-    payday = (period.replace(day=28) + timedelta(days=4)).replace(day=PAY_DAY)   # 10-е следующего месяца
+    payday = (period.replace(day=28) + timedelta(days=4)).replace(day=rules.pay_day(db))   # из Настроек, по умолчанию 10-е
     return {"rows": rows, "salary": salary_total, "issued": issued_total,
             "socfond": sum((r["socfond"] for r in rows), ZERO),
             "unpaid": unpaid, "payday": payday, "late": today > payday and unpaid > 0}
@@ -161,3 +191,76 @@ def remove(db: Session, *, user: User, tx: Transaction) -> None:
                     old_data={"kind": "salary", "employee": tx.employee_id, "amount": float(tx.amount),
                               "date": tx.date.isoformat(), "period": tx.period.isoformat() if tx.period else None}))
 
+
+
+# ── сотрудники и оклады (21.09, из старого /employees в Расходы → Зарплата) ──
+
+def staff_list(db: Session, orgs: list[Organization]) -> list[dict]:
+    """Работающие и уволенные за последние три месяца: оклад на сегодня, как платим."""
+    org_ids = [o.id for o in orgs]
+    if not org_ids:
+        return []
+    this = date.today().replace(day=1)
+    since = prev_month(prev_month(this))
+    emps = (db.query(Employee).filter(Employee.organization_id.in_(org_ids),
+                                      or_(and_(Employee.ended_on.is_(None), Employee.status == "active"),
+                                          Employee.ended_on >= since))
+            .order_by(Employee.ended_on.isnot(None), Employee.full_name).all())
+    sal = salary_map(db, [e.id for e in emps], this)
+    last_pay = {}
+    for t in (db.query(Transaction).filter(Transaction.employee_id.in_([e.id for e in emps]), Transaction.type == "expense",
+                                           Transaction.deleted_at.is_(None)).order_by(Transaction.date).all() if emps else []):
+        last_pay[t.employee_id] = t
+    names = {o.id: o.name for o in orgs}
+    out = []
+    for e in emps:
+        t = last_pay.get(e.id)
+        how = ("на карту" if t.paid_directly else "на руки") if t is not None else ""
+        hist = (db.query(EmployeeSalary).filter(EmployeeSalary.employee_id == e.id)
+                .order_by(EmployeeSalary.from_month.desc()).all())
+        out.append({"e": e, "salary": sal.get(e.id, Decimal(e.salary or 0)), "how": how,
+                    "org": names.get(e.organization_id) if len(orgs) > 1 else None, "history": hist})
+    return out
+
+
+def add_employee(db: Session, *, user: User, org: Organization, name: str, role: str, salary_raw: str,
+                 started: date | None) -> Employee:
+    name, role = name.strip(), role.strip()
+    if not name:
+        raise ValueError("Имя обязательно")
+    amount = _money_in(salary_raw, "Оклад")
+    e = Employee(organization_id=org.id, full_name=name, role=role or None, salary=amount, status="active",
+                 started_on=started, created_by=user.id)
+    db.add(e)
+    db.flush()
+    audit(db, "employee", e.id, "insert", user.id, {"name": name, "salary": float(amount), "started": started.isoformat() if started else None})
+    return e
+
+
+def set_salary(db: Session, *, user: User, e: Employee, amount_raw: str, from_month: date) -> None:
+    """Оклад с месяца: прошлые ведомости не меняются. С текущего месяца и раньше —
+    ещё и Employee.salary (его читают старые экраны)."""
+    amount = _money_in(amount_raw, "Оклад")
+    if not db.query(EmployeeSalary.id).filter(EmployeeSalary.employee_id == e.id).first():
+        # первая смена: прежний оклад — строкой «с начала», иначе прошлые месяцы возьмут новый
+        db.add(EmployeeSalary(employee_id=e.id, amount=Decimal(e.salary or 0), from_month=date(2000, 1, 1),
+                              created_by=user.id))
+    db.add(EmployeeSalary(employee_id=e.id, amount=amount, from_month=from_month, created_by=user.id))
+    if from_month <= date.today().replace(day=1):
+        e.salary = amount
+    audit(db, "employee_salary", e.id, "insert", user.id, {"amount": float(amount), "from": from_month.isoformat()})
+
+
+def end_employee(db: Session, *, user: User, e: Employee, d: date) -> None:
+    e.status, e.ended_on = "terminated", d
+    audit(db, "employee", e.id, "update", user.id, {"ended_on": d.isoformat()})
+
+
+def _money_in(raw: str, what: str) -> Decimal:
+    try:
+        v = Decimal((raw or "").replace(" ", "").replace(",", "."))
+    except Exception:
+        raise ValueError(f"{what} — числом, например 30 000")
+    if v <= 0:
+        raise ValueError(f"{what} — больше нуля")
+    return v

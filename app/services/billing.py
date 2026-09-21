@@ -145,6 +145,8 @@ def generate_monthly_charges(db: Session) -> int:
     # весь проход, а не только одну строку.
     db.execute(text("SELECT pg_advisory_xact_lock(hashtext('generate_monthly_charges'))"))
     period = date.today().replace(day=1)
+    from app.services.rules import apply_pending_tariffs
+    apply_pending_tariffs(db, period)   # тариф «с этого месяца» из Настроек включается до начислений
 
     already_charged = {
         sid for (sid,) in db.query(Charge.student_id)

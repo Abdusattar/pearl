@@ -45,11 +45,12 @@
 <h3 class="title" style="margin-top:6px">Зарплата за {{ months_gen[period.month - 1] }}</h3>
 <div class="chips" role="group" aria-label="Месяц">
   {% for m in months %}<a class="chip {% if m == period %}on{% endif %}" href="/new/salary?month={{ '%04d-%02d' % (m.year, m.month) }}">{{ months_gen[m.month - 1] }}</a>{% endfor %}
+  <a href="/new/salary/staff" style="font-size:14px;text-decoration:none;min-height:40px;display:inline-flex;align-items:center;margin-left:8px">Сотрудники и оклады</a>
 </div>
 {% if saved == 'pay' %}<div class="alert ok">Выдача записана, касса уменьшилась.</div>
 {% elif saved == 'remove' %}<div class="alert ok">Выдача убрана. Строка осталась в истории с отметкой, кто убрал.</div>{% endif %}
 {% if not sheet.rows %}
-<div class="alert warn">Сотрудников нет. Заводят их пока в старом входе: <a href="/employees/">Сотрудники</a>.</div>
+<div class="alert warn">Сотрудников нет. <a href="/new/salary/staff">Добавить сотрудника</a>.</div>
 {% else %}
 {% if founder %}<p class="sub">{{ sheet.rows | length }} человек. Оклады <b>{{ sheet.salary | money }}</b> · выдано <b>{{ sheet.issued | money }}</b>{% if sheet.socfond %} · соцфонд и подоходный <b>{{ sheet.socfond | money }}</b>{% endif %}{% if sheet.unpaid %} · ещё никому не выдано: <b>{{ sheet.unpaid }} чел.</b>{% endif %}</p>{% else %}<p class="sub">{{ sheet.rows | length }} человек.{% if sheet.unpaid %} Ещё никому не выдано: <b>{{ sheet.unpaid }} чел.</b>{% endif %}</p>{% endif %}
 {% if sheet.late %}<div class="alert warn">День зарплаты, {{ sheet.payday.day }} {{ months_of[sheet.payday.month - 1] }}, прошёл: {{ sheet.unpaid }} чел. ещё ничего не получили за {{ months_gen[period.month - 1] }}.</div>{% endif %}
@@ -109,7 +110,7 @@
   </div>
   {% endfor %}
 </div>
-<p class="after">Соцфонд и подоходный — удержания у официально оформленных, уходят со счёта вместе с переводом на карту; в «Выдано» не входят. Оклад здесь для справки: из-за отпусков и неполных месяцев на руки выходит по-разному, долгом разница не считается. Выдача ложится расходом на выбранный карман или счёт, частями складывается. Сотрудников и оклады пока правят в старом входе: <a href="/employees/">Сотрудники</a>.</p>
+<p class="after">Соцфонд и подоходный — удержания у официально оформленных, уходят со счёта вместе с переводом на карту; в «Выдано» не входят. Оклад здесь для справки: из-за отпусков и неполных месяцев на руки выходит по-разному, долгом разница не считается. Выдача ложится расходом на выбранный карман или счёт, частями складывается. <a href="/new/salary/staff">Сотрудники и оклады</a>.</p>
 {% endif %}
 {% endblock %}
 

@@ -24,6 +24,7 @@ from sqlalchemy.orm import Session
 
 from app.models import BotMessage, Organization, Receipt, User
 from app.services import cash, children, today
+from app.services import rules
 from app.services.kitchen import missing_days
 from app.services.ocr import compute_hash
 from app.services.price_check import fmt_money
@@ -111,7 +112,7 @@ def group_signals_text(db: Session, site_org_id: int) -> str | None:
     if len(miss) >= 3:
         lines.append(f"Лист кухни не вносился {len(miss)} рабочих дн. — последний пропуск {_d(miss[-1])}.")
     for s in today.supplier_debts(db, site_org_id):
-        if s["since"] and (date.today() - s["since"]).days >= today.DEBT_OLD_DAYS:
+        if s["since"] and (date.today() - s["since"]).days >= rules.debt_old_days(db):
             lines.append(f"Долг {s['name']} {fmt_money(float(s['debt']))} старше месяца, с {_d(s['since'])}.")
     for it in today.todo(db, site_org_id):
         if it["title"].startswith("Пересчёт склада") or "чек" in it["title"]:
@@ -363,7 +364,7 @@ def _handle_pocket_answer(db: Session, user: User, site: Organization, text: str
         actual = Decimal(m.group(1).replace(" ", "").replace(",", "."))
         reason = m.group(2).strip()
     delta = actual - expected
-    if abs(delta) > cash.POCKET_DELTA_THRESHOLD and not reason:
+    if abs(delta) > rules.pocket_delta_threshold(db) and not reason:
         return (f"Записал бы {fmt_money(float(actual))}, но разница с записями {fmt_money(float(delta))}. "
                 "Напишите ту же сумму и почему, или поправьте в приложении.")
     rec = cash.recount(db, user=user, site_org_id=site.id, pocket_user_id=user.id, actual=actual, d=date.today(),

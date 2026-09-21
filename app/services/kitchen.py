@@ -111,10 +111,12 @@ def missing_days(db: Session, site_org_id: int, until: date | None = None) -> li
              .filter(WriteOff.organization_id.in_(org_ids), WriteOff.deleted_at.is_(None),
                      WriteOff.date >= start,
                      or_(WriteOff.reason.is_(None), WriteOff.reason != "пересчёт склада")).distinct().all()}
+    from app.services import rules
+    working = rules.kitchen_weekdays(db)   # из Настроек (21.09), по умолчанию пн–пт
     days = []
     d = start
     while d <= until:
-        if d.weekday() in WORKING_WEEKDAYS and d not in have:
+        if d.weekday() in working and d not in have:
             days.append(d)
         d += timedelta(days=1)
     return days

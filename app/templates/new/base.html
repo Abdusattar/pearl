@@ -112,6 +112,7 @@
       <a class="{% if active_page == 'cash' %}on{% endif %}" href="/new/cash">Касса</a>
       <a class="{% if active_page == 'children' %}on{% endif %}" href="/new/children">Дети</a>
       {% if founder %}<a class="{% if active_page == 'overview' %}on{% endif %}" href="/new/overview">Обзор</a>{% endif %}
+      {% if current_user.role == 'owner' %}<a class="{% if active_page == 'settings' %}on{% endif %}" href="/new/settings">Настройки</a>{% endif %}
     </nav>
     <div class="who">{{ current_user.name }}<br>{{ site.name }}</div>
     <div class="old"><a href="/expenses/">Старый вход</a></div>

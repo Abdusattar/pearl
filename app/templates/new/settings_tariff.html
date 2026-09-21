@@ -1,0 +1,38 @@
+{% extends "new/base.html" %}
+{% block title %}Тариф {{ org.name }} — Жемчужина{% endblock %}
+
+{% block head %}
+<style>
+  .box { background: var(--accent-soft); border-radius: 8px; padding: 14px 16px; margin: 12px 0 4px; max-width: 520px; }
+  .box .lb { display: block; font-size: 13px; color: var(--muted); margin: 10px 0 4px; }
+  .box .in { height: 44px; font-size: 16px; }
+  .box .in.num { width: 160px; text-align: right; }
+  .box .bt { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 12px; }
+  .hist div { display: grid; grid-template-columns: 1fr auto; gap: 2px 16px; padding: 8px 0; border-top: 1px solid var(--line); font-size: 14px; }
+  .hist div:first-of-type { border-top: 0; }
+  .hist .s { font-size: 13px; color: var(--muted); }
+  .hist .n { font-variant-numeric: tabular-nums; }
+</style>
+{% endblock %}
+
+{% block content %}
+{% if error %}<div class="alert bad">{{ error }}</div>{% endif %}
+<a href="/new/settings" style="font-size:14px;text-decoration:none">← Настройки</a>
+<h3 class="title" style="margin:4px 0 0">{{ org.name }}, обучение</h3>
+<p class="sub">{% if svc %}Сейчас {{ svc.price | money }} в месяц.{% else %}Тариф не заведён. Пока его нет, начислений нет и долгов не видно.{% endif %}
+  {% if pending %}С {{ pending_from }} будет {{ pending.price | money }}: включится в начале месяца.{% endif %}</p>
+<form class="box" method="post" action="/new/settings/tariff/{{ org.id }}" autocomplete="off">
+  <span class="lb">Сколько в месяц</span><input class="in num" name="price" value="{{ svc.price | money if svc else '' }}" inputmode="decimal" aria-label="Сколько в месяц" required>
+  <span class="lb">С какого месяца</span>
+  <select class="in" name="month" style="width:auto">{% for m in months %}<option value="{{ m.strftime('%Y-%m') }}">с {{ month_label(m) }}</option>{% endfor %}</select>
+  <div class="bt"><button class="btn" type="submit">Записать тариф</button><a class="btn ghost" href="/new/settings">Отмена</a></div>
+  <p class="after">Начисления пойдут с этого месяца, прошлые не меняются. Скидки детей останутся как есть.{% if charged %} Этот месяц уже начислен, поэтому новая цена — со следующего.{% endif %}</p>
+</form>
+{% if pending %}
+<form method="post" action="/new/settings/tariff/{{ org.id }}" style="margin-top:6px"><input type="hidden" name="cancel_pending" value="1"><button class="btn ghost" type="submit">Отменить тариф с {{ pending_from }}</button></form>
+{% endif %}
+{% if history %}
+<h4 style="margin-top:22px">История цен</h4>
+<div class="hist">{% for h in history %}<div><span>с {{ h.from | human_date }} {{ h.from.year }}<br><span class="s">{{ ('поставил(а) ' ~ h.by) if h.by else 'без автора' }}</span></span><span class="n">{{ h.price | money }}</span></div>{% endfor %}</div>
+{% endif %}
+{% endblock %}
