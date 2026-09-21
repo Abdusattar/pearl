@@ -109,5 +109,5 @@
 <p class="after">{% if only_checks %}Пересчётов и остатков в банке пока не было.{% else %}Движений пока нет.{% endif %}</p>
 {% endfor %}
 
-<div class="quiet"><span>Реже:</span>{% if can_write %}<a href="/new/cash/founder">Учредители</a>{% endif %}<a href="/new/salary">Зарплата</a>{% if can_write %}<a href="/new/cash/recount">Пересчитать наличные</a><a href="/new/cash/bank">Внести остаток в банке</a>{% endif %}</div>
+<div class="quiet"><span>Реже:</span>{% if can_write %}<a href="/new/cash/founder">Учредители</a>{% endif %}{% if can_write %}<a href="/new/cash/recount">Пересчитать наличные</a><a href="/new/cash/bank">Внести остаток в банке</a>{% endif %}</div>
 {% endblock %}

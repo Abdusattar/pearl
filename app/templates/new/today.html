@@ -9,6 +9,8 @@
   @media (max-width: 520px) { .actions { grid-template-columns: 1fr; } }
   .big { display: block; padding: 20px; border-radius: 8px; background: var(--accent); color: var(--on-accent); text-decoration: none; min-height: 44px; }
   .big:hover { background: var(--accent-hover); }
+  .side { grid-column: 1 / -1; display: flex; align-items: baseline; gap: 4px 14px; flex-wrap: wrap; padding: 14px 20px; min-height: 48px; border-radius: 8px; background: var(--accent-soft); color: var(--accent); text-decoration: none; }
+  .side .t { font-size: 16px; font-weight: 600; } .side .s { font-size: 14px; color: var(--muted); }
   .big .t { font-size: 18px; font-weight: 600; display: block; }
   .big .s { font-size: 13px; color: var(--on-accent); opacity: .9; display: block; margin-top: 4px; }
   .cols { display: grid; grid-template-columns: 1fr 250px; gap: 30px; }
@@ -35,11 +37,13 @@
 {% endblock %}
 
 {% block content %}
+{% if request.query_params.get('skipped') %}<div class="alert ok">Чек отложен: вносить не будем, он остался в базе с причиной.</div>{% endif %}
 <div class="head"><h3 class="title" style="margin:0">{{ today | human_date(true) | capitalize }}</h3><span class="s">{{ site_line }}</span></div>
 {% if can_write %}
 <div class="actions">
   <a class="big" href="/new/buy"><span class="t">Купили</span><span class="s">{{ buy_sub }}</span></a>
   <a class="big" href="/new/kitchen"><span class="t">Лист кухни за сегодня</span><span class="s">Что повара взяли на готовку</span></a>
+  <a class="side" href="/new/nocheck"><span class="t">Расход без чека</span><span class="s">такси, доставка, свет, вода, ремонт</span></a>
 </div>
 {% endif %}
 <div class="cols">

@@ -1,0 +1,40 @@
+{% extends "new/base.html" %}
+{% block title %}{{ c.supplier.name if c.supplier else (c.note or 'Расход') }}, {{ c.date | human_date }} — Жемчужина{% endblock %}
+
+{% block content %}
+<div class="card">
+  <h3>{{ c.supplier.name if c.supplier else (c.note or 'Расход') }}, {{ c.date | human_date }}</h3>
+  <div class="meta">
+    {% if c.lines %}Покупка, {{ c.lines | length }} {% if c.lines | length == 1 %}позиция{% elif c.lines | length < 5 %}позиции{% else %}позиций{% endif %}.{% else %}Расход без чека{% if c.note and c.supplier %}: {{ c.note }}{% endif %}.{% endif %}
+    {% if c.payment == 'debt' %}<b>В долг, не оплачено.</b>{% if c.supplier %} Долг {{ c.supplier.name }} сейчас {{ supplier_debt | money }}.{% endif %}
+    {% elif c.payment == 'part' %}Заплатили {{ c.paid | money }}, <b>остальное в долг</b>.{% if c.supplier %} Долг {{ c.supplier.name }} сейчас {{ supplier_debt | money }}.{% endif %}
+    {% elif c.payment == 'account' %}Перевели со счёта.
+    {% else %}Заплатили из кассы{% if c.payer %}, карман: {{ c.payer.name }}{% endif %}.{% endif %}
+    {% if c.creator %}Завёл(а) {{ c.creator.name }}{% if c.created_at %} {{ c.created_at.strftime('%d.%m в %H:%M') }}{% endif %}.{% endif %}
+  </div>
+  <div class="acts">
+    {% if can_write and c.supplier and supplier_debt > 0 and c.payment in ('debt', 'part') %}<a class="btn" href="/new/pay?supplier={{ c.supplier.id }}">Оплатить</a>{% endif %}
+    {% if can_write %}<a class="btn ghost" href="/new/record/{{ c.kind }}/{{ c.id }}/edit">Поправить</a>{% endif %}
+    {% if c.photo %}<a class="btn ghost" href="/media/{{ c.photo }}" target="_blank">Фото чека</a>{% endif %}
+    <a class="btn ghost" href="/new/expenses">В ленту</a>
+    {% if can_write %}<button type="button" class="btn quiet right" onclick="document.getElementById('rm').hidden=false;this.hidden=true">Убрать</button>{% endif %}
+  </div>
+  {% if can_write %}
+  <form id="rm" method="post" action="/new/record/{{ c.kind }}/{{ c.id }}/remove" hidden style="margin:-6px 0 16px">
+    <div class="alert warn" style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin:0">
+      <span>Точно убрать? Запись уйдёт из ленты, склад, долг и касса откатятся.</span>
+      <button type="submit" class="btn quiet">Да, убрать</button>
+      <button type="button" class="btn ghost" onclick="this.closest('form').hidden=true;document.querySelector('.acts .quiet').hidden=false">Оставить</button>
+    </div>
+  </form>
+  {% endif %}
+
+  <table class="tbl">
+    {% for l in c.lines %}
+    <tr><td>{{ l.name }}</td><td class="r q">{{ l.qty }} {{ l.unit }} × {{ l.price }}</td><td class="r">{{ l.total }}</td></tr>
+    {% endfor %}
+    <tr class="tot"><td>Итого</td><td></td><td class="r">{{ c.total | money }}</td></tr>
+  </table>
+  {% if c.note and c.lines %}<p class="after">{{ c.note }}</p>{% endif %}
+</div>
+{% endblock %}

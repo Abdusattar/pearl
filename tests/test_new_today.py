@@ -68,7 +68,7 @@ def test_old_debt_is_a_signal(db, site, staff):
     db.flush()
     items = svc.todo(db, site.id)
     hit = [it for it in items if it["title"].startswith("Халима тест-сг")]
-    assert hit and "58 300" in hit[0]["sub"] and hit[0]["url"] == f"/suppliers/{s.id}"
+    assert hit and "58 300" in hit[0]["sub"] and hit[0]["url"] == f"/new/pay?supplier={s.id}"
 
 
 def test_figures_count_only_stock_level_products(db, site, staff):

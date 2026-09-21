@@ -1,0 +1,80 @@
+{% extends "new/base.html" %}
+{% block title %}Поставщики — Жемчужина{% endblock %}
+
+{% block head %}
+<style>
+  .two { display: grid; grid-template-columns: 280px 1fr; gap: 30px; align-items: start; }
+  @media (max-width: 760px) { .two { grid-template-columns: 1fr; } }
+  .back { font-size: 14px; text-decoration: none; }
+  .sup { display: flex; justify-content: space-between; gap: 12px; padding: 10px 12px; border-radius: 8px; min-height: 44px; align-items: center; color: inherit; text-decoration: none; }
+  .sup:hover { background: var(--field); }
+  .sup.on { background: var(--accent-soft); }
+  .sup .n { font-variant-numeric: tabular-nums; white-space: nowrap; color: var(--muted); }
+  .sup .n.debt { color: var(--warn); font-weight: 500; }
+  .l { font-size: 14px; color: var(--muted); }
+  .debt { font-size: 34px; font-weight: 600; line-height: 1.15; margin: 4px 0 2px; font-variant-numeric: tabular-nums; }
+  .acts { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 10px; }
+  .day { font-size: 13px; color: var(--muted); margin: 14px 0 2px; }
+  .row { display: grid; grid-template-columns: 1fr auto; gap: 2px 16px; padding: 10px 0; border-top: 1px solid var(--line); min-height: 48px; color: inherit; text-decoration: none; }
+  .day + .row { border-top: 0; }
+  .row .s { font-size: 13px; color: var(--muted); }
+  .row .n { font-weight: 500; text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
+  .row .n.out { color: var(--ok); }
+  .quiet { font-size: 14px; color: var(--muted); margin-top: 18px; }
+  .quiet form { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 8px; align-items: center; }
+  .quiet .in { height: 44px; font-size: 16px; }
+  .quiet .in.num { width: 150px; text-align: right; }
+  .quiet .in.why { flex: 1 1 220px; }
+</style>
+{% endblock %}
+
+{% block content %}
+<a class="back" href="/new/expenses">← Расходы</a>
+{% if saved %}<div class="alert ok">Долг уточнён. Дальше он считается от этой цифры.</div>{% endif %}
+{% if error %}<div class="alert bad">{{ error }}</div>{% endif %}
+<div class="two" style="margin-top:8px">
+  <section>
+    <h3 class="title" style="margin:0 0 10px">Поставщики</h3>
+    {% for r in rows %}
+    <a class="sup {% if c and c.s.id == r.s.id %}on{% endif %}" href="/new/suppliers/{{ r.s.id }}"><span>{{ r.s.name }}</span><span class="n {% if r.debt >= 1 %}debt{% endif %}">{{ r.debt | money }}</span></a>
+    {% else %}
+    <p class="after">Поставщиков пока нет: они появятся с первой покупкой.</p>
+    {% endfor %}
+  </section>
+  {% if c %}
+  <section>
+    <div class="l">{{ c.s.name }}, {% if c.debt >= 1 %}должны{% else %}долга нет{% endif %}</div>
+    <div class="debt">{{ c.debt | money }}</div>
+    <div class="acts">
+      {% if can_write and c.debt >= 1 %}<a class="btn" href="/new/pay?supplier={{ c.s.id }}">Оплатить</a>{% endif %}
+      {% if can_write %}<a class="btn ghost" href="/new/buy?supplier={{ c.s.id }}">Купили у {{ c.s.name }}</a>{% endif %}
+    </div>
+    <h4 style="margin-top:22px">Привозы и оплаты</h4>
+    {% set ns = namespace(day=None) %}
+    {% for it in c.history %}
+      {% if it.date != ns.day %}{% set ns.day = it.date %}<div class="day">{{ it.date | human_date(true) }}</div>{% endif %}
+      {% if it.url %}<a class="row" href="{{ it.url }}">{% else %}<div class="row">{% endif %}
+        <span>{{ it.title }}<br><span class="s">{{ it.sub }}</span></span>
+        <span class="n {% if it.kind == 'out' %}out{% endif %}">{% if it.amount is not none %}{% if it.amount < 0 %}−{{ (-it.amount) | money }}{% else %}{{ it.amount | money }}{% endif %}{% endif %}</span>
+      {% if it.url %}</a>{% else %}</div>{% endif %}
+    {% else %}
+    <p class="after">Привозов и оплат пока нет.</p>
+    {% endfor %}
+    {% if can_write %}
+    <details class="quiet" {% if error %}open{% endif %}>
+      <summary>Долг не совпадает с тем, что говорит поставщик? Уточнить долг</summary>
+      {% if c.reset %}<p>Долг уже уточняли {{ c.reset.date | human_date }}. Если та цифра неверна, отменим её вместе с владельцем.</p>
+      {% else %}
+      <form method="post" action="/new/suppliers/{{ c.s.id }}/debt">
+        <input class="in num" name="amount" inputmode="decimal" placeholder="сколько должны" aria-label="Сколько должны на самом деле">
+        <input class="in why" name="reason" required maxlength="200" placeholder="Откуда цифра: сверили с поставщиком…" aria-label="Откуда цифра">
+        <button class="btn ghost" type="submit">Уточнить</button>
+      </form>
+      <p>Один раз на поставщика. Строка останется в истории, дальше долг считается от этой цифры.</p>
+      {% endif %}
+    </details>
+    {% endif %}
+  </section>
+  {% endif %}
+</div>
+{% endblock %}

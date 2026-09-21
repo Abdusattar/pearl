@@ -6,7 +6,8 @@
   .head { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 6px; }
   .head h3 .m { color: var(--muted); font-weight: 400; }
   .head h3 .m a { color: var(--muted); text-decoration: none; padding: 0 6px; }
-  .links { display: flex; flex-wrap: wrap; gap: 8px 18px; margin: 0 0 18px; font-size: 14px; }
+  .links { display: flex; flex-wrap: wrap; gap: 8px 18px; margin: 8px 0 6px; font-size: 14px; }
+  .links a { min-height: 32px; display: inline-flex; align-items: center; }
   .links a { text-decoration: none; }
   .day { font-size: 13px; font-weight: 600; color: var(--muted); padding: 14px 0 4px; }
   .row { display: grid; grid-template-columns: 1fr auto; gap: 4px 16px; align-items: baseline; padding: 10px 0; border-top: 1px solid var(--line); color: inherit; text-decoration: none; min-height: 48px; }
@@ -24,12 +25,14 @@
   <h3 class="title" style="margin:0">Расходы <span class="m"><a href="/new/expenses?month={{ prev_key }}">‹</a>{{ month_name }}{% if next_key %}<a href="/new/expenses?month={{ next_key }}">›</a>{% endif %}</span></h3>
   {% if can_write %}<a class="btn" href="/new/buy">Купили</a>{% endif %}
 </div>
-<p class="sub">За {{ month_name }} <b>{{ totals.total | money }} сом</b>: продукты {{ totals.food | money }}, зарплата {{ totals.salary | money }}, остальное {{ totals.other | money }}. Должны поставщикам <b>{{ debt_total | money }}</b>{% if debts %}: {% for d in debts[:3] %}{{ d.name }} {{ d.debt | money }}{% if not loop.last %}, {% endif %}{% endfor %}{% endif %}.</p>
+{% if request.query_params.get('removed') %}<div class="alert ok">Запись убрана: склад, долг и касса откатились, в истории она осталась.</div>{% endif %}
 <div class="links">
   <a href="/new/nocheck">Расход без чека</a>
+  <a href="/new/salary">Зарплата и налоги</a>
   <a href="/new/pay">Оплатить поставщику</a>
-  <a href="/suppliers/">Поставщики и долги</a>
+  <a href="/new/suppliers">Поставщики</a>
 </div>
+<p class="sub">За {{ month_name }} <b>{{ totals.total | money }} сом</b>: продукты {{ totals.food | money }}, зарплата и налоги {{ totals.salary | money }}, остальное {{ totals.other | money }}. Должны поставщикам <b>{{ debt_total | money }}</b>{% if debts %}: {% for d in debts[:3] %}{{ d.name }} {{ d.debt | money }}{% if not loop.last %}, {% endif %}{% endfor %}{% endif %}.</p>
 
 {% for day in days %}
 <div class="day">{{ day.date | human_date(true) | capitalize }}</div>
@@ -39,5 +42,4 @@
 {% else %}
 <div class="empty">За {{ month_name }} расходов нет.</div>
 {% endfor %}
-<p class="after">Покупки старого входа открываются в старом входе, новые — карточкой. Расход без чека пока тоже через старый вход.</p>
 {% endblock %}

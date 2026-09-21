@@ -9,7 +9,7 @@ from decimal import Decimal
 
 from sqlalchemy.orm import Session
 
-from app.models import Receipt, Supplier
+from app.models import Receipt, Supplier, User
 from app.services import cash, kitchen, stock_count
 from app.services.price_check import fmt_money
 from app.services.purchases import site_orgs, suggest_suppliers
@@ -74,19 +74,21 @@ def todo(db: Session, site_org_id: int) -> list[dict]:
     if missing_total > 3:
         items[-1]["sub"] += f" · и ещё {missing_total - 3}"
 
+    # Чек с фото (телефон, чат, брошенный на полпути) — строкой, открывает «Купили»,
+    # уже заполненное с фото (21.09). Старой проверки чеков больше нет.
     receipts = unchecked_receipts(db, site_org_id)
-    if receipts:
-        n = len(receipts)
-        word = "чек" if n % 10 == 1 and n % 100 != 11 else ("чека" if 2 <= n % 10 <= 4 and not 12 <= n % 100 <= 14 else "чеков")
-        first = receipts[0]
-        items.append({"kind": "warn", "url": f"/expenses/{first.id}/confirm",
-                      "title": f"{n} {word} с фото не проверен{'' if n == 1 else 'ы'}",
-                      "sub": f"сфотографирован{'' if n == 1 else 'ы'} {_date_short(first.created_at.date()) if first.created_at else ''}",
-                      "go": "Проверить"})
+    names = {u.id: u.name for u in db.query(User).filter(User.id.in_({r.created_by for r in receipts if r.created_by})).all()} if receipts else {}
+    for r in receipts[:3]:
+        who = names.get(r.created_by)
+        items.append({"kind": "warn", "url": f"/new/buy?receipt={r.id}", "title": "Чек с фото не внесён",
+                      "sub": (f"прислал(а) {who} " if who else "") + (_date_short(r.created_at.date()) if r.created_at else ""),
+                      "go": "Внести"})
+    if len(receipts) > 3:
+        items[-1]["sub"] += f" · и ещё {len(receipts) - 3}"
 
     for s in supplier_debts(db, site_org_id):
         if s["since"] and (today - s["since"]).days >= DEBT_OLD_DAYS:
-            items.append({"kind": "warn", "url": f"/suppliers/{s['id']}",
+            items.append({"kind": "warn", "url": f"/new/pay?supplier={s['id']}",
                           "title": f"{s['name']}: пора платить",
                           "sub": f"{fmt_money(float(s['debt']))} сом, долг с {_date_short(s['since'])}", "go": "Оплатить"})
 

@@ -420,7 +420,7 @@ def history(db: Session, site_org_id: int, only_checks: bool = False, limit: int
                   .group_by(Transaction.date).order_by(Transaction.date.desc()).limit(5).all())
         for d, s, n in salary:
             items.append({"kind": None, "id": None, "date": d, "at": None, "title": "Зарплата наличными",
-                          "sub": f"{n} чел., убрать выдачу — в Зарплате", "amount": -Decimal(s)})
+                          "sub": f"{n} чел., вносится в Расходах, «Зарплата и налоги»", "amount": -Decimal(s)})
 
     recs = (db.query(Reconciliation).filter(Reconciliation.organization_id.in_(org_ids),
                                             Reconciliation.kind.in_((POCKET, ACCOUNT)))

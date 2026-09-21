@@ -41,7 +41,7 @@
 {% block content %}
 {% set months_gen = ["январь", "февраль", "март", "апрель", "май", "июнь", "июль", "август", "сентябрь", "октябрь", "ноябрь", "декабрь"] %}
 {% set months_of = ["января", "февраля", "марта", "апреля", "мая", "июня", "июля", "августа", "сентября", "октября", "ноября", "декабря"] %}
-<a class="back" href="/new/cash">← Касса</a>
+<a class="back" href="/new/expenses">← Расходы</a>
 <h3 class="title" style="margin-top:6px">Зарплата за {{ months_gen[period.month - 1] }}</h3>
 <div class="chips" role="group" aria-label="Месяц">
   {% for m in months %}<a class="chip {% if m == period %}on{% endif %}" href="/new/salary?month={{ '%04d-%02d' % (m.year, m.month) }}">{{ months_gen[m.month - 1] }}</a>{% endfor %}

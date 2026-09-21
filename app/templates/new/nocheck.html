@@ -16,11 +16,13 @@
 
 {% block content %}
 <a class="back" href="/new/expenses">← Расходы</a>
-<h3 class="title" style="margin-top:6px">{% if replaces %}Поправить расход{% else %}Расход без чека{% endif %}</h3>
+<h3 class="title" style="margin-top:6px">{% if replaces or legacy %}Поправить расход{% else %}Расход без чека{% endif %}</h3>
 {% if error %}<div class="alert bad">{{ error }}</div>{% endif %}
+{% if legacy %}<div class="alert warn">Поправляете запись «{{ legacy.title }}» от {{ legacy.date | human_date }} на {{ legacy.total | money }}. После «Записать» она заменится, прежняя останется в истории. <a href="/new/expenses">Отмена</a></div>{% endif %}
 {% if replaces %}<div class="alert warn">Поправляете расход «{{ replaces.note or '' }}» у {{ replaces.supplier.name }} от {{ replaces.date | human_date }} на {{ replaces.total | money }}. После «Записать» он заменится, прежняя версия останется в истории. <a href="/new/buy/{{ replaces.id }}">Отмена</a></div>{% endif %}
 <form method="post" action="/new/nocheck" class="phone" id="nocheck" autocomplete="off">
   <input type="hidden" name="replaces_id" value="{{ replaces.id if replaces else '' }}">
+  <input type="hidden" name="replaces_legacy" value="{{ legacy.key if legacy else '' }}">
   {% include "new/_repeat.html" %}
 
   <label class="lb" for="amount">Сколько</label>

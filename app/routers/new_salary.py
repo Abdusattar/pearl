@@ -29,7 +29,7 @@ def _period(s: str | None) -> date:
 
 
 def _ctx(request, user, site, db, period: date, **kw) -> dict:
-    ctx = _base_ctx(request, user, site, db, "cash")
+    ctx = _base_ctx(request, user, site, db, "expenses")
     orgs = svc.payroll_orgs(db, user, site.id)
     ctx.update({
         "period": period, "months": svc.month_choices(), "sheet": svc.sheet(db, orgs, period),

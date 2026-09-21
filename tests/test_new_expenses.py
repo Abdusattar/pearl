@@ -219,3 +219,112 @@ def test_feed_debt_row_follows_later_payment(client, db, site, staff, halima, ca
     client.post("/new/pay", data={"supplier_id": halima.id, "amount": "200", "source": "cash", "payer_id": str(staff.id),
                                   "pay_date": date.today().isoformat(), "repeat_ok": "1"})
     assert row()["status"] == "долг оплачен" and row()["status_kind"] == ""
+
+
+# ── блок «Расходы» целиком (21.09) ───────────────────────────────────────
+
+def test_edit_before_pocket_recount_does_not_charge_again(client, db, site, staff):
+    """Фильтры 18.09: поправка записи, внесённой до пересчёта кармана, не должна
+    списывать всю новую сумму ещё раз — пересчёт уже видел реальные деньги."""
+    from datetime import datetime, timedelta
+    from app.models import Reconciliation, Transaction
+    from app.services import cash
+    old = _purchase(db, _nocheck(client, kind="other", amount="5220", what="фильтры", payer_id=staff.id))
+    t_old = datetime.now() - timedelta(hours=2)
+    for t in db.query(Transaction).filter_by(purchase_id=old.id).all():
+        t.created_at = t_old
+    rec = cash.recount(db, user=staff, site_org_id=site.id, pocket_user_id=staff.id, actual=Decimal(5235),
+                       d=date.today(), reason="пересчёт")
+    rec.created_at = datetime.now() - timedelta(hours=1)
+    db.flush()
+    assert cash.pocket_balance(db, site.id, staff.id) == Decimal(5235)
+    new = _purchase(db, _nocheck(client, kind="other", amount="13400", what="фильтры, 3 шт.", payer_id=staff.id,
+                                 replaces_id=old.id))
+    assert new.replaces_id == old.id
+    assert cash.pocket_balance(db, site.id, staff.id) == Decimal(5235)
+
+
+def test_legacy_record_opens_in_new_card_and_edits_as_nocheck(client, db, site, staff):
+    from app.models import Transaction
+    sup = Supplier(name="Такси старое тест-лр", phone="0000")
+    db.add(sup)
+    db.flush()
+    t = Transaction(organization_id=site.id, type="expense", amount=150, date=date.today(), supplier_id=sup.id,
+                    description="такси", created_by=staff.id, paid_from_user_id=staff.id)
+    db.add(t)
+    db.flush()
+    first, last, _ = svc.month_bounds(date.today().strftime("%Y-%m"))
+    days, _ = svc.month_rows(db, site.id, first, last)
+    row = next(x for d in days for x in d["rows"] if x["title"] == sup.name)
+    assert row["url"] == f"/new/record/t/{t.id}"
+    card = client.get(row["url"])
+    assert card.status_code == 200 and "Расход без чека" in card.text and "/expenses/" not in _main(card.text)
+    e = client.get(f"/new/record/t/{t.id}/edit", follow_redirects=False)
+    assert e.status_code == 302 and e.headers["location"] == f"/new/nocheck?legacy=t:{t.id}"
+    form = client.get(e.headers["location"])
+    assert "Поправить расход" in form.text and f'value="t:{t.id}"' in form.text
+    new = _purchase(db, _nocheck(client, kind="delivery", amount="200", what="такси", supplier_name=sup.name,
+                                 payer_id=staff.id, replaces_legacy=f"t:{t.id}"))
+    db.refresh(t)
+    assert t.deleted_at is not None and new.total == Decimal(200)
+    assert client.get(f"/new/record/t/{t.id}").status_code == 404
+
+
+def test_legacy_record_remove(client, db, site, staff):
+    from app.models import Transaction
+    t = Transaction(organization_id=site.id, type="expense", amount=990, date=date.today(), description="прочее",
+                    created_by=staff.id)
+    db.add(t)
+    db.flush()
+    r = client.post(f"/new/record/t/{t.id}/remove", follow_redirects=False)
+    assert r.status_code == 303
+    db.refresh(t)
+    assert t.deleted_at is not None
+
+
+def test_photo_receipt_opens_buy_draft_and_can_be_skipped(client, db, site, staff):
+    from app.models import AuditLog, Receipt
+    rc = Receipt(organization_id=site.id, file_path="receipts/2026-09/test-lr.jpg", ocr_status="pending",
+                 created_by=staff.id)
+    db.add(rc)
+    db.flush()
+    from app.services import today as today_svc
+    item = next(i for i in today_svc.todo(db, site.id) if i["url"] == f"/new/buy?receipt={rc.id}")
+    assert item["title"] == "Чек с фото не внесён" and staff.name in item["sub"]
+    page = client.get(f"/new/buy?receipt={rc.id}")
+    assert page.status_code == 200 and "выберите, у кого купили" in page.text and f"receipt={rc.id}" in page.text
+    assert "Не вносить" in page.text
+    r = client.post(f"/new/receipt/{rc.id}/skip", data={"reason": ""}, follow_redirects=False)
+    assert "skip_error" in r.headers["location"] and rc.ocr_status == "pending"
+    r = client.post(f"/new/receipt/{rc.id}/skip", data={"reason": "уже внесён"}, follow_redirects=False)
+    assert r.headers["location"].startswith("/new/today")
+    db.refresh(rc)
+    assert rc.ocr_status == "rejected"
+    assert db.query(AuditLog).filter_by(entity_type="receipt", entity_id=rc.id).first().new_data["reason"] == "уже внесён"
+    assert client.get(f"/new/buy?receipt={rc.id}", follow_redirects=False).status_code == 302
+
+
+def test_suppliers_page_history_and_debt_once(client, db, site, staff, halima, carrot):
+    p = _purchase(db, _post(client, halima, [{"name": carrot.name, "pid": carrot.id, "qty": "10", "price": "30"}],
+                            payment="debt"))
+    page = client.get(f"/new/suppliers/{halima.id}")
+    assert page.status_code == 200 and halima.name in page.text and f"/new/buy/{p.id}" in page.text
+    assert "/suppliers/" not in page.text.replace("/new/suppliers/", "")
+    r = client.post(f"/new/suppliers/{halima.id}/debt", data={"amount": "5000", "reason": ""})
+    assert "Напишите, откуда цифра" in r.text
+    r = client.post(f"/new/suppliers/{halima.id}/debt", data={"amount": "5000", "reason": "сверили с Халимой"},
+                    follow_redirects=False)
+    assert r.status_code == 303 and get_supplier_balance(db, halima.id) == Decimal(5000)
+    r = client.post(f"/new/suppliers/{halima.id}/debt", data={"amount": "6000", "reason": "ещё раз"})
+    assert "уже уточняли" in r.text
+
+
+def test_expenses_page_has_no_old_links(client, db, site, staff):
+    page = client.get("/new/expenses")
+    assert page.status_code == 200 and "Зарплата и налоги" in page.text and "/new/suppliers" in page.text
+    for old in ('href="/suppliers', 'href="/expenses/', "/podotchet"):
+        assert old not in _main(page.text)   # «Старый вход» в меню остаётся до блока «Склад»
+
+
+def _main(html: str) -> str:
+    return html.split('<main', 1)[-1]

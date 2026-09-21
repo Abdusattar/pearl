@@ -10,7 +10,7 @@ from __future__ import annotations
 from datetime import date, timedelta
 from decimal import Decimal
 
-from sqlalchemy import func
+from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 
 from app.models import (ExpenseCategory, Purchase, ReceiptItem, ReceiptTransaction, Supplier,
@@ -68,7 +68,7 @@ def month_rows(db: Session, site_org_id: int, first: date, last: date) -> tuple[
         if t.purchase_id:
             key = ("p", t.purchase_id)
         elif t.employee_id or (t.category_id and kinds.get(t.category_id) == "salary"):
-            key = ("s", t.date, t.period)
+            key = ("s", t.date, t.period, bool(t.employee_id))   # налог — своей строкой, не внутри зарплаты
         elif t.id in receipt_by_tx:
             key = ("r", receipt_by_tx[t.id])
         else:
@@ -112,8 +112,12 @@ def month_rows(db: Session, site_org_id: int, first: date, last: date) -> tuple[
         names = [n for tid in g["tx_ids"] for n in names_by_tx.get(tid, [])]
         debt = g["amount"] - g["paid"]
         if key[0] == "s":
-            title = f"Зарплата за {_month_name(g['date'] if not key[2] else key[2])}" if g["people"] else "Зарплата"
-            sub = f"{g['people']} чел., ведомость" if g["people"] else (g["description"] or "")
+            if g["people"]:
+                title = f"Зарплата за {_month_name(g['date'] if not key[2] else key[2])}"
+                sub = f"{g['people']} чел., ведомость"
+            else:
+                title = g["description"] or "Соцфонд и подоходный"
+                sub = "налог" + (f" за {_month_name(key[2])}" if key[2] else "") + (", со счёта" if g["paid_directly"] else "")
             url = f"/new/salary?month={key[2]:%Y-%m}" if key[2] else "/new/salary"
         else:
             title = g["supplier"] or (g["description"] or "Расход")
@@ -124,9 +128,9 @@ def month_rows(db: Session, site_org_id: int, first: date, last: date) -> tuple[
             if key[0] == "p":
                 url = f"/new/buy/{key[1]}"
             elif key[0] == "r":
-                url = f"/expenses/{key[1]}/edit-manual"
+                url = f"/new/record/r/{key[1]}"
             else:
-                url = f"/expenses/tx/{key[1]}/edit"
+                url = f"/new/record/t/{key[1]}"
         if debt >= 1:
             status, status_kind = (f"{fmt_money(float(debt))} в долг" if g["paid"] >= 1 else "в долг"), "debt"
             if g["paid"] >= 1:
@@ -140,14 +144,18 @@ def month_rows(db: Session, site_org_id: int, first: date, last: date) -> tuple[
         out.append({"date": g["date"], "title": title, "sub": sub, "amount": g["amount"], "status": status,
                     "status_kind": status_kind, "url": url, "payment": False})
 
+    # Оплаты этой площадки и старые без площадки (до 16.09 платёж её не знал).
     pays = (db.query(SupplierPayment)
-            .filter(SupplierPayment.deleted_at.is_(None), SupplierPayment.date >= first, SupplierPayment.date <= last)
+            .filter(SupplierPayment.deleted_at.is_(None), SupplierPayment.date >= first, SupplierPayment.date <= last,
+                    or_(SupplierPayment.organization_id.in_(org_ids + [site_org_id]),
+                        SupplierPayment.organization_id.is_(None)))
             .all())
     for p in pays:
         out.append({"date": p.date, "title": f"Оплата: {suppliers.get(p.supplier_id, '')}",
-                    "sub": (p.comment or "") + ("со счёта" if p.paid_directly else "из кассы"),
+                    "sub": ((p.comment + ", ") if p.comment else "") + ("со счёта" if p.paid_directly else "из кассы")
+                           + ". В сумму месяца не входит",
                     "amount": -Decimal(p.amount), "status": "оплата долга", "status_kind": "", "payment": True,
-                    "url": f"/suppliers/{p.supplier_id}"})
+                    "url": f"/new/suppliers/{p.supplier_id}"})
     out.sort(key=lambda r: (r["date"], not r["payment"]), reverse=True)
 
     days: list[dict] = []

@@ -14,7 +14,7 @@ from app.models import Purchase, Supplier
 from app.routers.new_buy import WRITE_ROLES, _base_ctx, _site, templates
 from app.services import ledger as svc
 from app.services import no_receipt, once, repeats
-from app.services.purchases import default_pocket, founders, pocket_users, remove_purchase, site_orgs
+from app.services.purchases import default_pocket, founders, pocket_users, remove_purchase, site_orgs, keep_entry_time
 from app.services.supplier_ledger import get_supplier_balance
 from app.services.today import supplier_debts
 
@@ -144,9 +144,22 @@ def _nocheck_ctx(request, user, site, db, **kw) -> dict:
         "payment": kw.get("payment", "cash"), "payer_id": kw.get("payer_id", default_pocket(db, site.id, user)),
         "account_org_id": kw.get("account_org_id"), "founder_id": kw.get("founder_id"),
         "d": kw.get("d", date.today()), "error": kw.get("error"), "repeat": kw.get("repeat"),
-        "repeat_back": "/new/expenses", "replaces": kw.get("replaces"),
+        "repeat_back": "/new/expenses", "replaces": kw.get("replaces"), "legacy": kw.get("legacy"),
     })
     return ctx
+
+
+def _legacy_key(v: str | None) -> tuple[str, int] | None:
+    v = (v or "").strip()
+    if len(v) > 2 and v[0] in "rt" and v[1] == ":" and v[2:].isdigit():
+        return v[0], int(v[2:])
+    return None
+
+
+def _legacy_kind(db: Session, tx) -> str:
+    from app.models import ExpenseCategory
+    cat = db.get(ExpenseCategory, tx.category_id) if tx.category_id else None
+    return next((k for k, (_, name) in no_receipt.KINDS.items() if cat and name == cat.name), "other")
 
 
 def _live_nocheck(db: Session, site, purchase_id: int | None) -> Purchase | None:
@@ -157,13 +170,27 @@ def _live_nocheck(db: Session, site, purchase_id: int | None) -> Purchase | None
 
 
 @router.get("/nocheck", response_class=HTMLResponse)
-def nocheck_form(request: Request, edit: int | None = None, db: Session = Depends(get_db)):
+def nocheck_form(request: Request, edit: int | None = None, legacy: str | None = None, db: Session = Depends(get_db)):
     user = get_current_user(request, db)
     if not user:
         return RedirectResponse("/login", status_code=302)
     site = _site(user, db)
     if site is None:
         return HTMLResponse("Объект не найден", status_code=404)
+    if (lk := _legacy_key(legacy)) is not None:
+        from app.services import legacy as lg
+        rows = lg.txs(db, site.id, *lk)
+        if not rows:
+            return HTMLResponse("Запись не найдена или уже поправлена", status_code=404)
+        c = lg.card(db, lk[0], lk[1], rows)
+        kw = dict(amount=f"{float(c['total']):g}".replace(".", ","), kind=_legacy_kind(db, rows[0]), what=c["note"] or "",
+                  supplier_name=c["supplier"].name if c["supplier"] else "", for_org="shared",
+                  payment=c["payment"] if c["payment"] in no_receipt.PAYMENTS else "cash",
+                  payer_id=c["payer"].id if c["payer"] else default_pocket(db, site.id, user),
+                  account_org_id=c["account_org_id"], d=c["date"],
+                  legacy={"key": f"{lk[0]}:{lk[1]}", "title": c["supplier"].name if c["supplier"] else (c["note"] or "расход"),
+                          "date": c["date"], "total": c["total"]})
+        return templates.TemplateResponse("new/nocheck.html", _nocheck_ctx(request, user, site, db, **kw))
     if edit is None:
         return templates.TemplateResponse("new/nocheck.html", _nocheck_ctx(request, user, site, db))
     old = _live_nocheck(db, site, edit)
@@ -199,6 +226,15 @@ async def nocheck_submit(request: Request, db: Session = Depends(get_db)):
               founder_id=num("founder_id"), d=d or date.today(), replaces=_live_nocheck(db, site, num("replaces_id")))
     if g("replaces_id") and kw["replaces"] is None:
         return HTMLResponse("Этот расход уже поправили или убрали — откройте его заново", status_code=409)
+    lk = _legacy_key(g("replaces_legacy"))
+    legacy_rows = []
+    if lk is not None:
+        from app.services import legacy as lg
+        legacy_rows = lg.txs(db, site.id, *lk)
+        if not legacy_rows:
+            return HTMLResponse("Эту запись уже поправили или убрали — откройте её заново", status_code=409)
+        kw["legacy"] = {"key": f"{lk[0]}:{lk[1]}", "title": g("supplier_name"), "date": legacy_rows[0].date,
+                        "total": sum(t.amount for t in legacy_rows)}
 
     def render(error=None, repeat=None):
         return templates.TemplateResponse("new/nocheck.html", _nocheck_ctx(request, user, site, db, error=error,
@@ -233,10 +269,14 @@ async def nocheck_submit(request: Request, db: Session = Depends(get_db)):
     if done := once.done_url(db, token):
         return RedirectResponse(done, status_code=303)
     repeat_ok = g("repeat_ok") == "1"
-    if not repeat_ok and kw["replaces"] is None and (rep := no_receipt.find_repeat(db, site.id, kw["kind"], amount, d)):
+    if not repeat_ok and kw["replaces"] is None and not legacy_rows and (rep := no_receipt.find_repeat(db, site.id, kw["kind"], amount, d)):
         return render(None, rep)
+    old_tx_ids = [t.id for t in kw["replaces"].transactions] if kw["replaces"] is not None else []
     if kw["replaces"] is not None:
         remove_purchase(db, kw["replaces"], user)
+    if legacy_rows:
+        old_tx_ids = [t.id for t in legacy_rows]
+        lg.remove(db, legacy_rows, user, "поправлено в новом входе")
     supplier = db.query(Supplier).filter(Supplier.name == kw["supplier_name"]).first()
     if supplier is None:
         supplier = Supplier(name=kw["supplier_name"], phone="0000")
@@ -248,7 +288,71 @@ async def nocheck_submit(request: Request, db: Session = Depends(get_db)):
         founder_id=kw["founder_id"], for_org_id=for_org_id, d=d, repeat_confirmed=repeat_ok)
     if kw["replaces"] is not None:
         purchase.replaces_id = kw["replaces"].id
+    if old_tx_ids:
+        keep_entry_time(db, purchase, old_tx_ids)
     url = f"/new/buy/{purchase.id}?saved=1"
     once.remember(db, token, user.id, url)
     db.commit()
     return RedirectResponse(url, status_code=303)
+
+
+# ── поставщики (блок «Расходы», 21.09) ───────────────────────────────────
+
+def _suppliers_page(request, user, site, db, supplier_id: int | None, error: str | None = None, saved: bool = False):
+    from app.services import suppliers_view as sv
+    rows = sv.listing(db)
+    sup = db.get(Supplier, supplier_id) if supplier_id else (rows[0]["s"] if rows else None)
+    ctx = _base_ctx(request, user, site, db, "expenses")
+    ctx.update({"rows": rows, "c": sv.card(db, sup) if sup else None, "can_write": user.role in WRITE_ROLES,
+                "error": error, "saved": saved})
+    return templates.TemplateResponse("new/suppliers.html", ctx)
+
+
+@router.get("/suppliers", response_class=HTMLResponse)
+def suppliers_list(request: Request, db: Session = Depends(get_db)):
+    user = get_current_user(request, db)
+    if not user:
+        return RedirectResponse("/login", status_code=302)
+    site = _site(user, db)
+    if site is None:
+        return HTMLResponse("Объект не найден", status_code=404)
+    return _suppliers_page(request, user, site, db, None)
+
+
+@router.get("/suppliers/{supplier_id}", response_class=HTMLResponse)
+def supplier_card(supplier_id: int, request: Request, saved: int = 0, db: Session = Depends(get_db)):
+    user = get_current_user(request, db)
+    if not user:
+        return RedirectResponse("/login", status_code=302)
+    site = _site(user, db)
+    if site is None or db.get(Supplier, supplier_id) is None:
+        return HTMLResponse("Поставщик не найден", status_code=404)
+    return _suppliers_page(request, user, site, db, supplier_id, saved=bool(saved))
+
+
+@router.post("/suppliers/{supplier_id}/debt", response_class=HTMLResponse)
+async def supplier_set_debt(supplier_id: int, request: Request, db: Session = Depends(get_db)):
+    from app.services import suppliers_view as sv
+    user = get_current_user(request, db)
+    if not user:
+        return RedirectResponse("/login", status_code=302)
+    if user.role not in WRITE_ROLES:
+        return HTMLResponse("Нет прав", status_code=403)
+    site = _site(user, db)
+    sup = db.get(Supplier, supplier_id)
+    if site is None or sup is None:
+        return HTMLResponse("Поставщик не найден", status_code=404)
+    form = await request.form()
+    raw = (form.get("amount") or "").replace(" ", "").replace(",", ".")
+    try:
+        actual = Decimal(raw)
+    except InvalidOperation:
+        return _suppliers_page(request, user, site, db, supplier_id, error="Сколько должны на самом деле? Укажите сумму")
+    if actual < 0:
+        return _suppliers_page(request, user, site, db, supplier_id, error="Долг не может быть меньше нуля")
+    try:
+        sv.set_debt(db, user=user, site_org_id=site.id, supplier=sup, actual=actual, reason=form.get("reason") or "")
+    except ValueError as e:
+        return _suppliers_page(request, user, site, db, supplier_id, error=str(e))
+    db.commit()
+    return RedirectResponse(f"/new/suppliers/{supplier_id}?saved=1", status_code=303)

@@ -10,6 +10,13 @@
   .ac .dd div:hover, .ac .dd div.hi { background: var(--accent-soft); }
   .ac .dd small { color: var(--muted); white-space: nowrap; }
   tr.ask td { background: var(--warn-soft); padding: 10px 12px; font-size: 14px; }
+  .draft { display: flex; gap: 14px; align-items: center; padding: 10px 14px; border-radius: 8px; background: var(--accent-soft); margin: 10px 0 14px; flex-wrap: wrap; }
+  .draft .thumb { width: 48px; height: 60px; border-radius: 4px; overflow: hidden; border: 1px solid var(--line); flex: none; background: var(--field); }
+  .draft .thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .draft .t { font-size: 15px; } .draft .s { font-size: 13px; color: var(--muted); }
+  .skip { margin-top: 18px; font-size: 14px; color: var(--muted); }
+  .skip form { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 8px; }
+  .skip .in { flex: 1 1 240px; height: 44px; font-size: 16px; }
   tr.ask .chips { display: inline-flex; margin: 0 0 0 10px; vertical-align: middle; gap: 6px; }
   tr.ask .chip { padding: 8px 12px; min-height: 40px; }
   .newbox { display: flex; gap: 6px; margin-top: 6px; flex-wrap: wrap; }
@@ -37,8 +44,16 @@
 {% endblock %}
 
 {% block content %}
-<h3 class="title">{% if replaces %}Поправить покупку{% else %}Купили{% endif %}</h3>
+<h3 class="title">{% if replaces or legacy %}Поправить покупку{% else %}Купили{% endif %}</h3>
+{% if draft %}
+<div class="draft"><a class="thumb" href="/media/{{ draft.path }}" target="_blank" aria-label="Открыть фото чека"><img src="/media/{{ draft.path }}" alt=""></a>
+  <span><span class="t">{% if supplier %}С фото чека: проверьте строки и запишите{% else %}Чек с фото: выберите, у кого купили, строки заполнятся с фото{% endif %}</span><br>
+  <span class="s">{% if draft.by %}прислал(а) {{ draft.by }}{% endif %}{% if draft.date %} {{ draft.date | human_date }}{% endif %}. <a href="/media/{{ draft.path }}" target="_blank">Открыть фото</a></span></span></div>
+{% endif %}
 {% if error %}<div class="alert bad">{{ error }}</div>{% endif %}
+{% if legacy %}
+<div class="alert warn">Поправляете запись у {{ supplier.name if supplier else '' }} от {{ legacy.date | human_date }} на {{ legacy.total | money }}. После «Записать» она заменится: склад, долг и касса пересчитаются сами, прежняя останется в истории. <a href="/new/record/{{ legacy.key | replace(':', '/') }}">Отмена</a></div>
+{% endif %}
 {% if replaces %}
 <div class="alert warn">Поправляете покупку у {{ replaces.supplier.name }} от {{ replaces.date | human_date }} на {{ replaces.total | money }}. После «Записать» она заменится: склад, долг и касса пересчитаются сами, прежняя версия останется в истории.
   {% if paid_warning %}<br><b>По долгу этой покупки уже платили.</b> Если поменяете «в долг» на «из кассы», оплата поставщику станет лишней.{% endif %}
@@ -46,16 +61,17 @@
 {% endif %}
 
 <p class="sub">У кого?</p>
-<div class="chips" {% if replaces %}hidden{% endif %}>
+<div class="chips" {% if replaces or legacy %}hidden{% endif %}>
   {% for s in chips %}
-  <a class="chip {% if supplier and s.id == supplier.id and not other %}on{% endif %}" href="/new/buy?supplier={{ s.id }}">{{ s.name }}</a>
+  <a class="chip {% if supplier and s.id == supplier.id and not other %}on{% endif %}" href="/new/buy?supplier={{ s.id }}{% if draft %}&receipt={{ draft.id }}{% endif %}">{{ s.name }}</a>
   {% endfor %}
-  <a class="chip {% if other %}on{% endif %}" href="/new/buy?other=1">Кто-то другой</a>
+  <a class="chip {% if other %}on{% endif %}" href="/new/buy?other=1{% if draft %}&receipt={{ draft.id }}{% endif %}">Кто-то другой</a>
 </div>
 
 <form method="post" action="/new/buy" enctype="multipart/form-data" id="buy" autocomplete="off">
   <input type="hidden" name="other" value="{{ '1' if other else '' }}">
   <input type="hidden" name="replaces_id" value="{{ replaces.id if replaces else '' }}">
+  <input type="hidden" name="replaces_legacy" value="{{ legacy.key if legacy else '' }}">
   <input type="hidden" name="photo_receipt_id" value="{{ photo_receipt_id or '' }}">
   <input type="hidden" name="dup_ok" id="dup_ok" value="">
   <input type="hidden" name="for_org_confirmed" id="for_org_confirmed" value="{{ '1' if ask_for_org else '' }}">
@@ -193,6 +209,15 @@
   </div>
   {% endif %}
 </form>
+{% if draft and not replaces and not legacy %}
+<details class="skip" {% if request.query_params.get('skip_error') %}open{% endif %}>
+  <summary>Этот чек вносить не нужно</summary>
+  <form method="post" action="/new/receipt/{{ draft.id }}/skip">
+    <input class="in" name="reason" required maxlength="200" placeholder="Почему: уже внесён, дубль, не наш…" aria-label="Почему не вносить">
+    <button type="submit" class="btn ghost">Не вносить</button>
+  </form>
+</details>
+{% endif %}
 {% endblock %}
 
 {% block scripts %}

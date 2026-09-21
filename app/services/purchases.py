@@ -765,6 +765,35 @@ def replace_purchase(db: Session, old: Purchase, user: User) -> int | None:
     return receipt.id
 
 
+def keep_entry_time(db: Session, new: Purchase, old_tx_ids: list[int]) -> None:
+    """Поправленная версия — не новое событие, а исправление прошлого (21.09).
+
+    Касса и долги отсекают по времени занесения всё, что уже сидит внутри
+    пересчёта (`_not_yet_counted`). Новая версия с временем «сейчас» после
+    пересчёта списывалась из кармана второй раз: правка фильтров 18.09 с 5 220 на
+    13 400 увела бы карман Мунары в минус на 13 400. Поэтому у новой версии время
+    занесения исходной записи: была до пересчёта — остаток не двигается (пересчёт
+    уже видел реальные деньги), была после — сдвигается ровно на разницу."""
+    if not old_tx_ids:
+        return
+    from sqlalchemy import func as sa_func
+    t0 = db.query(sa_func.min(Transaction.created_at)).filter(Transaction.id.in_(old_tx_ids)).scalar()
+    if t0 is None:
+        return
+    db.flush()
+    txs = db.query(Transaction).filter(Transaction.purchase_id == new.id).all()
+    for t in txs:
+        t.created_at = t0
+    ids = [t.id for t in txs]
+    if ids:
+        for wr in db.query(WarehouseReceipt).filter(WarehouseReceipt.transaction_id.in_(ids)).all():
+            wr.created_at = t0
+    if new.funding_id:
+        f = db.get(CashFunding, new.funding_id)
+        if f is not None:
+            f.created_at = t0
+
+
 def purchase_lines(db: Session, purchase: Purchase) -> list[dict]:
     """Строки карточки покупки: товар, количество × цена, сумма."""
     tx_ids = [t.id for t in purchase.transactions]
