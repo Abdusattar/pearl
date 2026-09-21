@@ -691,6 +691,10 @@ def record_purchase(
     )
     db.add(purchase)
     db.flush()
+    if receipt.file_path != "manual":
+        # черновик из чата или с фото: во что превратился и кто внёс (11_bot_inbox.md)
+        receipt.result_type, receipt.result_id = "purchase", purchase.id
+        receipt.decided_by, receipt.decided_at = user.id, datetime.now()
 
     tx_by_cat = create_split_transactions(
         db, items, total, amount_paid_val, None, site_org_id, supplier_id, note, tx_date, user.id,

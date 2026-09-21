@@ -49,28 +49,15 @@ def test_group_messages_are_ignored(db, site, people):
     assert svc.handle_update(db, _upd(m.tg_id, "40000 в субботу", private=False)) is None
 
 
-def test_pocket_yes_writes_recount(db, site, people):
+def test_pocket_number_is_not_written_by_bot(db, site, people):
+    """21.09: бот не пишет пересчёт мимо проверки Махабат, пятничного «верно?» больше нет."""
     m, _ = people
     cash.withdraw(db, user=m, site_org_id=site.id, account_org_id=site.id, amount=Decimal(10000), d=date.today())
-    text, bal = svc.pocket_text(db, site.id, m)
-    assert "10 000" in text and bal == 10000
-    reply = svc.handle_update(db, _upd(m.tg_id, "да"))
-    assert "сошлось" in reply
-    rec = db.query(Reconciliation).filter_by(kind="pocket", subject_id=m.id).one()
-    assert rec.actual_amount == 10000 and rec.delta == 0
-
-
-def test_pocket_number_needs_reason_when_big(db, site, people):
-    m, _ = people
-    cash.withdraw(db, user=m, site_org_id=site.id, account_org_id=site.id, amount=Decimal(10000), d=date.today())
-    reply = svc.handle_update(db, _upd(m.tg_id, "8000"))
-    assert "почему" in reply
+    for text in ("да", "8000", "8000 отдала за хлеб"):
+        svc.handle_update(db, _upd(m.tg_id, text))
     assert db.query(Reconciliation).filter_by(kind="pocket", subject_id=m.id).count() == 0
-    reply = svc.handle_update(db, _upd(m.tg_id, "8000 отдала за хлеб, не записала"))
-    assert "Записано" in reply and "разница" in reply
-    rec = db.query(Reconciliation).filter_by(kind="pocket", subject_id=m.id).one()
-    assert rec.actual_amount == 8000 and rec.reason.startswith("отдала")
-    assert cash.pocket_balance(db, site.id, m.id) == 8000
+    reply = svc.handle_update(db, _upd(m.tg_id, "5000"))
+    assert "Кассе" in reply
 
 
 def test_owner_ok_forwards_summary_to_founders(db, site, people, monkeypatch):
@@ -90,12 +77,10 @@ def test_owner_ok_forwards_summary_to_founders(db, site, people, monkeypatch):
 
 def test_schedule_is_idempotent(db, site, people, monkeypatch):
     m, f = people
-    friday = datetime(2026, 9, 18, 17, 5)   # пятница
+    friday = datetime(2026, 9, 18, 17, 5)   # пятница: вопроса «на руках X?» больше нет (21.09)
     sent = svc.run_scheduled(db, friday)
-    assert any(k.startswith("pocket:") for k in sent)
-    assert svc.run_scheduled(db, friday) == []
-    asks = db.query(BotMessage).filter_by(kind="pocket_ask", user_id=m.id).all()
-    assert len(asks) == 1 and asks[0].status == "logged"   # без токена — только журнал
+    assert not any(k.startswith("pocket:") for k in sent)
+    assert db.query(BotMessage).filter_by(kind="pocket_ask", user_id=m.id).count() == 0
     monday = datetime(2030, 9, 16, 9, 1)   # не сегодняшний: локальный сервер пишет свои задачи в ту же базу
     sent = svc.run_scheduled(db, monday)
     assert "group_signals:2030-09-16" in sent and "founders:2030-09-16" in sent

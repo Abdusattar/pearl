@@ -76,7 +76,7 @@ def test_photo_receipts_one_row_and_list(client, db, site, staff):
         db.add(Receipt(organization_id=site.id, file_path=f"receipts/test-sg-{i}.jpg", ocr_status="pending", created_by=staff.id))
     db.flush()
     rows = [it for it in svc.todo(db, site.id) if it["src"] == "receipts"]
-    assert len(rows) == 1 and rows[0]["title"] == "3 чека с фото не внесены" and rows[0]["url"] == "/new/receipts"
+    assert len(rows) == 1 and rows[0]["title"] == "Из чата и с фото: 3 ждут проверки" and rows[0]["url"] == "/new/receipts"
     page = client.get("/new/receipts")
     assert page.status_code == 200 and page.text.count("/new/buy?receipt=") == 3
 

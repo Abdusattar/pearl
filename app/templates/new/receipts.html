@@ -1,42 +1,41 @@
 {% extends "new/base.html" %}
-{% block title %}Чеки с фото — Жемчужина{% endblock %}
+{% block title %}Из чата и с фото — Жемчужина{% endblock %}
 
 {% block head %}
 <style>
-  .grp { font-size: 13px; color: var(--muted); margin: 16px 0 0; }
   .rc { border-top: 1px solid var(--line); padding: 12px 0; }
-  .grp + .rc { border-top: 0; }
+  .rc:first-of-type { border-top: 0; }
   .rc .row { display: grid; grid-template-columns: 64px 1fr auto; gap: 6px 14px; align-items: center; }
   .rc .ph { width: 64px; height: 64px; border-radius: 6px; overflow: hidden; background: var(--field); display: block; }
   .rc .ph img { width: 100%; height: 100%; object-fit: cover; display: block; }
-  .rc .t { font-size: 15px; } .rc .s { font-size: 13px; color: var(--muted); }
+  .rc .t { font-size: 15px; } .rc .s { font-size: 13px; color: var(--muted); margin-top: 2px; }
+  .rc .s.warn { color: var(--warn); }
   .rc .b { display: flex; gap: 8px; flex-wrap: wrap; justify-content: flex-end; align-items: center; }
   .rc details summary { list-style: none; cursor: pointer; display: inline-flex; align-items: center; min-height: 44px; padding: 0 14px; border-radius: 8px; border: 1px solid var(--line); color: var(--muted); font-size: 14px; }
   .rc details summary::-webkit-details-marker { display: none; }
   .rc details[open] summary { display: none; }
   .rc form.skip { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
   .rc form.skip .in { flex: 1 1 220px; height: 44px; font-size: 16px; }
-  @media (max-width: 520px) { .rc .row { grid-template-columns: 52px 1fr; } .rc .ph { width: 52px; height: 52px; } .rc .b { grid-column: 1 / -1; justify-content: flex-start; } }
+  @media (max-width: 560px) { .rc .row { grid-template-columns: 52px 1fr; } .rc .ph { width: 52px; height: 52px; } .rc .b { grid-column: 1 / -1; justify-content: flex-start; } }
 </style>
 {% endblock %}
 
 {% block content %}
-{% if skipped %}<div class="alert ok">Чек отложен: вносить не будем, он остался в базе с причиной.</div>{% endif %}
+{% if skipped %}<div class="alert ok">Не вносим: черновик остался в истории с причиной.</div>{% endif %}
+{% if done == 'kitchen' %}<div class="alert ok">Лист кухни внесён{% if done_day %} за {{ done_day[8:10] }}.{{ done_day[5:7] }}{% endif %}: склад списал строки.</div>{% endif %}
 <a href="/new/today" style="font-size:14px;text-decoration:none">← Сегодня</a>
-<h3 class="title" style="margin:4px 0 0">Чеки с фото</h3>
-<p class="sub">Фото есть, записи нет. Сюда же потом придут записи из чата «Жемчужина»: бот разберёт, вы подтвердите.</p>
-{% set ns = namespace(m=None) %}
+<h3 class="title" style="margin:4px 0 0">Из чата и с фото</h3>
+<p class="sub">Что прислали в «Жемчужину» и боту, и фото чеков с ноутбука. Пока вы не внесли, в деньгах и на складе ничего не изменилось.</p>
 {% for x in rows %}
-  {% set m = x.date.strftime('%Y-%m') if x.date else '' %}
-  {% if m != ns.m %}{% set ns.m = m %}<div class="grp">{{ ['январь','февраль','март','апрель','май','июнь','июль','август','сентябрь','октябрь','ноябрь','декабрь'][x.date.month - 1] | capitalize if x.date else 'Без даты' }}</div>{% endif %}
   <div class="rc">
     <div class="row">
-      <a class="ph" href="/media/{{ x.r.file_path }}" target="_blank" aria-label="Открыть фото чека"><img src="/media/{{ x.r.file_path }}" alt="" loading="lazy"></a>
-      <div><div class="t">Чек{% if x.amount %} на {{ x.amount | money }}{% endif %}{% if x.date %}, {{ x.date | human_date }}{% endif %}</div>
-        <div class="s">{% if x.by %}прислал(а) {{ x.by }}{% endif %}{% if x.r.created_at %} в {{ x.r.created_at.strftime('%H:%M') }}{% endif %}</div></div>
+      <a class="ph" href="/media/{{ x.r.file_path }}" target="_blank" aria-label="Открыть фото"><img src="/media/{{ x.r.file_path }}" alt="" loading="lazy"></a>
+      <div><div class="t">{{ x.what.t }}</div>
+        <div class="s {% if x.what.warn %}warn{% endif %}">{{ x.what.s }}</div>
+        <div class="s">{% if x.source == 'chat' %}из чата, {% elif x.source == 'private' %}боту в личку, {% endif %}{% if x.by %}прислал(а) {{ x.by }}{% endif %}{% if x.date %} {{ x.date | human_date }}{% endif %}{% if x.r.created_at %} в {{ x.r.created_at.strftime('%H:%M') }}{% endif %}</div></div>
       {% if can_write %}
       <div class="b">
-        <a class="btn" href="/new/buy?receipt={{ x.r.id }}">Внести</a>
+        <a class="btn" href="{{ x.url }}">Проверить и внести</a>
         <details><summary>Не вносить</summary></details>
       </div>
       {% endif %}
@@ -44,13 +43,13 @@
     {% if can_write %}
     <form class="skip" method="post" action="/new/receipt/{{ x.r.id }}/skip" hidden>
       <input type="hidden" name="back" value="/new/receipts">
-      <input class="in" name="reason" required maxlength="200" placeholder="Почему: уже внесён, дубль, не наш чек" aria-label="Почему не вносить">
+      <input class="in" name="reason" required maxlength="200" placeholder="Почему: уже внесено руками, дубль, не наше" aria-label="Почему не вносить">
       <button class="btn ghost" type="submit">Не вносить</button>
     </form>
     {% endif %}
   </div>
 {% else %}
-<p class="sub" style="margin-top:14px">Все чеки с фото внесены.</p>
+<p class="sub" style="margin-top:14px">Всё проверено: черновиков нет.</p>
 {% endfor %}
 {% endblock %}
 

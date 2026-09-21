@@ -86,7 +86,7 @@ def todo(db: Session, site_org_id: int) -> list[dict]:
         who = db.get(User, last.created_by).name if last.created_by and db.get(User, last.created_by) else None
         n = len(receipts)
         items.append({"src": "receipts", "kind": "warn", "url": "/new/receipts",
-                      "title": f"{n} {_plural(n, 'чек', 'чека', 'чеков')} с фото не {'внесён' if n == 1 else 'внесены'}",
+                      "title": f"Из чата и с фото: {n} {_plural(n, 'ждёт', 'ждут', 'ждут')} проверки",
                       "sub": "последний " + (f"прислал(а) {who} " if who else "") + (_date_short(last.created_at.date()) if last.created_at else ""),
                       "go": "Разобрать"})
 

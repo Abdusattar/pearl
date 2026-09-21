@@ -22,6 +22,15 @@
   .tbl td.r .in.qty { margin-right: 4px; }
   .missing { font-size: 13px; color: var(--muted); margin: 0 0 14px; }
   .missing a { margin-right: 10px; }
+  .draft-bar { display: grid; grid-template-columns: 72px 1fr; gap: 14px; align-items: center; padding: 12px 14px; border-radius: 8px; background: var(--accent-soft); margin: 0 0 14px; }
+  .draft-bar .thumb { width: 72px; height: 72px; border-radius: 6px; overflow: hidden; display: block; background: var(--field); }
+  .draft-bar .thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .draft-bar .s { font-size: 13px; color: var(--muted); }
+  .in.need { border-color: var(--warn); background: var(--warn-soft); }
+  details.skip { margin-top: 16px; font-size: 14px; }
+  details.skip summary { cursor: pointer; color: var(--muted); min-height: 44px; display: inline-flex; align-items: center; }
+  details.skip form { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
+  details.skip .in { flex: 1 1 240px; height: 44px; font-size: 16px; }
   .foot { display: grid; grid-template-columns: 1fr 280px; gap: 30px; margin-top: 20px; align-items: start; }
   @media (max-width: 760px) { .foot { grid-template-columns: 1fr; } .in.qty { width: 80px; } }
 </style>
@@ -37,7 +46,25 @@
 {% if error %}<div class="alert bad">{{ error }}</div>{% endif %}
 
 <a href="/new/stock" style="font-size:14px;text-decoration:none">← Склад</a>
+{% if draft %}
+<div class="draft-bar">
+  <a class="thumb" href="/media/{{ draft.path }}" target="_blank" aria-label="Открыть фото листа крупно"><img src="/media/{{ draft.path }}" alt=""></a>
+  <span><b>{% if draft.source == 'private' %}Боту в личку{% else %}Из чата{% endif %}: {% if draft.by %}прислал(а) {{ draft.by }}{% endif %}{% if draft.at %} {{ draft.at.date() | human_date }} в {{ draft.at.strftime('%H:%M') }}{% endif %}</b><br>
+  <span class="s">Строки разобраны с фото. Проверьте каждую, поправьте, что не так, и внесите. <a href="/media/{{ draft.path }}" target="_blank">Открыть фото</a></span></span>
+</div>
+{% endif %}
 <form method="post" action="/new/kitchen" enctype="multipart/form-data" id="sheet" autocomplete="off">
+  {% if draft %}
+  <input type="hidden" name="draft_id" value="{{ draft.id }}">
+  {% if ask_replace %}<input type="hidden" name="replace_ok" value="1">{% endif %}
+  <div class="head">
+    <h3 class="title" style="margin:0">Лист кухни</h3>
+    {% if can_write %}<button type="submit" class="btn">Внести лист кухни</button>{% endif %}
+  </div>
+  <div class="meta">
+    <span>День <input class="in {% if need_day %}need{% endif %}" type="date" name="date" id="date" value="{{ '' if need_day else d.isoformat() }}" max="{{ today.isoformat() }}" required style="width:auto;height:40px">
+      {% if need_day %}<span class="hint" style="display:inline;margin-left:6px">на листе дня нет — выберите</span>{% endif %}</span>
+  {% else %}
   <input type="hidden" name="date" id="date" value="{{ d.isoformat() }}">
   <div class="head">
     <h3 class="title" style="margin:0">Лист кухни, {{ d | human_date(true) }}
@@ -47,14 +74,16 @@
     {% if can_write %}<button type="submit" class="btn">Внести лист кухни</button>{% endif %}
   </div>
   <div class="meta">
-    {% if sheet %}<span>Внесён {% if sheet.creator %}{{ sheet.creator.name }}{% endif %}{% if sheet.created_at %} {{ sheet.created_at.strftime('%d.%m в %H:%M') }}{% endif %}. Поправьте строки и нажмите «Внести», лист заменится.</span>
+  {% endif %}
+    {% if draft %}
+    {% elif sheet %}<span>Внесён {% if sheet.creator %}{{ sheet.creator.name }}{% endif %}{% if sheet.created_at %} {{ sheet.created_at.strftime('%d.%m в %H:%M') }}{% endif %}. Поправьте строки и нажмите «Внести», лист заменится.</span>
     {% elif like_date %}<span>Строки с листа за {{ like_date | human_date }}. Поправьте числа, лишнее уберите.</span>
     {% else %}<span>Что повара взяли на готовку за день. Одна строка — один продукт, взятия за день можно сложить: «0,5 + 3,5».</span>{% endif %}
     <span>Едоков <input class="in kids" name="children" value="{{ children }}" inputmode="numeric" placeholder="—"></span>
-    {% if not sheet and not like_date %}<a href="/new/kitchen?date={{ d.isoformat() }}&like=1">Как вчера</a>{% endif %}
-    <span>Фото листа <input type="file" name="photo" accept="image/*" capture="environment" style="font-size:14px">{% if photo_path %}<a href="/media/{{ photo_path }}" target="_blank">приложено</a>{% endif %} {% if can_write %}<button type="submit" class="btn ghost" name="action" value="recognize" style="min-height:36px;padding:6px 12px">Разобрать фото</button>{% endif %}</span>
+    {% if not draft and not sheet and not like_date %}<a href="/new/kitchen?date={{ d.isoformat() }}&like=1">Как вчера</a>{% endif %}
+    {% if not draft %}<span>Фото листа <input type="file" name="photo" accept="image/*" capture="environment" style="font-size:14px">{% if photo_path %}<a href="/media/{{ photo_path }}" target="_blank">приложено</a>{% endif %} {% if can_write %}<button type="submit" class="btn ghost" name="action" value="recognize" style="min-height:36px;padding:6px 12px">Разобрать фото</button>{% endif %}</span>{% endif %}
   </div>
-  {% if missing %}
+  {% if missing and not draft %}
   <p class="missing">Не внесены ещё: {% for m in missing %}<a href="/new/kitchen?date={{ m.isoformat() }}">{{ m | human_date(true) }}</a>{% endfor %}{% if missing_total > missing|length %}и ещё {{ missing_total - missing|length }}{% endif %}</p>
   {% endif %}
 
@@ -91,6 +120,14 @@
     {% if can_write %}<aside><button type="submit" class="btn full">Внести лист кухни</button></aside>{% endif %}
   </div>
 </form>
+{% if draft and can_write %}
+<details class="skip"><summary>Не вносить этот лист</summary>
+  <form method="post" action="/new/receipt/{{ draft.id }}/skip">
+    <input type="hidden" name="back" value="/new/receipts">
+    <input class="in" name="reason" required maxlength="200" placeholder="Почему: уже внесён, дубль, не наш лист" aria-label="Почему не вносить">
+    <button class="btn ghost" type="submit">Не вносить</button>
+  </form></details>
+{% endif %}
 {% endblock %}
 
 {% block scripts %}

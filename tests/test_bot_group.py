@@ -24,7 +24,7 @@ def site(db):
 
 
 @pytest.fixture()
-def people(db, site, monkeypatch):
+def people(db, site, monkeypatch, tmp_path):
     m = User(name="Махабаттест Бг", role="staff", organization_id=site.id, tg_id=900000000101)
     n = User(name="Мунаратест Бг", role="manager", organization_id=site.id, tg_id=900000000102)
     db.add_all([m, n])
@@ -33,6 +33,8 @@ def people(db, site, monkeypatch):
     monkeypatch.delenv(svc.TOKEN_ENV, raising=False)
     monkeypatch.setenv(svc.GROUP_ENV, str(GROUP))
     monkeypatch.setattr(svc, "download_file", lambda file_id: b"photo-" + file_id.encode())
+    from app.services import drafts
+    monkeypatch.setattr(drafts, "MEDIA_ROOT", tmp_path)   # черновики из чата пишут фото — не в папку проекта
     return m, n
 
 

@@ -245,8 +245,8 @@ async def receipt_skip(receipt_id: int, request: Request, db: Session = Depends(
     back = back if back.startswith("/new/") else ""
     if not reason:
         return RedirectResponse(f"/new/buy?receipt={rc.id}&skip_error=1", status_code=303)
-    rc.ocr_status = "rejected"
-    svc.audit(db, "receipt", rc.id, "update", user.id, {"ocr_status": "rejected", "reason": reason})
+    from app.services import drafts
+    drafts.reject(db, rc, user=user, reason=reason)
     db.commit()
     return RedirectResponse(f"{back or '/new/today'}?skipped=1", status_code=303)
 
@@ -427,6 +427,10 @@ async def buy_submit(request: Request, photo: UploadFile | None = File(None), db
     if old_tx_ids:
         svc.keep_entry_time(db, purchase, old_tx_ids)
     url = f"/new/buy/{purchase.id}?saved=1"
+    rc_done = db.get(Receipt, purchase.receipt_id) if purchase.receipt_id else None
+    if rc_done is not None and rc_done.source in ("chat", "private"):
+        from app.services.bot import owner_copy
+        owner_copy(db, f"{user.name}: чек из чата внесён — {supplier.name}, {fmt_money(float(purchase.total))}.")
     once.remember(db, token, user.id, url)
     db.commit()
     return RedirectResponse(url, status_code=303)

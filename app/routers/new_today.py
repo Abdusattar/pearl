@@ -51,9 +51,19 @@ def receipts_page(request: Request, db: Session = Depends(get_db)):
         return HTMLResponse("Объект не найден", status_code=404)
     receipts = svc.unchecked_receipts(db, site.id)
     names = {u.id: u.name for u in db.query(User).filter(User.id.in_({r.created_by for r in receipts if r.created_by})).all()}         if receipts else {}
-    rows = [{"r": r, "by": names.get(r.created_by), "date": r.created_at.date() if r.created_at else None,
-             "amount": r.amount_detected} for r in receipts]
+    from app.services import drafts
+    rows = []
+    for r in receipts:
+        p = r.payload or {}
+        if (r.kind or "receipt") == drafts.KITCHEN:
+            url = f"/new/kitchen?draft={r.id}"
+        else:
+            url = f"/new/buy?receipt={r.id}" + (f"&supplier={p['supplier_id']}" if p.get("supplier_id") else "")
+        rows.append({"r": r, "by": names.get(r.created_by), "date": r.created_at.date() if r.created_at else None,
+                     "what": drafts.title(r), "url": url, "kitchen": (r.kind or "receipt") == drafts.KITCHEN,
+                     "source": r.source})
     ctx = _base_ctx(request, user, site, db, "today")
     ctx.update({"rows": rows, "can_write": user.role in WRITE_ROLES,
-                "skipped": request.query_params.get("skipped")})
+                "skipped": request.query_params.get("skipped"), "done": request.query_params.get("done"),
+                "done_day": request.query_params.get("day")})
     return templates.TemplateResponse("new/receipts.html", ctx)

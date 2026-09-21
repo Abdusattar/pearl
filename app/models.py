@@ -178,6 +178,16 @@ class Receipt(Base):
     confirmed_at     = Column(DateTime)
     created_by       = Column(Integer, ForeignKey("users.id"))
     created_at       = Column(DateTime, server_default=func.now())
+    # Черновик из чата (21.09, context/revision/11_bot_inbox.md): вид, откуда, что
+    # распознано, во что превратился после «Внести», кто решил.
+    kind             = Column(String(20), nullable=False, default="receipt", server_default="receipt")  # receipt|kitchen
+    source           = Column(String(20))   # chat|private|upload
+    payload          = Column(JSONB)
+    result_type      = Column(String(30))   # purchase|kitchen_sheet
+    result_id        = Column(Integer)
+    decided_by       = Column(Integer, ForeignKey("users.id"))
+    decided_at       = Column(DateTime)
+    reject_reason    = Column(Text)
 
 
 # Плейсхолдер для поставщиков без реального номера (напр. "Рынок") — единственное

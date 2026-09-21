@@ -196,17 +196,9 @@ def run_scheduled(db: Session, now: datetime | None = None) -> list[str]:
             else:
                 _send_founders(db, text, key)
             sent.append(key)
-    # пятница 17:00 — карман каждому держателю в личку
-    if now.weekday() == 4 and now.hour >= 17:
-        for u in cash.pocket_people(db, site.id):
-            if not u.tg_id:
-                continue
-            key = f"pocket:{d.isoformat()}:{u.id}"
-            if _done(db, key):
-                continue
-            text, bal = pocket_text(db, site.id, u)
-            send(db, u.tg_id, text, "pocket_ask", user_id=u.id, job_key=key, payload={"expected": float(bal)})
-            sent.append(key)
+    # Пятничный «у вас на руках X, верно?» с записью ответа выключен 21.09: это ритуал
+    # пересчёта (владелец: пересчёт — признак слабости), и бот не пишет в деньги мимо
+    # проверки Махабат. Сумму на руках человек присылает сам — она станет черновиком.
     # каждый день 9:00 — пороги в группу (лист не вносился 3 дня, пересчёт висит)
     if now.hour >= 9 and now.weekday() != 0:
         key = f"group_threshold:{d.isoformat()}"
@@ -263,7 +255,7 @@ def handle_update(db: Session, update: dict) -> str | None:
         return reply
     low = text.lower()
     if low in ("/start", "start"):
-        reply = f"Здравствуйте, {user.name}. Я буду присылать вам ваш карман по пятницам и сигналы. Фото чека или листа кухни можно отправить сюда."
+        reply = f"Здравствуйте, {user.name}. Фото чека или листа кухни можно отправить сюда или в чат «Жемчужина»: я положу его Махабат черновиком на проверку."
     elif low in ("ок", "ok", "да, отправляй") and user.id == OWNER_USER_ID:
         reply = _approve_summary(db)
     elif low in ("не так", "нет") and user.id == OWNER_USER_ID and _pending_summary(db):
@@ -276,8 +268,9 @@ def handle_update(db: Session, update: dict) -> str | None:
             m = send(db, chat_id, reply + "\n\nОтправить Айдай и Таласу? Ответьте «ок» или «не так».",
                      "founders_review", user_id=user.id, payload={"summary": reply}, status="pending")
             return m.text
-    elif user.role in OPERATIONAL_ROLES and site is not None and (low in ("да", "верно", "+") or _NUM.match(text)):
-        reply = _handle_pocket_answer(db, user, site, text)
+    elif user.role in OPERATIONAL_ROLES and site is not None and _NUM.match(text):
+        reply = ("Сумму на руках запишет Махабат в Кассе («Пересчитать наличные»). "
+                 "Скоро такие сообщения будут сами становиться черновиком ей на проверку.")
     else:
         reply = "Понял. Сигналы и вопросы приходят сюда сами; фото чека или листа кухни можно прислать в любой момент."
     send(db, chat_id, reply, "reply", user_id=user.id)
@@ -301,14 +294,12 @@ def _handle_group(db: Session, msg: dict, user: User | None, text: str) -> str |
             photo = sorted(msg["photo"], key=lambda p: p.get("file_size") or 0)[-1]
             payload["file_unique_id"] = photo.get("file_unique_id")
             data = download_file(photo["file_id"])
-            h = compute_hash(data) if data else None
-            dup = grp.seen_photo(db, photo.get("file_unique_id"), h)
-            if data is None and dup is None:
+            if data is None:
                 return None
-            info = (grp.apply_caption(grp.read_photo(data, today_d), text)
-                    if data is not None and dup is None else {"kind": "dup"})
+            reply, info, draft = intake_photo(db, site, user, data, photo.get("file_unique_id"), text, "chat")
             payload.update({k: (v.isoformat() if isinstance(v, date) else v) for k, v in info.items()})
-            reply = grp.photo_reply(db, site, user, info, today_d, dup=dup)
+            if draft is not None:
+                payload["draft_id"] = draft.id
         elif grp.worth_reading(text):
             kind = "group_text"
             info = grp.read_text(db, text, user, today_d)
@@ -377,36 +368,66 @@ def _handle_pocket_answer(db: Session, user: User, site: Organization, text: str
            ("Причина записана." if reason else "Напишите почему, или поправьте в приложении.")
 
 
+def intake_photo(db: Session, site: Organization, author: User | None, data: bytes, file_unique_id: str | None,
+                 caption: str, source: str) -> tuple[str | None, dict, "Receipt | None"]:
+    """Фото из чата или лички → черновик на проверку Махабат (11_bot_inbox.md, шаг 1).
+    Чек и лист кухни становятся черновиком; остальное бот только понимает и отвечает.
+    Возвращает (ответ, что понято, черновик)."""
+    from app.services import bot_group as grp, drafts
+    today_d = date.today()
+    same = drafts.find_same(db, compute_hash(data), file_unique_id)
+    if same is not None:
+        dup = {"date": same.created_at.date() if same.created_at else None, "receipt_id": same.id}
+        return grp.photo_reply(db, site, author, {"kind": "dup"}, today_d, dup=dup), {"kind": "dup", "same": same.id}, None
+    info = grp.apply_caption(grp.read_photo(data, today_d), caption)
+    reply = grp.photo_reply(db, site, author, info, today_d)
+    kind = drafts.KIND_FROM_BOT.get(info["kind"])
+    if kind == drafts.KITCHEN and not info.get("sure") and "кухн" not in caption.lower():
+        kind = None   # «лист кухни или пересчёт?» — сначала ответ человека
+    if kind is None:
+        return reply, info, None
+    extra = {}
+    if kind == drafts.RECEIPT:
+        supplier = grp.find_supplier(db, info.get("supplier"))
+        if supplier is not None:
+            extra["supplier_id"], extra["supplier_name"] = supplier.id, supplier.name
+        if info.get("amount"):
+            m = grp.match_expense(db, site.id, info, supplier, today_d)
+            if m["status"] == "found":
+                extra["match"] = "похоже, уже внесено"
+            elif m["status"] == "similar":
+                extra["match"] = f"похоже, уже внесено: {m['supplier']} {grp._dd(m['date'])} на {grp.fmt_money(m['total'])}"
+            else:
+                extra["match"] = "в системе нет"
+    draft = drafts.create(db, site_org_id=site.id, author=author, data=data, kind=kind, source=source,
+                          info={**info, **extra}, file_unique_id=file_unique_id)
+    tail = " Черновик у Махабат на проверке."
+    return ((reply or ("Лист кухни." if kind == drafts.KITCHEN else "Чек.")) + tail), info, draft
+
+
+def owner_copy(db: Session, text: str) -> None:
+    """Копия владельцу в личку (первый этап: видит каждый черновик и каждую проводку).
+    Без Start у бота Telegram не даёт писать первым — тогда только журнал."""
+    owner = db.get(User, OWNER_USER_ID)
+    send(db, owner.tg_id if owner else None, text, "owner_copy", user_id=OWNER_USER_ID)
+
+
 def _handle_photo(db: Session, msg: dict, user: User, site: Organization, caption: str) -> str:
-    """Фото в личку: скачать, положить в «Ждёт вас»: чек или лист кухни."""
+    """Фото в личку: тот же путь, что из группы — черновик на проверку Махабат."""
     photo = sorted(msg["photo"], key=lambda p: p.get("file_size") or 0)[-1]
     data = download_file(photo["file_id"])
     if data is None:
         return "Не смог скачать фото. Попробуйте ещё раз."
-    is_kitchen = bool(re.search(r"лист|кухн|повар", caption.lower()))
-    h = compute_hash(data)
-    month = datetime.now().strftime("%Y-%m")
-    if is_kitchen:
-        folder = MEDIA_ROOT / "kitchen" / "inbox"
-        folder.mkdir(parents=True, exist_ok=True)
-        fname = f"{date.today().isoformat()}_{h[:10]}.jpg"
-        (folder / fname).write_bytes(data)
-        db.add(BotMessage(kind="kitchen_photo", user_id=user.id, direction="in", status="pending",
-                          payload={"path": f"kitchen/inbox/{fname}", "date": date.today().isoformat()}))
-        return "Принял как лист кухни за сегодня. Разберу, проверите на ноутбуке: Лист кухни → фото от бота."
-    existing = db.query(Receipt).filter(Receipt.file_hash == h).first()
-    if existing:
-        return f"Это фото уже есть: чек №{existing.id}. Проверить можно на ноутбуке в «Ждёт вас»."
-    folder = MEDIA_ROOT / "receipts" / month
-    folder.mkdir(parents=True, exist_ok=True)
-    fname = f"{h[:12]}.jpg"
-    (folder / fname).write_bytes(data)
-    r = Receipt(organization_id=site.id, file_path=f"receipts/{month}/{fname}", file_hash=h, ocr_status="pending",
-                created_by=user.id)
-    db.add(r)
-    db.flush()
-    audit(db, "receipt", r.id, "insert", user.id, {"from": "bot"})
-    return f"Принял. На ноутбуке в «Ждёт вас»: чек с фото, {_d(date.today())}, не проверен."
+    try:
+        reply, _info, draft = intake_photo(db, site, user, data, photo.get("file_unique_id"), caption, "private")
+    except Exception:  # noqa: BLE001 — модель недоступна: фото не теряем, кладём как чек
+        from app.services import drafts
+        draft = drafts.create(db, site_org_id=site.id, author=user, data=data, kind=drafts.RECEIPT, source="private",
+                              file_unique_id=photo.get("file_unique_id"))
+        reply = "Фото сохранил, разобрать не смог. Черновик у Махабат на проверке."
+    if draft is not None and user.id != OWNER_USER_ID:
+        owner_copy(db, f"Черновик от {user.name}: {reply}")
+    return reply or "Понял. Это не чек и не лист кухни — в черновики не кладу."
 
 
 def download_file(file_id: str) -> bytes | None:

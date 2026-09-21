@@ -10,10 +10,11 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.dependencies import get_current_user
-from app.models import Organization, Product
+from app.models import Organization, Product, User
 from app.routers.new_buy import WRITE_ROLES, _base_ctx, _site, templates
 from app.services import kitchen as svc
-from app.services import once
+from app.services import drafts, once
+from app.services.purchases import site_orgs
 from app.services import recognize as rz
 from app.services.ocr import compute_hash
 from app.services.products import rank_candidates
@@ -48,6 +49,49 @@ def _ctx(request: Request, user, site: Organization, db: Session, *, d: date, ro
         "shortfalls": (sheet.shortfalls if sheet else None) if saved else None,
     })
     return ctx
+
+
+def _draft_info(db: Session, r) -> dict:
+    """Полоса «Из чата: прислала Мунара 21.09 в 15:38» и день с листа, если прочитан."""
+    who = db.get(User, r.created_by) if r.created_by else None
+    p = r.payload or {}
+    raw = p.get("date")
+    d = _parse_date(raw) if isinstance(raw, str) and len(raw) == 10 else None
+    return {"id": r.id, "path": r.file_path, "by": who.name if who else None, "at": r.created_at,
+            "source": r.source, "date": d}
+
+
+def _draft_rows(db: Session, site: Organization, r, balances: dict) -> tuple[list[dict], dict, str | None]:
+    """Строки черновика: распознаются один раз и запоминаются в черновике."""
+    p = dict(r.payload or {})
+    cached = p.get("rows")
+    note = None
+    if cached is None:
+        try:
+            data = (MEDIA_DIR.parent / r.file_path).read_bytes()
+            out = rz.recognize(db, data, rz.KITCHEN, site.id,
+                               mime="image/png" if r.file_path.lower().endswith(".png") else "image/jpeg")
+            cached = [{"product_id": x["product_id"], "name": x["name"] or x["raw"], "qty": x["qty"],
+                       "unit": x["unit"] if x["product_id"] else "",
+                       "question": (x.get("question") or {}).get("text") or "; ".join(x.get("notes") or []) or None}
+                      for x in out["rows"]]
+            p["rows"] = cached
+            r.payload = p
+            db.commit()
+        except Exception as e:  # noqa: BLE001 — модель недоступна: лист заполняется руками
+            cached, note = [], f"Фото не разобралось ({e}). Заполните строки руками, фото рядом."
+    lists = {"item_product_id": [], "item_name": [], "item_qty": [], "item_unit": []}
+    errors = {}
+    for i, x in enumerate(cached):
+        lists["item_product_id"].append(str(x["product_id"]) if x.get("product_id") else "")
+        lists["item_name"].append(x.get("name") or "")
+        lists["item_qty"].append(svc.fmt_qty(x["qty"]) if x.get("qty") is not None else "")
+        lists["item_unit"].append(x.get("unit") or "")
+        if x.get("question"):
+            errors[i] = x["question"]
+    if not cached and note is None:
+        note = "На фото не нашлось строк. Заполните руками, фото рядом."
+    return svc.rows_as_submitted(db, lists, balances, errors), errors, note
 
 
 @router.get("/kitchen/search")
@@ -88,6 +132,19 @@ def kitchen_form(request: Request, date_: str | None = None, like: int = 0, save
     site = _site(user, db)
     if site is None:
         return HTMLResponse("Объект не найден", status_code=404)
+    draft_id = request.query_params.get("draft")
+    if draft_id and draft_id.isdigit():
+        r = drafts.open_draft(db, {o.id for o in site_orgs(db, site.id)} | {site.id}, int(draft_id), drafts.KITCHEN)
+        if r is None:
+            return RedirectResponse("/new/receipts", status_code=302)   # уже внесён или отложен
+        info = _draft_info(db, r)
+        balances = svc.stock_map(db, site.id)
+        rows, _errors, note = _draft_rows(db, site, r, balances)
+        d = info["date"] or svc.default_day(db, site.id)
+        ctx = _ctx(request, user, site, db, d=d, rows=rows, sheet=None, children="", like_date=None, saved=None,
+                   next_day=None, error=note, photo_path=None)
+        ctx.update({"draft": info, "need_day": info["date"] is None})
+        return templates.TemplateResponse("new/kitchen.html", ctx)
     d = _parse_date(request.query_params.get("date")) or svc.default_day(db, site.id)
     balances = svc.stock_map(db, site.id)
     sheet = svc.sheet_for(db, site.id, d)
@@ -128,11 +185,17 @@ async def kitchen_submit(request: Request, photo: UploadFile | None = File(None)
     balances = svc.stock_map(db, site.id)
     sheet = svc.sheet_for(db, site.id, d) if d else None
 
-    def render(error: str | None, errors: dict | None = None):
+    draft_raw = str(form.get("draft_id") or "")
+    draft = (drafts.open_draft(db, {o.id for o in site_orgs(db, site.id)} | {site.id}, int(draft_raw), drafts.KITCHEN)
+             if draft_raw.isdigit() else None)
+
+    def render(error: str | None, errors: dict | None = None, ask_replace: bool = False):
         rows = svc.rows_as_submitted(db, lists, balances, errors)
-        ctx = _ctx(request, user, site, db, d=d or date.today(), rows=rows, sheet=sheet, children=children_raw,
-                   like_date=None, saved=None, next_day=None, error=error,
-                   photo_path=sheet.photo_path if sheet else None)
+        ctx = _ctx(request, user, site, db, d=d or date.today(), rows=rows, sheet=None if draft else sheet,
+                   children=children_raw, like_date=None, saved=None, next_day=None, error=error,
+                   photo_path=sheet.photo_path if sheet and not draft else None)
+        if draft is not None:
+            ctx.update({"draft": _draft_info(db, draft), "need_day": d is None, "ask_replace": ask_replace})
         return templates.TemplateResponse("new/kitchen.html", ctx)
 
     if d is None or d > date.today():
@@ -173,6 +236,10 @@ async def kitchen_submit(request: Request, photo: UploadFile | None = File(None)
         return render("Поправьте отмеченные строки", errors)
     if not items:
         return render("Добавьте хотя бы одну строку")
+    if draft is not None and sheet is not None and form.get("replace_ok") != "1":
+        who = sheet.creator.name if getattr(sheet, "creator", None) else "кто-то"
+        return render(f"За {d.strftime('%d.%m')} лист уже внесён ({who}). Этот заменит его: нажмите «Внести» ещё раз, "
+                      "если так и нужно, или выберите другой день.", ask_replace=True)
 
     token = once.clean(form.get("form_token"))
     if done := once.done_url(db, token):
@@ -189,12 +256,19 @@ async def kitchen_submit(request: Request, photo: UploadFile | None = File(None)
             (month_dir / fname).write_bytes(data)
             photo_path = f"kitchen/{datetime.now().strftime('%Y-%m')}/{fname}"
 
+    if photo_path is None and draft is not None:
+        photo_path = draft.file_path
     saved = svc.save_sheet(db, user=user, site_org_id=site.id, d=d, items=items,
                            children_count=children, photo_path=photo_path)
     db.flush()
     nxt = svc.next_missing_day(db, site.id, d)
     target = nxt.isoformat() if nxt else d.isoformat()
     url = f"/new/kitchen?date={target}&saved={d.isoformat()}"
+    if draft is not None:
+        drafts.done(db, draft, user=user, result_type="kitchen_sheet", result_id=saved.id)
+        from app.services.bot import owner_copy
+        owner_copy(db, f"{user.name}: лист кухни за {d.strftime('%d.%m')} из чата внесён, {len(items)} строк.")
+        url = f"/new/receipts?done=kitchen&day={d.isoformat()}"
     once.remember(db, token, user.id, url)
     db.commit()
     return RedirectResponse(url, status_code=303)

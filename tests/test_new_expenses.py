@@ -290,7 +290,7 @@ def test_photo_receipt_opens_buy_draft_and_can_be_skipped(client, db, site, staf
     db.flush()
     from app.services import today as today_svc
     item = next(i for i in today_svc.todo(db, site.id) if i["src"] == "receipts")
-    assert item["title"] == "1 чек с фото не внесён" and staff.name in item["sub"] and item["url"] == "/new/receipts"
+    assert item["title"] == "Из чата и с фото: 1 ждёт проверки" and staff.name in item["sub"] and item["url"] == "/new/receipts"
     page = client.get(f"/new/buy?receipt={rc.id}")
     assert page.status_code == 200 and "выберите, у кого купили" in page.text and f"receipt={rc.id}" in page.text
     assert "Не вносить" in page.text
