@@ -1,5 +1,5 @@
 {% extends "new/base.html" %}
-{% block title %}Лист кухни, {{ d | human_date }} — Жемчужина{% endblock %}
+{% block title %}{% if draft %}Лист кухни из чата{% else %}Лист кухни, {{ d | human_date }}{% endif %} — Жемчужина{% endblock %}
 
 {% block head %}
 <style>
