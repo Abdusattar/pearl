@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.dependencies import get_current_user
-from app.routers.new_buy import _base_ctx, _site, templates
+from app.routers.new_buy import _base_ctx, _site, is_founder, templates
 from app.services import overview as svc
 from app.services.children import MONTHS_NOM
 
@@ -21,6 +21,8 @@ def overview_page(request: Request, month: str | None = None, db: Session = Depe
     user = get_current_user(request, db)
     if not user:
         return RedirectResponse("/login", status_code=302)
+    if not is_founder(user):
+        return RedirectResponse("/new/today", status_code=302)   # итоги — только учредителям (21.09)
     site = _site(user, db)
     if site is None:
         return HTMLResponse("Объект не найден", status_code=404)

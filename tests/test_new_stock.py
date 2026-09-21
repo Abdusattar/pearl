@@ -170,3 +170,29 @@ def test_days_before_last_count_are_closed(db, site, staff, cats):
     db.flush()
     left = kitchen.missing_days(db, site.id)
     assert days[0] not in left and days[1] not in left and all(d > days[1] for d in left)
+
+
+def test_executor_sees_no_period_totals_and_no_overview(client, db, site, staff, monkeypatch):
+    from app.routers import new_expenses, new_overview, new_today
+    for m in (new_expenses, new_overview, new_today):
+        monkeypatch.setattr(m, "get_current_user", lambda request, db: staff)
+    r = client.get("/new/overview", follow_redirects=False)
+    assert r.status_code == 302 and r.headers["location"] == "/new/today"
+    page = client.get("/new/today").text
+    assert 'href="/new/overview"' not in page and "Продуктов на складе" not in page and "Должны поставщикам" not in page
+    assert "Склад пока открывается в старом входе" not in page
+    exp = client.get("/new/expenses").text
+    assert '<p class="sub">За ' not in exp and "Должны поставщикам <b>" not in exp
+
+
+def test_founder_sees_overview_and_totals(client, db, site, monkeypatch):
+    from app.routers import new_overview, new_today
+    boss = User(name="Учредитель тест-ск", role="founder", organization_id=site.id)
+    db.add(boss)
+    db.flush()
+    for m in (new_overview, new_today):
+        monkeypatch.setattr(m, "get_current_user", lambda request, db: boss)
+    monkeypatch.setattr(buy_router, "resolve_org", lambda org_id, user, db: site)
+    assert client.get("/new/overview").status_code == 200
+    page = client.get("/new/today").text
+    assert 'href="/new/overview"' in page and "Продуктов на складе" in page

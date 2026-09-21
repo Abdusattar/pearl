@@ -72,4 +72,4 @@ def root(request: Request, db: Session = Depends(get_db)):
     user = get_current_user(request, db)
     if not user:
         return RedirectResponse("/login")
-    return RedirectResponse("/new/overview" if user.role == "founder" else "/new/today")
+    return RedirectResponse("/new/overview" if user.role in ("owner", "founder") else "/new/today")

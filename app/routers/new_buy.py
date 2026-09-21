@@ -37,6 +37,15 @@ MEDIA_DIR = Path(__file__).parent.parent.parent / "media" / "receipts"
 MEDIA_DIR.mkdir(parents=True, exist_ok=True)
 
 WRITE_ROLES = ("owner", "staff", "manager", "director")
+# Итоги за период (закуп за месяц, пришло от родителей, фонд зарплаты…) видят
+# только учредители, на «Обзоре»; исполнители — текучку и пробелы (владелец 21.09).
+FOUNDER_ROLES = ("owner", "founder")
+
+
+def is_founder(user) -> bool:
+    return bool(user and user.role in FOUNDER_ROLES)
+
+
 MONTHS = ["января", "февраля", "марта", "апреля", "мая", "июня", "июля",
           "августа", "сентября", "октября", "ноября", "декабря"]
 WEEKDAYS = ["понедельник", "вторник", "среда", "четверг", "пятница", "суббота", "воскресенье"]
@@ -78,7 +87,7 @@ def _site(user: User, db: Session) -> Organization | None:
 
 def _base_ctx(request: Request, user: User, site: Organization, db: Session, page: str) -> dict:
     return {
-        "request": request, "current_user": user, "site": site, "active_page": page,
+        "request": request, "current_user": user, "site": site, "active_page": page, "founder": is_founder(user),
         "site_orgs": svc.site_orgs(db, site.id),
     }
 

@@ -32,7 +32,7 @@
   <a href="/new/pay">Оплатить поставщику</a>
   <a href="/new/suppliers">Поставщики</a>
 </div>
-<p class="sub">За {{ month_name }} <b>{{ totals.total | money }} сом</b>: продукты {{ totals.food | money }}, зарплата и налоги {{ totals.salary | money }}, остальное {{ totals.other | money }}. Должны поставщикам <b>{{ debt_total | money }}</b>{% if debts %}: {% for d in debts[:3] %}{{ d.name }} {{ d.debt | money }}{% if not loop.last %}, {% endif %}{% endfor %}{% endif %}.</p>
+{% if founder %}<p class="sub">За {{ month_name }} <b>{{ totals.total | money }} сом</b>: продукты {{ totals.food | money }}, зарплата и налоги {{ totals.salary | money }}, остальное {{ totals.other | money }}. Должны поставщикам <b>{{ debt_total | money }}</b>{% if debts %}: {% for d in debts[:3] %}{{ d.name }} {{ d.debt | money }}{% if not loop.last %}, {% endif %}{% endfor %}{% endif %}.</p>{% endif %}
 
 {% for day in days %}
 <div class="day">{{ day.date | human_date(true) | capitalize }}</div>

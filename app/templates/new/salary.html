@@ -51,7 +51,7 @@
 {% if not sheet.rows %}
 <div class="alert warn">Сотрудников нет. Заводят их пока в старом входе: <a href="/employees/">Сотрудники</a>.</div>
 {% else %}
-<p class="sub">{{ sheet.rows | length }} человек. Оклады <b>{{ sheet.salary | money }}</b> · выдано <b>{{ sheet.issued | money }}</b>{% if sheet.socfond %} · соцфонд и подоходный <b>{{ sheet.socfond | money }}</b>{% endif %}{% if sheet.unpaid %} · ещё никому не выдано: <b>{{ sheet.unpaid }} чел.</b>{% endif %}</p>
+{% if founder %}<p class="sub">{{ sheet.rows | length }} человек. Оклады <b>{{ sheet.salary | money }}</b> · выдано <b>{{ sheet.issued | money }}</b>{% if sheet.socfond %} · соцфонд и подоходный <b>{{ sheet.socfond | money }}</b>{% endif %}{% if sheet.unpaid %} · ещё никому не выдано: <b>{{ sheet.unpaid }} чел.</b>{% endif %}</p>{% else %}<p class="sub">{{ sheet.rows | length }} человек.{% if sheet.unpaid %} Ещё никому не выдано: <b>{{ sheet.unpaid }} чел.</b>{% endif %}</p>{% endif %}
 {% if sheet.late %}<div class="alert warn">День зарплаты, {{ sheet.payday.day }} {{ months_of[sheet.payday.month - 1] }}, прошёл: {{ sheet.unpaid }} чел. ещё ничего не получили за {{ months_gen[period.month - 1] }}.</div>{% endif %}
 
 <div class="list">

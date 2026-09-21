@@ -28,7 +28,7 @@
   {% for o in orgs %}<a class="chip {% if o.id == current.id %}on{% endif %}" href="/new/children?org={{ o.id }}">{{ o.name }}</a>{% endfor %}
   {% if data.tariff %}<a class="chip {% if debt %}on{% endif %}" href="/new/children?org={{ current.id }}{% if not debt %}&debt=1{% endif %}{% if q %}&q={{ q | urlencode }}{% endif %}">Только с долгом</a>{% endif %}
 </div>
-<p class="sub">{{ data.count }} {{ data.count | plural('ребёнок', 'ребёнка', 'детей') }}{% if data.tariff %}, должны нам <b>{{ data.debt_total | money }}</b>{% if data.old_total > 0.5 %}, из них старше месяца {{ data.old_total | money }}{% endif %}.{% else %}. Тариф ещё не заведён, поэтому долгов не видно: они появятся, когда тариф заведут.{% endif %}</p>
+<p class="sub">{{ data.count }} {{ data.count | plural('ребёнок', 'ребёнка', 'детей') }}{% if data.tariff %}{% if founder %}, должны нам <b>{{ data.debt_total | money }}</b>{% if data.old_total > 0.5 %}, из них старше месяца {{ data.old_total | money }}{% endif %}{% endif %}.{% else %}. Тариф ещё не заведён, поэтому долгов не видно: они появятся, когда тариф заведут.{% endif %}</p>
 <form class="find" method="get" action="/new/children">
   <input type="hidden" name="org" value="{{ current.id }}">{% if debt %}<input type="hidden" name="debt" value="1">{% endif %}
   <input class="in" name="q" value="{{ q }}" placeholder="Фамилия, имя или группа" aria-label="Фамилия, имя или группа" autocomplete="off" {% if q %}autofocus{% endif %}>

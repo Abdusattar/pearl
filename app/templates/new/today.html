@@ -63,7 +63,6 @@
       <a href="/new/cash/withdraw">Снятие со счёта</a>
       <a href="/new/stock">Склад</a>
     </div>
-    <p class="after">Склад пока открывается в старом входе: его экран в новом ещё впереди.</p>
   </section>
   <aside>
     <h4>Сейчас</h4>
@@ -71,8 +70,10 @@
     {% for a in figures.accounts %}
     <a class="fig figlink" href="/new/cash"><div class="l">На счёте {{ a.name }}</div><div class="v {% if a.amount < 0 %}bad{% endif %}">{{ a.amount | money }}<span>сом</span></div><div class="w {{ 'ok' if a.ok else 'warn' }}">{{ 'сходится' if a.ok else 'не хватает записи' }}</div></a>
     {% endfor %}
+    {% if founder %}
     <div class="fig"><div class="l">Продуктов на складе</div><div class="v">{{ figures.stock | money }}<span>сом</span></div><div class="w">{{ figures.stock_when }}</div></div>
     <div class="fig"><div class="l">Должны поставщикам</div><div class="v">{{ figures.debt | money }}<span>сом</span></div><div class="w">{{ figures.debt_who }}</div></div>
+    {% endif %}
   </aside>
 </div>
 {% endblock %}
