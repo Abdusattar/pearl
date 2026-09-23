@@ -59,7 +59,9 @@ UNIT_ALIASES = {"kg": "кг", "кг.": "кг", "килограмм": "кг", "л
 # ── контекст: ожидаемые товары ────────────────────────────────────────────
 
 def _cand(db: Session, p: Product, usual: float | None = None, balance: float | None = None) -> dict:
-    return {"id": p.id, "name": p.name, "unit": p.unit or "", "usual": usual,
+    # слова, которыми этот товар уже называли и человек подтвердил (23.09)
+    words = [a.raw_text for a in (p.aliases or [])][:4]
+    return {"id": p.id, "name": p.name, "unit": p.unit or "", "usual": usual, "aliases": words,
             "pack_name": p.pack_name if p.pack_qty else None, "pack_qty": float(p.pack_qty) if p.pack_qty else None,
             "minor": bool(p.product_category and p.product_category.is_minor), "balance": balance}
 
@@ -154,6 +156,8 @@ def _prompt(kind: str, candidates: list[dict], text: str | None = None) -> str:
             extra.append(f"обычно {c['usual']:g} сом/{c['unit']}")
         if c.get("pack_name"):
             extra.append(f"{c['pack_name']} = {c['pack_qty']:g} {c['unit']}")
+        if c.get("aliases"):
+            extra.append("also written as: " + ", ".join(c["aliases"]))
         lines.append(f"{c['id']}|{c['name']}|{c['unit']}" + (("|" + ", ".join(extra)) if extra else ""))
     catalog = "\n".join(lines) or "(список пуст)"
     what = {

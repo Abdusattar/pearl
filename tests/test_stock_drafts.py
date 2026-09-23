@@ -82,3 +82,13 @@ def test_transfer_text_becomes_transfer_draft(client, db, world):
     assert f"/new/stock/transfer?draft={rc.id}" in reply
     page = client.get(f"/new/stock/transfer?draft={rc.id}")
     assert page.status_code == 200 and 'value="12"' in page.text
+
+
+def test_confirmed_words_are_learned(db, world):
+    from app.models import ProductAlias
+    rc = drafts.create_text(db, site_org_id=world["home"].id, author=world["u"], text="томатище-чр 3,600", kind="count",
+                            source="chat")
+    rc.payload = {**rc.payload, "rows": [{"product_id": world["rice"].id, "raw": "томатище-чр 3,600"},
+                                         {"product_id": world["milk"].id, "raw": "Уточнения Махабат: масло для выпечки да"}]}
+    assert drafts.learn_words(db, rc, {world["rice"].id, world["milk"].id}) == 1
+    assert db.query(ProductAlias).filter_by(raw_text="томатище-чр", product_id=world["rice"].id).count() == 1

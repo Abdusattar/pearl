@@ -131,6 +131,7 @@ async def count_save(request: Request, db: Session = Depends(get_db)):
             if rc is not None:
                 from app.services import drafts
                 drafts.done(db, rc, user=user, result_type="stock_count", result_id=res["count_id"])
+                drafts.learn_words(db, rc, {pid for pid, _ in items})
         except ValueError as e:
             error = str(e)
     if error:
@@ -223,6 +224,7 @@ async def transfer_save(request: Request, db: Session = Depends(get_db)):
             if rc is not None:
                 from app.services import drafts
                 drafts.done(db, rc, user=user, result_type="stock_transfer", result_id=outs[0].id)
+                drafts.learn_words(db, rc, {pid for pid, _ in items})
         except ValueError as e:
             error = str(e)
     if error:

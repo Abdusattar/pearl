@@ -224,3 +224,25 @@ def prepare_pending(limit: int = 5) -> int:
     finally:
         db.close()
     return done_n
+
+
+def learn_words(db: Session, r: Receipt, confirmed_ids: set[int]) -> int:
+    """Махабат подтвердила строку — её слово запоминается за товаром («томат» → томатная
+    паста, 23.09): в следующий раз модель получает эти слова в списке товаров и нечёткий
+    поиск их знает. Числа и единицы из строки срезаем, короткое и совпадающее с именем — нет."""
+    import re
+    from app.models import Product
+    from app.services.products import ensure_alias
+    n = 0
+    for row in (r.payload or {}).get("rows") or []:
+        pid = row.get("product_id")
+        if pid not in confirmed_ids:
+            continue
+        word = re.sub(r"\s*\d.*$", "", str(row.get("raw") or "")).strip(" .,:-").lower()
+        word = re.sub(r"\s+(кг|г|гр|л|шт|мл)$", "", word).strip()
+        p = db.get(Product, pid)
+        if p is None or not 3 <= len(word) <= 30 or len(word.split()) > 3 or word == (p.name or "").lower():
+            continue
+        ensure_alias(db, word, pid)
+        n += 1
+    return n
