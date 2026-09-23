@@ -80,7 +80,9 @@ def _form_ctx(request, user, site, db, kind: str, **kw) -> dict:
         "to_user_id": kw.get("to_user_id"), "pocket_user_id": kw.get("pocket_user_id", me),
         "founder_id": kw.get("founder_id"), "direction": kw.get("direction", "fund"),
         "reason": kw.get("reason", ""), "error": kw.get("error"), "can_write": user.role in WRITE_ROLES,
-        "bank_orgs": [(a["org"], a["expected"]) for a in svc.state(db, site.id)["accounts"]] if kind == "bank" else [],
+        # Все счета площадки, не только «живые»: первый остаток по счёту школы (23.09)
+        # и есть то, что делает его живым — из state() он бы не попал в форму
+        "bank_orgs": [(a["org"], a["expected"]) for a in svc.accounts(db, site.id)] if kind == "bank" else [],
     })
     return ctx
 
