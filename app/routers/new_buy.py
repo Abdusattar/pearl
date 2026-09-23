@@ -217,8 +217,17 @@ def buy_form(request: Request, supplier: int | None = None, other: int = 0, rece
             error = f"Не удалось разобрать фото: {e}. Заполните руками, фото останется приложенным."
     elif sup:
         last_date, rows = svc.prefill_from_last(db, sup.id)
+    # Чек из чата от Айжан (23.09): «для кого» и «из чьего кармана» — от того, кто прислал.
+    # Махабат подтверждает, но покупала не она: школьное — на школу, из кармана Айжан.
+    for_org, payer_id = "shared", None
+    author = db.get(User, rc.created_by) if rc is not None and rc.created_by else None
+    if author is not None and author.id != user.id:
+        if author.id in {u.id for u in svc.pocket_users(db, site.id)}:
+            payer_id = author.id
+        if author.organization_id != site.id and author.organization_id in {o.id for o in svc.site_orgs(db, site.id)}:
+            for_org = str(author.organization_id)
     ctx = _form_ctx(request, user, site, db, supplier=sup, other=bool(other), rows=rows, last_date=last_date,
-                    tx_date=date.today(), payment=None, for_org="shared", payer_id=None, account_org_id=None,
+                    tx_date=date.today(), payment=None, for_org=for_org, payer_id=payer_id, account_org_id=None,
                     founder_id=None, paid_amount="", note="", photo_receipt_id=rc.id if rc else None, dup=None,
                     error=error)
     ctx["draft"] = _draft(db, rc) if rc else None
