@@ -41,9 +41,11 @@ def parse(text: str, today: date | None = None) -> dict | None:
     low = text.lower().replace("ё", "е")
     found = {}
     for key, words in _WORDS.items():
-        m = re.search(rf"(?:{words})\s*[:\-–—]?\s*{_NUM}\b", low) or re.search(rf"\b{_NUM}\s*(?:{words})", low)
-        if m:
-            found[key] = int(m.group(1))
+        nums = re.findall(rf"(?:{words})\s*[:\-–—]?\s*{_NUM}\b", low) or re.findall(rf"\b{_NUM}\s*(?:{words})", low)
+        if nums:
+            # Махабат 23.09: «школа 328, персонал 33, садик 97, персонал 10» — персонал
+            # по объектам; едят все, поэтому складываем
+            found[key] = sum(int(n) for n in nums) if key == "staff" else int(nums[0])
     if len(found) < 2:
         return None
     if any(v > 2000 for v in found.values()):

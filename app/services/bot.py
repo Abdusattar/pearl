@@ -396,6 +396,8 @@ def handle_update(db: Session, update: dict) -> str | None:
     text = (msg.get("text") or msg.get("caption") or "").strip()
     user = db.query(User).filter(User.tg_id == from_id, User.deleted_at.is_(None)).first() if from_id else None
     sender = msg.get("from") or {}
+    if user is None and from_id:
+        user = auto_link(db, from_id, _sender_name(sender))
     media = _media(msg)
     # Кто написал — в журнал всегда (23.09): непривязанного человека владелец потом
     # сопоставляет одной кнопкой в Настройках бота, не спрашивая его номер.
@@ -547,6 +549,30 @@ def _handle_group(db: Session, msg: dict, user: User | None, text: str) -> str |
             send(db, owner.tg_id if owner else None, f"Группа, {who}, {what}:\n{reply}", "group_reply_owner",
                  user_id=OWNER_USER_ID)
     return reply
+
+
+def auto_link(db: Session, from_id: int, name: str | None) -> User | None:
+    """Незнакомый в Telegram, но имя совпадает ровно с одним человеком без привязки
+    («Махабат Керимкуловна» → Махабат): привязываем сами и говорим владельцу (23.09 —
+    Махабат ответила в группу, а бот молчал, пока владелец не привяжет руками)."""
+    first = (name or "").split()[0].lower().replace("ё", "е") if (name or "").split() else ""
+    if len(first) < 3:
+        return None
+    hits = [u for u in db.query(User).filter(User.tg_id.is_(None), User.deleted_at.is_(None)).all()
+            if u.name and u.name.split()[0].lower().replace("ё", "е") == first]
+    if len(hits) != 1:
+        return None
+    u = hits[0]
+    u.tg_id = from_id
+    db.query(BotMessage).filter(BotMessage.user_id.is_(None), BotMessage.direction == "in",
+                                BotMessage.payload["from_id"].as_string() == str(from_id)).update(
+        {BotMessage.user_id: u.id}, synchronize_session=False)
+    audit(db, "user", u.id, "update", None, {"tg_id": from_id, "auto_link": name})
+    owner = db.get(User, OWNER_USER_ID)
+    if owner and owner.tg_id:
+        send(db, owner.tg_id, f"Узнал по имени и привязал: {name} → {u.name}. Если не так — Настройки бота.",
+             "reply", user_id=OWNER_USER_ID)
+    return u
 
 
 def unknown_senders(db: Session) -> list[dict]:

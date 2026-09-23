@@ -150,3 +150,22 @@ def test_unknown_start_is_not_asked_for_number(db, site, counter):
                        "text": "/start"}}
     reply = bot.handle_update(db, upd)
     assert "передавать ничего не нужно" in reply and "номер" not in reply
+
+
+def test_makhabat_real_line_staff_summed():
+    line = ("Здравствуйте, школа 328 детей персонал 33  Садик 97 детей  персонал 10. "
+            "Меню: овсяная каша, суп с вермишелью, печенье, компот, пюре с мясным фаршем.")
+    p = meals.parse(line, date(2026, 9, 23))
+    assert (p["school"], p["sadik"], p["staff"]) == (328, 97, 43)
+
+
+def test_unknown_in_group_linked_by_unique_first_name(db, site, counter):
+    u = User(name="Гульнара", role="staff", organization_id=site.id)
+    db.add(u)
+    db.flush()
+    upd = {"message": {"message_id": 3, "chat": {"id": -100555, "type": "supergroup"},
+                       "from": {"id": 555999, "first_name": "Гульнара", "last_name": "Керимкуловна"},
+                       "text": "школа 18, садик 8, персонал 5"}}
+    bot.handle_update(db, upd)
+    assert u.tg_id == 555999
+    assert db.query(MealCount).filter_by(site_org_id=site.id, date=date.today()).one().created_by == u.id
