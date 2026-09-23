@@ -359,8 +359,12 @@ def _handle_group(db: Session, msg: dict, user: User | None, text: str) -> str |
         else:
             # бот молчит в группе: владелец видит, что бот ответил бы, у себя в личке
             owner = db.get(User, OWNER_USER_ID)
-            what = {"group_photo": "фото", "group_document": f"файл {media.get('file_name') or ''}".strip()}.get(
-                kind, (f"{voice_note}: " if voice_note else "") + f"«{text[:80]}»")
+            if kind == "group_photo":
+                what = "фото"
+            elif kind == "group_document":
+                what = f"файл {(media or {}).get('file_name') or ''}".strip()
+            else:
+                what = (f"{voice_note}: " if voice_note else "") + f"«{text[:80]}»"
             send(db, owner.tg_id if owner else None, f"Группа, {who}, {what}:\n{reply}", "group_reply_owner",
                  user_id=OWNER_USER_ID)
     return reply
