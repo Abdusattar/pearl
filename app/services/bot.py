@@ -267,7 +267,7 @@ def _meal_and_count_asks(db: Session, site: Organization, now: datetime) -> list
                              "потом неделя смажется. Склад → Пересчитать → «Ключевые».")
             if bank and slot == "first":
                 who = _bank_holder(db, site)
-                lines.append((f"{who}, " if who else "") + "и остаток в банке одной цифрой: "
+                lines.append((f"{who}, " if who else "") + "и остаток в банке на конец вчерашнего дня, одной цифрой: "
                              + ", ".join(a["org"].name for a in bank) + ". Касса → Остаток в банке.")
             send(db, group, "\n\n".join(lines), "count_ask", job_key=key)
             out.append(key)

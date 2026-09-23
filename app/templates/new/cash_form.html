@@ -57,12 +57,12 @@
     <span class="lb">Счёт</span>
     <div class="chips">{% for o, exp in bank_orgs %}<label class="chip {% if account_org_id == o.id or (not account_org_id and loop.first and bank_orgs|length == 1) %}on{% endif %}"><input type="radio" name="account_org_id" value="{{ o.id }}" data-exp="{{ exp }}" {% if account_org_id == o.id %}checked{% endif %}>{{ o.name }}</label>{% endfor %}</div>
     <div class="fig" style="margin-top:14px"><div class="l">По записям</div><div class="v" id="expected">—</div></div>
-    <div class="fig"><div class="l">В банке сейчас</div><input class="in num" name="amount" id="actual" value="{{ amount }}" inputmode="decimal" placeholder="0" oninput="showBank()"></div>
+    <div class="fig"><div class="l">В банке на конец дня</div><input class="in num" name="amount" id="actual" value="{{ amount }}" inputmode="decimal" placeholder="0" oninput="showBank()"></div>
     <div class="fig"><div class="l">Разница</div><div class="v" id="delta">—</div><div class="w" id="deltaw"></div></div>
     <p class="after" id="missing" hidden>Если в банке меньше из-за снятия или платежа со счёта, которые ещё не внесли, сначала внесите их: <a href="/new/cash/withdraw">Снятие со счёта</a>. Тогда разница уйдёт сама.</p>
     <span class="lb">Когда</span><input class="in" type="date" name="date" value="{{ d.isoformat() }}" max="{{ today.isoformat() }}">
     <span class="lb">Почему</span><input class="in" name="reason" value="{{ reason }}" placeholder="если разница заметная: комиссия, налог…">
-    <p class="after">Цифру присылает Мунара из банка. Она становится новой точкой отсчёта счёта, разница остаётся строкой в истории.</p>
+    <p class="after">Утром возьмите в банке остаток на конец вчерашнего дня: свежие оплаты банк показывает с задержкой. Цифра становится новой точкой отсчёта счёта, разница остаётся строкой в истории.</p>
 
   {% else %}
     <span class="lb">Что случилось</span>

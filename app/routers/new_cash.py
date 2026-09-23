@@ -2,7 +2,7 @@
 и пересчёт, 4г учредители). Зарплата (4в) и история — следующим шагом."""
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, timedelta
 from decimal import Decimal, InvalidOperation
 
 from fastapi import APIRouter, Depends, Request
@@ -75,14 +75,18 @@ def _form_ctx(request, user, site, db, kind: str, **kw) -> dict:
         "kind": kind, "title": FORMS[kind], "people": people, "site_orgs": site_orgs(db, site.id),
         "founders": svc.founder_list(db), "today": date.today(), "my_balance": my,
         "pocket_balances": {p.id: svc.pocket_balance(db, site.id, p.id) for p in people},
-        "amount": kw.get("amount", ""), "d": kw.get("d", date.today()), "comment": kw.get("comment", ""),
+        # Остаток в банке — на конец вчерашнего дня (23.09): Optima Business показывает
+        # оплаты с задержкой, а система видит их сразу; закрытый день сходится честно.
+        "amount": kw.get("amount", ""), "d": kw.get("d", date.today() - timedelta(days=1) if kind == "bank" else date.today()),
+        "comment": kw.get("comment", ""),
         "account_org_id": kw.get("account_org_id"), "from_user_id": kw.get("from_user_id", me),
         "to_user_id": kw.get("to_user_id"), "pocket_user_id": kw.get("pocket_user_id", me),
         "founder_id": kw.get("founder_id"), "direction": kw.get("direction", "fund"),
         "reason": kw.get("reason", ""), "error": kw.get("error"), "can_write": user.role in WRITE_ROLES,
         # Все счета площадки, не только «живые»: первый остаток по счёту школы (23.09)
         # и есть то, что делает его живым — из state() он бы не попал в форму
-        "bank_orgs": [(a["org"], a["expected"]) for a in svc.accounts(db, site.id)] if kind == "bank" else [],
+        "bank_orgs": [(a["org"], svc.expected_account(db, a["org"].id, kw.get("d", date.today() - timedelta(days=1))))
+                      for a in svc.accounts(db, site.id)] if kind == "bank" else [],
     })
     return ctx
 
