@@ -153,6 +153,8 @@ def product_card(db: Session, site_id: int, p: Product) -> dict:
     for w in woffs:
         if w.reason == COUNT_REASON:
             title, url = "Пересчёт, на полке меньше", None
+        elif w.to_org_id:
+            title, url = f"Передали: {w.to_org.name if w.to_org else 'другой садик'}", None
         elif w.sheet_id or w.reason == kitchen.SHEET_REASON:
             title, url = "Лист кухни", f"/new/kitchen?date={w.date.isoformat()}"
         else:
@@ -227,6 +229,75 @@ def count_rows(db: Session, site_id: int, category_id: int | str | None) -> dict
         rows = [{"p": p, "balance": float(ws[p.id]["balance"])} for p in prods if p.category_id == category_id]
     rows.sort(key=lambda r: r["p"].name.lower())
     return {"cats": cats, "current": category_id, "rows": rows, "has_no_cat": None in used, "n_keys": len(keys)}
+
+
+TRANSFER_REASON = "передано в другой садик"
+
+
+def transfer_targets(db: Session, site_id: int) -> list:
+    """Куда можно передать: садики и школы вне этой площадки (Кожомкул для Сокулука),
+    кроме групп-папок («Садики»), у которых есть дочерние."""
+    from app.models import Organization
+    mine = _org_ids(db, site_id)
+    parents = {pid for (pid,) in db.query(Organization.parent_id).filter(Organization.parent_id.isnot(None)).all()}
+    return [o for o in db.query(Organization).filter(Organization.type.in_(("kindergarten", "school"))).order_by(Organization.id).all()
+            if o.id not in mine and o.id not in parents and o.site_id not in mine]
+
+
+def last_price(db: Session, org_ids: set[int], product_id: int) -> Decimal | None:
+    """Цена последней закупки (не пересчёта): так владелец велел оценивать передачу."""
+    r = (db.query(WarehouseReceipt.price_per_unit)
+         .filter(WarehouseReceipt.product_id == product_id, WarehouseReceipt.organization_id.in_(org_ids),
+                 WarehouseReceipt.deleted_at.is_(None), WarehouseReceipt.transaction_id.isnot(None),
+                 WarehouseReceipt.price_per_unit > 0)
+         .order_by(WarehouseReceipt.date.desc(), WarehouseReceipt.id.desc()).first())
+    return Decimal(r[0]) if r else None
+
+
+def transfer_rows(db: Session, site_id: int) -> list[dict]:
+    """Что можно передать: всё, что есть на складе по записям."""
+    bal = get_balance_map(db, _org_ids(db, site_id))
+    rows = [{"p": p, "balance": float(bal.get(p.id, {}).get("balance", 0) or 0)} for p in _live_products(db)]
+    return sorted([r for r in rows if r["balance"] > DUST], key=lambda r: r["p"].name.lower())
+
+
+def transfer_out(db: Session, *, user: User, site_id: int, to_org_id: int, items: list[tuple[int, Decimal]],
+                 d: date | None = None, note: str | None = None) -> list[WriteOff]:
+    """Передача в другой садик (владелец 23.09): со склада уходит, но это не расход
+    кухни — в нормы не идёт; стоимость по цене закупки ложится на получателя, долга
+    между точками нет. Когда получатель заведёт склад, эти строки станут его приходом."""
+    if to_org_id not in {o.id for o in transfer_targets(db, site_id)}:
+        raise ValueError("Выберите, какому садику передали")
+    items = [(pid, q) for pid, q in items if q and q > 0]
+    if not items:
+        raise ValueError("Впишите, сколько чего передали")
+    org_ids = _org_ids(db, site_id)
+    out = []
+    for pid, q in items:
+        w = WriteOff(date=d or date.today(), product_id=pid, quantity=q, organization_id=site_id,
+                     reason=TRANSFER_REASON, to_org_id=to_org_id, unit_cost=last_price(db, org_ids, pid),
+                     created_by=user.id)
+        db.add(w)
+        out.append(w)
+    db.flush()
+    db.add(AuditLog(entity_type="stock_transfer", entity_id=out[0].id, action="insert", user_id=user.id,
+                    new_data={"to": to_org_id, "lines": [(pid, float(q)) for pid, q in items], "note": note}))
+    return out
+
+
+def transfers_value(db: Session, *, from_ids: set[int] | None = None, to_id: int | None = None,
+                    since: date | None = None, until: date | None = None) -> Decimal:
+    """Сколько передано в сомах: «Сокулук передал» / «Кожомкул получил» за период."""
+    q = db.query(WriteOff).filter(WriteOff.to_org_id.isnot(None), WriteOff.deleted_at.is_(None))
+    if from_ids:
+        q = q.filter(WriteOff.organization_id.in_(from_ids))
+    if to_id:
+        q = q.filter(WriteOff.to_org_id == to_id)
+    if since:
+        q = q.filter(WriteOff.date >= since)
+    if until:
+        q = q.filter(WriteOff.date <= until)
+    return sum((Decimal(w.quantity) * Decimal(w.unit_cost or 0) for w in q.all()), Decimal("0"))
 
 
 def quick_count(db: Session, *, user: User, site_id: int, items: list[tuple[int, Decimal]],

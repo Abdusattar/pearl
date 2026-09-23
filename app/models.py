@@ -511,12 +511,16 @@ class WriteOff(Base):
     dish_id         = Column(Integer, ForeignKey("dishes.id"), nullable=True)  # nullable — списание должно проходить и без выбранного блюда
     # Строка листа кухни нового входа (16.09): один лист на день, см. KitchenSheet.
     sheet_id        = Column(Integer, ForeignKey("kitchen_sheets.id"), nullable=True)
+    # Передача в другой садик (23.09): не расход кухни, в нормы не идёт; цена закупки на момент передачи
+    to_org_id       = Column(Integer, ForeignKey("organizations.id"), nullable=True)
+    unit_cost       = Column(Numeric(12, 2), nullable=True)
     created_by      = Column(Integer, ForeignKey("users.id"))
     created_at      = Column(DateTime, server_default=func.now())
     deleted_at      = Column(DateTime)
 
     product      = relationship("Product")
-    organization = relationship("Organization")
+    organization = relationship("Organization", foreign_keys=[organization_id])
+    to_org       = relationship("Organization", foreign_keys=[to_org_id])
     dish         = relationship("Dish")
 
 

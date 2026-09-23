@@ -108,6 +108,70 @@ async def count_save(request: Request, db: Session = Depends(get_db)):
     return RedirectResponse(url, status_code=303)
 
 
+def _transfer_ctx(request, user, site, db, **kw) -> dict:
+    ctx = _base_ctx(request, user, site, db, "warehouse")
+    targets = svc.transfer_targets(db, site.id)
+    ctx.update({"rows": svc.transfer_rows(db, site.id), "targets": targets, "can_write": user.role in WRITE_ROLES,
+                "to_org_id": kw.get("to_org_id") or (targets[0].id if len(targets) == 1 else None),
+                "values": kw.get("values", {}), "error": kw.get("error"), "today": date.today(), "d": kw.get("d", date.today())})
+    return ctx
+
+
+@router.get("/stock/transfer", response_class=HTMLResponse)
+def transfer_page(request: Request, db: Session = Depends(get_db)):
+    user, site = _user_site(request, db)
+    if not user:
+        return RedirectResponse("/login", status_code=302)
+    if site is None:
+        return HTMLResponse("Объект не найден", status_code=404)
+    return templates.TemplateResponse("new/stock_transfer.html", _transfer_ctx(request, user, site, db))
+
+
+@router.post("/stock/transfer", response_class=HTMLResponse)
+async def transfer_save(request: Request, db: Session = Depends(get_db)):
+    """Передали продукты другому садику (владелец 23.09: Сокулук → Кожомкул)."""
+    user, site = _user_site(request, db)
+    if not user:
+        return RedirectResponse("/login", status_code=302)
+    if user.role not in WRITE_ROLES or site is None:
+        return HTMLResponse("Передачу записывают сотрудники площадки", status_code=403)
+    form = await request.form()
+    pids, vals = form.getlist("product_id"), form.getlist("qty")
+    values = dict(zip(pids, vals))
+    to_raw = str(form.get("to_org_id") or "")
+    to_org_id = int(to_raw) if to_raw.isdigit() else None
+    try:
+        d = date.fromisoformat(str(form.get("date") or "")) if form.get("date") else date.today()
+    except ValueError:
+        d = date.today()
+    items, error = [], None
+    for pid, v in zip(pids, vals):
+        v = (v or "").strip().replace(" ", "").replace(",", ".")
+        if not v:
+            continue
+        try:
+            items.append((int(pid), Decimal(v)))
+        except InvalidOperation:
+            error = f"Не число: «{v}». Впишите, сколько передали, например 12"
+            break
+    token = once.clean(str(form.get("form_token") or ""))
+    if not error:
+        if done := once.done_url(db, token):
+            return RedirectResponse(done, status_code=303)
+        try:
+            svc.transfer_out(db, user=user, site_id=site.id, to_org_id=to_org_id or 0, items=items, d=min(d, date.today()))
+        except ValueError as e:
+            error = str(e)
+    if error:
+        return templates.TemplateResponse("new/stock_transfer.html",
+                                          _transfer_ctx(request, user, site, db, values=values, error=error,
+                                                        to_org_id=to_org_id, d=d))
+    url = "/new/stock?saved=transfer"
+    once.remember(db, token, user.id, url)
+    db.commit()
+    return RedirectResponse(url, status_code=303)
+
+
 def _meals_ctx(request, user, site, db, d, **kw) -> dict:
     from app.services import meals
     ctx = _base_ctx(request, user, site, db, "today")

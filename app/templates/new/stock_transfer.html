@@ -1,0 +1,59 @@
+{% extends "new/base.html" %}
+{% block title %}Передали в другой садик — Жемчужина{% endblock %}
+
+{% block head %}
+<style>
+  .chips label.chip input { position: absolute; opacity: 0; pointer-events: none; }
+  .lb { display: block; font-size: 13px; color: var(--muted); margin: 14px 0 6px; }
+  .find { width: 100%; max-width: 360px; height: 44px; font-size: 16px; }
+  table.tr { width: 100%; border-collapse: collapse; margin-top: 8px; }
+  table.tr th { text-align: right; font-weight: 500; font-size: 12px; color: var(--muted); padding: 4px 0; }
+  table.tr th:first-child { text-align: left; }
+  table.tr td { padding: 8px 0; border-top: 1px solid var(--line); text-align: right; font-variant-numeric: tabular-nums; }
+  table.tr td:first-child { text-align: left; }
+  table.tr .in { width: 100px; height: 44px; font-size: 16px; text-align: right; }
+  .foot { display: flex; gap: 12px; flex-wrap: wrap; margin-top: 16px; align-items: center; }
+</style>
+{% endblock %}
+
+{% block content %}
+<a href="/new/stock" style="font-size:14px;text-decoration:none">← Склад</a>
+<h3 class="title" style="margin:4px 0 0">Передали в другой садик</h3>
+{% if error %}<div class="alert bad" style="margin-top:10px">{{ error }}</div>{% endif %}
+<p class="sub">Со склада уходит, но это не расход нашей кухни: в нормы на едока не попадает. Стоимость по цене закупки ляжет на садик, которому передали.</p>
+{% if not targets %}
+<p class="sub">Других садиков в системе нет.</p>
+{% else %}
+<form method="post" action="/new/stock/transfer" autocomplete="off">
+  <span class="lb">Кому</span>
+  <div class="chips">{% for o in targets %}<label class="chip {% if to_org_id == o.id %}on{% endif %}"><input type="radio" name="to_org_id" value="{{ o.id }}" {% if to_org_id == o.id %}checked{% endif %} onchange="document.querySelectorAll('.chips label.chip').forEach(function(l){l.classList.toggle('on', l.contains(this))}, this)">{{ o.name }}</label>{% endfor %}</div>
+  <span class="lb">Когда</span><input class="in" type="date" name="date" value="{{ d.isoformat() }}" max="{{ today.isoformat() }}" style="width:auto">
+  <span class="lb">Что и сколько</span>
+  <input class="in find" id="find" placeholder="Найти продукт" aria-label="Найти продукт">
+  <table class="tr">
+    <tr><th>Продукт</th><th>На складе</th><th>Передали</th></tr>
+    {% for r in rows %}
+    <tr data-n="{{ r.p.name | lower }}"><td>{{ r.p.name }}</td><td>{{ r.balance | qty }} {{ r.p.unit or '' }}</td>
+      <td><input type="hidden" name="product_id" value="{{ r.p.id }}"><input class="in" name="qty" value="{{ values.get(r.p.id | string, '') }}" inputmode="decimal" aria-label="{{ r.p.name }}, сколько передали, {{ r.p.unit or '' }}"></td></tr>
+    {% endfor %}
+  </table>
+  {% if can_write %}<div class="foot"><button class="btn" type="submit">Записать передачу</button></div>{% endif %}
+</form>
+{% endif %}
+{% endblock %}
+
+{% block scripts %}
+<script>
+(function () {
+  var f = document.getElementById('find');
+  if (!f) return;
+  f.addEventListener('input', function () {
+    var q = f.value.trim().toLowerCase();
+    document.querySelectorAll('table.tr tr[data-n]').forEach(function (tr) {
+      var filled = tr.querySelector('input[name=qty]').value.trim() !== '';
+      tr.hidden = q !== '' && tr.dataset.n.indexOf(q) === -1 && !filled;
+    });
+  });
+})();
+</script>
+{% endblock %}

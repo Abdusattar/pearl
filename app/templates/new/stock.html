@@ -32,6 +32,7 @@
 {% endblock %}
 
 {% block content %}
+{% if saved == 'transfer' %}<div class="alert ok">Передача записана: со склада ушло, в расход кухни не попало.</div>{% endif %}
 {% if saved == 'count' %}<div class="alert ok">Пересчёт записан: остатки по посчитанным строкам стали как на полке, разница видна в движении каждого продукта.</div>{% endif %}
 <div class="head">
   <h3 class="title" style="margin:0">Склад</h3>
@@ -58,7 +59,7 @@
 {% endfor %}
 <p class="sub" id="none" hidden>Такого продукта на складе нет. Он появится с первой покупкой.</p>
 
-<div class="quiet"><span>Реже:</span>{% if can_write %}<a href="/new/stock/count">Пересчитать склад</a>{% endif %}{% if st.minor_names %}<span>Остаток не считаем: {{ st.minor_names | join(', ') }}. Они сразу в расходе.</span>{% endif %}</div>
+<div class="quiet"><span>Реже:</span>{% if can_write %}<a href="/new/stock/count">Пересчитать склад</a><a href="/new/stock/transfer">Передали в другой садик</a>{% endif %}{% if st.minor_names %}<span>Остаток не считаем: {{ st.minor_names | join(', ') }}. Они сразу в расходе.</span>{% endif %}</div>
 {% endblock %}
 
 {% block scripts %}

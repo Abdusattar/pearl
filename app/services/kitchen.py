@@ -114,7 +114,7 @@ def missing_days(db: Session, site_org_id: int, until: date | None = None) -> li
     org_ids = {o.id for o in site_orgs(db, site_org_id)} | {site_org_id}
     have |= {d for (d,) in db.query(WriteOff.date)
              .filter(WriteOff.organization_id.in_(org_ids), WriteOff.deleted_at.is_(None),
-                     WriteOff.date >= start,
+                     WriteOff.date >= start, WriteOff.to_org_id.is_(None),
                      or_(WriteOff.reason.is_(None), WriteOff.reason != "пересчёт склада")).distinct().all()}
     from app.services import rules
     working = rules.kitchen_weekdays(db)   # из Настроек (21.09), по умолчанию пн–пт

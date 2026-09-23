@@ -122,6 +122,7 @@ def monthly_food_cost(db: Session, organization_id: int, m_start: date_type) -> 
             WriteOff.date >= m_start,
             WriteOff.date <= month_end(m_start),
             WriteOff.deleted_at.is_(None),
+            WriteOff.to_org_id.is_(None),   # передача в другой садик — не наше питание (23.09)
         )
         .group_by(WriteOff.product_id)
         .all()

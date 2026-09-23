@@ -51,6 +51,7 @@
     <tr><th></th>{% for o in orgs %}<th>{{ o.name }}</th>{% endfor %}</tr>
     <tr><td>Пришло от родителей</td>{% for o in orgs %}{% set c = table.cols[o.id] %}<td class="{% if not c.tariff and c.income == 0 %}nd{% endif %}">{% if not c.tariff and c.income == 0 %}нет данных{% else %}{{ c.income | money }}{% endif %}</td>{% endfor %}</tr>
     <tr><td>Еда</td>{% for o in orgs %}<td>{{ table.cols[o.id].food | money }}</td>{% endfor %}</tr>
+    {% if table.cols.values() | map(attribute='sent') | sum %}<tr><td style="font-size:13px;color:var(--muted)">передали другому садику</td>{% for o in orgs %}<td style="font-size:13px;color:var(--muted)">{% if table.cols[o.id].sent %}{{ table.cols[o.id].sent | money }}{% endif %}</td>{% endfor %}</tr>{% endif %}
     <tr><td>Зарплата</td>{% for o in orgs %}<td>{{ table.cols[o.id].salary | money }}</td>{% endfor %}</tr>
     <tr><td>Свет, вода, охрана</td>{% for o in orgs %}<td>{{ table.cols[o.id].util | money }}</td>{% endfor %}</tr>
     <tr><td>Ремонт и прочее</td>{% for o in orgs %}<td>{{ table.cols[o.id].other | money }}</td>{% endfor %}</tr>

@@ -99,6 +99,15 @@ def month_table(db: Session, site_org_id: int, orgs: list[Organization], month: 
                                   Transaction.deleted_at.is_(None), Transaction.date >= first, Transaction.date <= last)
                           .group_by(Transaction.organization_id).all()):
         cols[org_id]["income"] += Decimal(total)
+    # Передали продукты другому садику (23.09): куплено нами, съедено там — из нашей еды
+    # вычитаем по цене закупки, строкой ниже видно, сколько и кому (владелец: без долга).
+    from app.services.stock import transfers_value
+    sent = transfers_value(db, from_ids=set(cols) | {site_org_id}, since=first, until=last)
+    for o in orgs:
+        cols[o.id]["sent"] = Decimal("0")
+    if sent and site_org_id in cols:
+        cols[site_org_id]["food"] -= sent
+        cols[site_org_id]["sent"] = sent
     for o in orgs:
         c = cols[o.id]
         c["tariff"] = children.billing.get_tuition_service(db, o.id) is not None
