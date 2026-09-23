@@ -38,7 +38,7 @@
 {% if data.hits %}
   {% for r in data.hits %}
   <a class="hit {{ 'debt' if r.answer.kind == 'debt' else r.answer.kind }}" href="/new/children/{{ r.s.id }}">
-    <div class="who">{{ r.s.name }}{% if r.group != 'Без группы' %}, «{{ r.group }}»{% endif %}{% if r.s.status == 'frozen' %}, заморожен{% endif %}</div>
+    <div class="who">{{ r.s.name }}{% if r.s.pin %}, PIN {{ r.s.pin }}{% endif %}{% if r.group != 'Без группы' %}, «{{ r.group }}»{% endif %}{% if r.s.status == 'frozen' %}, заморожен{% endif %}</div>
     <div class="say">{{ r.answer.say }}</div>
     {% if r.answer.more %}<div class="who">{{ r.answer.more }}</div>{% endif %}
   </a>

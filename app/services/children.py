@@ -173,7 +173,7 @@ def children_list(db: Session, org: Organization, only_debt: bool = False, q: st
         if bal > 0.5:
             debt_total += bal
             old_total += sum(r["left"] for r in alloc if r["charge"].date.replace(day=1) < today.replace(day=1))
-        sub = []
+        sub = [f"PIN {s.pin}"] if s.pin else []
         if s.status == "frozen":
             sub.append("заморожен")
         if s.discount_amount and float(s.discount_amount) > 0:
