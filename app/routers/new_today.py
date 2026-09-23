@@ -31,7 +31,7 @@ def today_page(request: Request, db: Session = Depends(get_db)):
         "today": date.today(),
         "site_line": site.name if len(orgs) < 2 else "Сокулук, школа и садик",
         "todo": svc.todo(db, site.id),
-        "figures": svc.now_figures(db, site.id),
+        "figures": _figures_for(user, svc.now_figures(db, site.id)),
         "buy_sub": svc.buy_subtitle(db, site.id),
         "kitchen": svc.kitchen_action(db, site.id),
         "can_write": user.role in WRITE_ROLES,
@@ -74,3 +74,9 @@ def receipts_page(request: Request, db: Session = Depends(get_db)):
                 "skipped": request.query_params.get("skipped"), "done": request.query_params.get("done"),
                 "done_day": request.query_params.get("day"), "done_id": request.query_params.get("id")})
     return templates.TemplateResponse("new/receipts.html", ctx)
+
+
+def _figures_for(user, f: dict) -> dict:
+    """Сотруднику — без остатков на счетах (23.09): это деньги учредителей."""
+    from app.routers.new_cash import sees_accounts
+    return f if sees_accounts(user) else {**f, "accounts": []}

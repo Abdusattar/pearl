@@ -31,6 +31,9 @@ RULES = {
     "kitchen_sheet_required": {"default": False, "title": "Лист кухни обязателен"},
     # Первая неделя новой схемы (владелец 23.09): застрявшее — только владельцу, учредителям — с этой даты
     "escalate_from": {"default": "2026-10-01", "title": "С какого дня застрявшее видят учредители"},
+    # Привыкание (владелец 23.09): каждое утро лично — «на руках X, верно?» и остаток счёта за вчера;
+    # ошибку ловим в тот же день, а не ищем задним числом. Потом — только по расхождению.
+    "daily_checks_until": {"default": "2026-10-07", "title": "До какого дня бот каждое утро сверяет кассу и счёт"},
 }
 WEEKDAYS = ["понедельник", "вторник", "среда", "четверг", "пятница", "суббота", "воскресенье"]
 WEEKDAYS_SHORT = ["пн", "вт", "ср", "чт", "пт", "сб", "вс"]
@@ -99,6 +102,11 @@ def key_products(db: Session) -> list[int]:
 
 def count_weekday(db: Session) -> int:
     return int(get(db, "count_weekday"))
+
+
+def daily_checks_until(db: Session):
+    from datetime import date as _date
+    return _date.fromisoformat(str(get(db, "daily_checks_until")))
 
 
 def escalate_from(db: Session):

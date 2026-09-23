@@ -88,7 +88,7 @@
 </div>
 
 <h4 class="hist">История</h4>
-<div class="fchips"><a href="/new/cash" class="{% if not only_checks %}on{% endif %}">Всё</a><a href="/new/cash?f=checks" class="{% if only_checks %}on{% endif %}">Пересчёты и остатки в банке</a></div>
+<div class="fchips"><a href="/new/cash" class="{% if not only_checks %}on{% endif %}">Всё</a><a href="/new/cash?f=checks" class="{% if only_checks %}on{% endif %}">{{ "Пересчёты" if current_user.role == "staff" else "Пересчёты и остатки в банке" }}</a></div>
 {% set ns = namespace(day=None) %}
 {% for it in items %}
   {% if it.date != ns.day %}{% set ns.day = it.date %}<div class="day">{{ it.date | human_date(true) }}</div>{% endif %}
@@ -109,5 +109,5 @@
 <p class="after">{% if only_checks %}Пересчётов и остатков в банке пока не было.{% else %}Движений пока нет.{% endif %}</p>
 {% endfor %}
 
-<div class="quiet"><span>Реже:</span>{% if can_write %}<a href="/new/cash/founder">Учредители</a>{% endif %}{% if can_write %}<a href="/new/cash/recount">Пересчитать наличные</a><a href="/new/cash/bank">Внести остаток в банке</a>{% endif %}</div>
+<div class="quiet"><span>Реже:</span>{% if can_write %}<a href="/new/cash/founder">Учредители</a>{% endif %}{% if can_write %}<a href="/new/cash/recount">Пересчитать наличные</a>{% if current_user.role != 'staff' %}<a href="/new/cash/bank">Внести остаток в банке</a>{% endif %}{% endif %}</div>
 {% endblock %}

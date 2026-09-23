@@ -58,7 +58,11 @@ def cash_page(request: Request, saved: str | None = None, db: Session = Depends(
     items = svc.history(db, site.id, only_checks=only_checks)
     for it in items:
         it["can_remove"] = user.role in WRITE_ROLES and svc.can_remove(user, it)
-    ctx.update({"st": svc.state(db, site.id), "items": items, "only_checks": only_checks,
+    st = svc.state(db, site.id)
+    if not sees_accounts(user):
+        st = {**st, "accounts": [], "gaps": [g for g in st["gaps"] if g["where"] != "account"]}
+        items = [it for it in items if it.get("kind") != "bank"]
+    ctx.update({"st": st, "items": items, "only_checks": only_checks,
                 "saved": saved, "error": request.query_params.get("error"), "forms": FORMS,
                 "can_write": user.role in WRITE_ROLES})
     return templates.TemplateResponse("new/cash.html", ctx)
@@ -119,6 +123,12 @@ async def cash_remove(request: Request, db: Session = Depends(get_db)):
     return RedirectResponse(f"{back}{sep}saved=removed", status_code=303)
 
 
+def sees_accounts(user) -> bool:
+    """Остаток на счёте видят управляющая, директор и учредители; сотрудник (Махабат)
+    выбирает «оплатили со счёта», но сколько там денег, не видит (23.09, беспокойство Айдай)."""
+    return user.role != "staff"
+
+
 @router.get("/cash/{kind}", response_class=HTMLResponse)
 def cash_form(kind: str, request: Request, db: Session = Depends(get_db)):
     if kind not in FORMS:
@@ -126,6 +136,8 @@ def cash_form(kind: str, request: Request, db: Session = Depends(get_db)):
     user = get_current_user(request, db)
     if not user:
         return RedirectResponse("/login", status_code=302)
+    if kind == "bank" and not sees_accounts(user):
+        return HTMLResponse("Остаток в банке вносит управляющая", status_code=403)
     site = _site(user, db)
     if site is None:
         return HTMLResponse("Объект не найден", status_code=404)
@@ -142,6 +154,8 @@ async def cash_submit(kind: str, request: Request, db: Session = Depends(get_db)
     user = get_current_user(request, db)
     if not user:
         return RedirectResponse("/login", status_code=302)
+    if kind == "bank" and not sees_accounts(user):
+        return HTMLResponse("Остаток в банке вносит управляющая", status_code=403)
     if user.role not in WRITE_ROLES:
         return HTMLResponse("Записывают сотрудники площадки", status_code=403)
     site = _site(user, db)

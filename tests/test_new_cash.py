@@ -176,8 +176,11 @@ def test_negative_pocket_is_missing_record_gap(db, site, people):
     assert g and "минус 3 000" in g[0]["title"] and "не хватает записи" in g[0]["sub"]
 
 
-def test_bank_balance_needs_reason_when_big(client, db, site, people, as_makhabat):
+def test_bank_balance_needs_reason_when_big(client, db, site, people, as_makhabat, monkeypatch):
     sadik, school = site
+    # 23.09: остаток счёта сотрудник не видит и не вносит — это деньги учредителей; вносит управляющая
+    assert client.get("/new/cash/bank").status_code == 403
+    monkeypatch.setattr(cash_router, "get_current_user", lambda request, db: people[1])
     exp = svc.expected_account(db, sadik.id)
     r = client.post("/new/cash/bank", data={"account_org_id": sadik.id, "amount": str(exp + 20000),
                                             "date": date.today().isoformat()}, follow_redirects=False)

@@ -200,6 +200,8 @@ def run_scheduled(db: Session, now: datetime | None = None) -> list[str]:
     sent += _meal_and_count_asks(db, site, now)
     sent += _escalate(db, site, now)
     sent += _week_praise(db, site, now)
+    sent += _purchases_ask(db, site, now)
+    sent += _morning_checks(db, site, now)
     # Пятничный «у вас на руках X, верно?» с записью ответа выключен 21.09: это ритуал
     # пересчёта (владелец: пересчёт — признак слабости), и бот не пишет в деньги мимо
     # проверки Махабат. Сумму на руках человек присылает сам — она станет черновиком.
@@ -488,6 +490,9 @@ def handle_update(db: Session, update: dict) -> str | None:
     if site is not None and (meal := meal_reply(db, site, user, text)):
         send(db, chat_id, meal, "reply", user_id=user.id)
         return meal
+    if site is not None and (morning := morning_answer(db, site, user, text)):
+        send(db, chat_id, morning, "reply", user_id=user.id)
+        return morning
     if site is not None and (stock_reply := stock_text_reply(db, site, user, text, "private")):
         send(db, chat_id, stock_reply, "reply", user_id=user.id)
         return stock_reply
@@ -548,6 +553,12 @@ def _handle_group(db: Session, msg: dict, user: User | None, text: str) -> str |
                                   text=text[:2000], status="understood", payload={"message_id": message_id, "reply": meal}))
                 send(db, chat_id, meal, "group_reply", user_id=user.id if user else None, reply_to=message_id)
                 return meal
+            if user is not None and NO_BUY.search((text or "").lower()):
+                db.add(BotMessage(kind="no_purchases", chat_id=chat_id, user_id=user.id, direction="in",
+                                  text=text[:500], status="understood", job_key=f"no_purchases:{today_d.isoformat()}:{message_id}"))
+                ok = "Понял, спасибо: сегодня без закупок."
+                send(db, chat_id, ok, "group_reply", user_id=user.id, reply_to=message_id)
+                return ok
             stock_reply = stock_text_reply(db, site, user, text, "chat")
             if stock_reply:
                 db.add(BotMessage(kind="stock_text", chat_id=chat_id, user_id=user.id if user else None, direction="in",
@@ -896,3 +907,117 @@ def stock_text_reply(db: Session, site: Organization, user: User | None, text: s
         return None
     draft = drafts.create_text(db, site_org_id=site.id, author=user, text=text, kind=kind, source=source)
     return draft_link_text(db, site, user, draft)
+
+
+# ── закупки за день и утренние сверки (владелец 23.09) ──────────────────
+
+NO_BUY = re.compile(r"без закуп|закуп\w* не было|ничего не покуп|не покупали")
+PURCHASE_HOUR = 17
+MORNING_HOUR = 9
+
+
+def _bought_today(db: Session, site: Organization, d: date) -> bool:
+    from app.models import Transaction
+    org_ids = [o.id for o in site_orgs(db, site.id)] + [site.id]
+    start = datetime.combine(d, datetime.min.time())
+    return db.query(Transaction.id).filter(Transaction.organization_id.in_(org_ids), Transaction.type == "expense",
+                                           Transaction.deleted_at.is_(None), Transaction.created_at >= start).first() is not None
+
+
+def _purchases_ask(db: Session, site: Organization, now: datetime) -> list[str]:
+    """17:00: «сегодня что-то покупали?» — только если за день ни одной закупки не внесено и
+    никто не сказал «без закупок»; заодно — сколько черновиков ждёт одной кнопки.
+    Всё внесено и черновиков нет — молчим."""
+    from app.services import meals
+    d = now.date()
+    if now.hour != PURCHASE_HOUR or not meals.expected_today(db, site.id, d):
+        return []
+    key = f"purchases_ask:{site.id}:{d.isoformat()}"
+    if _done(db, key):
+        return []
+    said_none = db.query(BotMessage.id).filter(BotMessage.kind == "no_purchases",
+                                               BotMessage.job_key.like(f"no_purchases:{d.isoformat()}:%")).first()
+    need_buy = not _bought_today(db, site, d) and said_none is None
+    waiting = len(today.unchecked_receipts(db, site.id))
+    if not need_buy and not waiting:
+        db.add(BotMessage(kind="purchases_ask", job_key=key, status="skipped"))
+        return []
+    name = _counter_name(db, site)
+    hi = f"{name}, " if name else ""
+    parts = []
+    if need_buy:
+        parts.append(f"{hi}сегодня что-то покупали? Чеки фото сюда, или напишите «сегодня без закупок».")
+    if waiting:
+        parts.append(("И " if parts else hi) + f"в черновиках ждут {waiting} — проверить и записать: {public_url()}/new/receipts")
+    send(db, group_chat_id(), " ".join(parts), "purchases_ask", job_key=key)
+    return [key]
+
+
+def _account_holder(db: Session, org: Organization) -> User | None:
+    """Кто вносит остаток по счёту: у школы — директор, у садика — управляющая."""
+    role = "director" if org.type == "school" else "manager"
+    from app.services.purchases import site_orgs as _orgs
+    return (db.query(User).filter(User.role == role, User.deleted_at.is_(None), User.tg_id.isnot(None))
+            .order_by(User.id).first())
+
+
+def _morning_checks(db: Session, site: Organization, now: datetime) -> list[str]:
+    """Привыкание (до rules.daily_checks_until): в 9:00 лично каждому, у кого карман, —
+    «по записям у вас X, верно?», и держателю счёта — «остаток на конец вчера?».
+    Ошибку ловим на следующий день, а не ищем задним числом. Только в личку: суммы
+    по людям и остатки счетов в общий чат не идут."""
+    d = now.date()
+    if now.hour != MORNING_HOUR or d > rules.daily_checks_until(db) or d.weekday() >= 5:
+        return []
+    out = []
+    for u in cash.pocket_people(db, site.id):
+        if not u.tg_id or u.role == "founder":
+            continue
+        key = f"pocket_ask:{d.isoformat()}:{u.id}"
+        if _done(db, key):
+            continue
+        bal = cash.pocket_balance(db, site.id, u.id)
+        send(db, u.tg_id, f"Доброе утро, {u.name}. По записям у вас на руках {fmt_money(float(bal))}. Верно? "
+                          "Ответьте «да» или своей цифрой (можно с причиной: «5000, отдала за хлеб»).",
+             "pocket_ask", user_id=u.id, job_key=key)
+        out.append(key)
+    y = d - timedelta(days=1)
+    for a in cash.state(db, site.id)["accounts"]:
+        holder = _account_holder(db, a["org"])
+        if holder is None:
+            continue
+        key = f"bank_ask:{d.isoformat()}:{a['org'].id}"
+        if _done(db, key):
+            continue
+        send(db, holder.tg_id, f"{holder.name}, остаток на счёте {a['org'].name} на конец вчерашнего дня ({_d(y)}) — "
+                               "одной цифрой из банка, например «125 400».",
+             "bank_ask", user_id=holder.id, job_key=key, payload={"org_id": a["org"].id, "date": y.isoformat()})
+        out.append(key)
+    return out
+
+
+def morning_answer(db: Session, site: Organization, user: User, text: str) -> str | None:
+    """Ответ на утренний вопрос в личке: последний открытый вопрос этого человека за сегодня."""
+    d = date.today()
+    ask = (db.query(BotMessage).filter(BotMessage.user_id == user.id, BotMessage.kind.in_(("pocket_ask", "bank_ask")),
+                                       BotMessage.status.in_(("sent", "logged")),
+                                       BotMessage.created_at >= datetime.combine(d, datetime.min.time()))
+           .order_by(BotMessage.id.desc()).first())
+    low = (text or "").strip().lower()
+    if ask is None or not (low in ("да", "верно", "+") or _NUM.match(text or "")):
+        return None
+    if ask.kind == "pocket_ask":
+        return _handle_pocket_answer(db, user, site, text)
+    m = _NUM.match(text or "")
+    if not m:
+        return "Нужна цифра из банка, например «125 400»."
+    actual = Decimal(m.group(1).replace(" ", "").replace(",", "."))
+    reason = m.group(2).strip() or None
+    p = ask.payload or {}
+    try:
+        cash.bank_balance(db, user=user, org_id=int(p["org_id"]), actual=actual,
+                          d=date.fromisoformat(p["date"]), reason=reason)
+    except ValueError as e:
+        return f"{e}. Напишите ту же сумму и что произошло, например «{fmt_money(float(actual))} комиссия банка»."
+    ask.status = "answered"
+    return f"Записал остаток {fmt_money(float(actual))} на {_d(date.fromisoformat(p['date']))}. Спасибо!"
