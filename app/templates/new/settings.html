@@ -90,7 +90,7 @@
     <div class="checks">{% for p in kp.all %}<label><input type="checkbox" name="key" value="{{ p.id }}" {% if p.id in kp.ids %}checked{% endif %}>{{ p.name }}</label>{% endfor %}</div>
     <span class="lb">День пересчёта</span>
     <select class="in" name="weekday" style="width:auto">{% for d in range(6) %}<option value="{{ d }}" {% if d == s.count_weekday %}selected{% endif %}>{{ WEEKDAYS[d] }}</option>{% endfor %}</select>
-    <div class="bt"><button class="btn" type="submit">Записать</button><span class="after" style="margin:0">В этот день бот напомнит в 14:00.</span></div></form></details>
+    <div class="bt"><button class="btn" type="submit">Записать</button><span class="after" style="margin:0">Бот спросит в этот день в 15:00, запасной — следующим утром до поваров.</span></div></form></details>
 <details class="set"><summary><span><span class="t">Остаток не считаем</span><br><span class="v">{{ s.minor | map(attribute='name') | join(', ') or 'по всем считаем' }}</span></span><span class="go">Изменить</span></summary>
   <form class="box" method="post" action="/new/settings/minor">
     <span class="lb">Отмеченное уходит в расход в день покупки, остаток по нему не ведём</span>

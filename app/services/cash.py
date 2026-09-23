@@ -319,6 +319,13 @@ def state(db: Session, site_org_id: int) -> dict:
     return {"cash": cash, "accounts": accs, "gaps": gaps}
 
 
+def bank_due(db: Session, site_org_id: int, week_start: date) -> list[dict]:
+    """Счета, где остаток в банке уже вносили, но не на этой неделе пересчёта (23.09:
+    раз в неделю вместе с пересчётом склада — расход со счёта без чека всплывает за
+    неделю). Ни разу не вносили — это уже пробел Кассы, здесь не дублируем."""
+    return [a for a in accounts(db, site_org_id) if a["since"] is not None and a["since"] < week_start]
+
+
 def expected_account(db: Session, org_id: int, d: date | None = None) -> Decimal:
     return Decimal(podotchet.get_expected_balance(db, org_id, d or date.today())["expected"])
 

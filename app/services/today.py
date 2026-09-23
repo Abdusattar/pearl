@@ -88,12 +88,22 @@ def todo(db: Session, site_org_id: int) -> list[dict]:
                       "sub": "три числа: школа, садик, персонал — можно одной строкой в чат",
                       "go": "Записать"})
     keys = rules.key_products(db)
-    if keys and today.weekday() == rules.count_weekday(db):
+    cw = rules.count_weekday(db)
+    if keys and today.weekday() in (cw, (cw + 1) % 7):
         from app.services.bot import key_count_done
         if not key_count_done(db, site_org_id, today):
-            items.append({"src": "count", "kind": "warn", "url": "/new/stock/count?cat=key",
-                          "title": f"Пересчёт ключевых продуктов: сегодня",
-                          "sub": f"{len(keys)} позиций, минут 15", "go": "Пересчитать"})
+            late = today.weekday() != cw
+            items.append({"src": "count", "kind": "bad" if late else "warn", "url": "/new/stock/count?cat=key",
+                          "title": "Пересчёт ключевых продуктов: " + ("вчера не сделан" if late else "сегодня"),
+                          "sub": "утром, пока повара не взяли продукты" if late else f"{len(keys)} позиций, минут 15",
+                          "go": "Пересчитать"})
+    # Остаток в банке — раз в неделю, с пересчёта (23.09): висит, пока не внесён.
+    if keys:
+        from app.services.bot import count_week_start
+        for a in cash.bank_due(db, site_org_id, count_week_start(db, today)):
+            items.append({"src": "bank", "kind": "warn", "url": f"/new/cash/bank?org={a['org'].id}",
+                          "title": f"Остаток в банке за неделю: {a['org'].name}",
+                          "sub": "одна цифра из банка — расход без чека всплывёт сразу", "go": "Внести"})
 
     # Чеки с фото — одной строкой, список на отдельном экране (туда же придут записи бота).
     receipts = unchecked_receipts(db, site_org_id)

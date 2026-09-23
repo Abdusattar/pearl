@@ -39,9 +39,10 @@ def _upd(tg_id, text=None, private=True, photo=False):
                         "from": {"id": tg_id}, "text": text, **({"photo": [{"file_id": "x", "file_size": 1}]} if photo else {})}}
 
 
-def test_unknown_user_gets_own_id(db, site, people):
+def test_unknown_user_is_linked_by_owner_not_asked_for_id(db, site, people):
+    # 23.09: номер человеку не нужен — владелец привязывает кнопкой «Это он(а)»
     reply = svc.handle_update(db, _upd(123456789, "привет"))
-    assert "123456789" in reply and "Абдусаттару" in reply
+    assert "Абдусаттар" in reply and "123456789" not in reply
 
 
 def test_group_messages_are_ignored(db, site, people):

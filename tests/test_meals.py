@@ -95,3 +95,55 @@ def test_key_products_open_count_first(db, site, counter, monkeypatch):
     monkeypatch.setattr(rules, "key_products", lambda db: [p.id])
     data = stock.count_rows(db, site.id, None)
     assert data["current"] == stock.KEY and [r["p"].id for r in data["rows"]] == [p.id]
+
+
+def _thursday_after(d):
+    return d + timedelta(days=(3 - d.weekday()) % 7)
+
+
+def test_count_on_thursday_with_bank_line_and_friday_morning(db, site, counter, monkeypatch):
+    from app.services import reconciliation
+    p = Product(name="Говядина тест-чт", unit="кг")
+    db.add(p)
+    db.flush()
+    monkeypatch.setattr(rules, "key_products", lambda db: [p.id])
+    monkeypatch.setattr(rules, "count_weekday", lambda db: 3)
+    mgr = User(name="Управляющая ед", role="manager", organization_id=site.id)
+    db.add(mgr)
+    db.flush()
+    thu = _thursday_after(date.today() + timedelta(days=7))
+    reconciliation.create(db, organization_id=site.id, kind="account", actual=1000, user_id=mgr.id,
+                          on_date=thu - timedelta(days=10))
+    monkeypatch.setattr(bot.cash, "bank_due", lambda db, s, start: [{"org": site}])
+    assert bot._meal_and_count_asks(db, site, datetime(thu.year, thu.month, thu.day, 14, 5)) == []   # 14 — ещё кухня
+    keys = bot._meal_and_count_asks(db, site, datetime(thu.year, thu.month, thu.day, 15, 5))
+    text = db.query(BotMessage).filter_by(job_key=keys[-1]).one().text
+    assert "пересчёт ключевых" in text and "Управляющая ед, и остаток в банке" in text
+    fri = thu + timedelta(days=1)
+    keys = bot._meal_and_count_asks(db, site, datetime(fri.year, fri.month, fri.day, 8, 5))
+    assert keys == [f"count_ask:{fri.isoformat()}:8"]
+    assert "до поваров" in db.query(BotMessage).filter_by(job_key=keys[0]).one().text
+
+
+def test_stuck_goes_to_founder_only_after_bot_asked(db, site, counter, monkeypatch):
+    founder = User(name="Учредитель ед", role="founder", organization_id=site.id, tg_id=555777)
+    db.add(founder)
+    db.flush()
+    monkeypatch.setattr(bot.cash, "bank_due", lambda db, s, start: [])
+    d = date.today()
+    at16 = datetime(d.year, d.month, d.day, 16, 5)
+    assert bot._escalate(db, site, at16) == []            # бот не спрашивал — жаловаться не на что
+    for x in (d - timedelta(days=1), d):
+        db.add(BotMessage(kind="meal_ask", job_key=f"meal_ask:{x.isoformat()}:12", direction="out", status="logged"))
+    db.flush()
+    assert bot._escalate(db, site, at16) == [f"escalate:{d.isoformat()}:16"]
+    msg = db.query(BotMessage).filter_by(job_key=f"escalate:{d.isoformat()}:16:{founder.id}").one()
+    assert msg.chat_id == 555777 and "сколько едят" in msg.text and msg.text.startswith("Учредитель ед,")
+    assert bot._escalate(db, site, at16) == []            # раз в день
+
+
+def test_unknown_start_is_not_asked_for_number(db, site, counter):
+    upd = {"message": {"message_id": 2, "chat": {"id": 777, "type": "private"}, "from": {"id": 777, "first_name": "Новый"},
+                       "text": "/start"}}
+    reply = bot.handle_update(db, upd)
+    assert "передавать ничего не нужно" in reply and "номер" not in reply

@@ -198,6 +198,7 @@ def run_scheduled(db: Session, now: datetime | None = None) -> list[str]:
                 _send_founders(db, text, key)
             sent.append(key)
     sent += _meal_and_count_asks(db, site, now)
+    sent += _escalate(db, site, now)
     # Пятничный «у вас на руках X, верно?» с записью ответа выключен 21.09: это ритуал
     # пересчёта (владелец: пересчёт — признак слабости), и бот не пишет в деньги мимо
     # проверки Махабат. Сумму на руках человек присылает сам — она станет черновиком.
@@ -242,18 +243,103 @@ def _meal_and_count_asks(db: Session, site: Organization, now: datetime) -> list
                     + f"Одной строкой, например:\n{meals.EXAMPLE}")
             send(db, group, text, "meal_ask", job_key=key)
             out.append(key)
+    # Пересчёт (владелец 23.09): в день пересчёта после кухни — 15:00, напоминание в 18:00,
+    # запасной — утром следующего дня до поваров. Вместе с ним — остаток в банке по
+    # счетам, где его давно не вносили: расход со счёта без чека всплывает за неделю.
     keys = rules.key_products(db)
-    if keys and d.weekday() == rules.count_weekday(db) and now.hour in (14, 18) and not key_count_done(db, site.id, d):
+    cw = rules.count_weekday(db)
+    slot = {(cw, 15): "first", (cw, 18): "again", ((cw + 1) % 7, 8): "last"}.get((d.weekday(), now.hour))
+    if keys and slot:
+        start = count_week_start(db, d)
+        bank = cash.bank_due(db, site.id, start)
+        need_count = not key_count_done(db, site.id, d)
         key = f"count_ask:{d.isoformat()}:{now.hour}"
-        if not _done(db, key):
-            if now.hour == 14:
-                text = (f"{hi}сегодня пересчёт ключевых продуктов: {len(keys)} позиций, минут 15.\n"
-                        "Склад → Пересчитать → «Ключевые». Пустая строка = не считали.")
-            else:
-                text = f"{hi}пересчёт ключевых сегодня не записан. Если считали на бумаге — пришлите фото листа сюда."
-            send(db, group, text, "count_ask", job_key=key)
+        if (need_count or (bank and slot == "first")) and not _done(db, key):
+            lines = []
+            if need_count and slot == "first":
+                lines.append(f"{hi}сегодня пересчёт ключевых продуктов: {len(keys)} позиций, минут 15. "
+                             "Лучше сейчас, пока повара не взяли продукты на завтра.\n"
+                             "Склад → Пересчитать → «Ключевые». Пустая строка = не считали.")
+            elif need_count and slot == "again":
+                lines.append(f"{hi}пересчёт ключевых сегодня не записан. Если считали на бумаге — пришлите фото листа сюда.")
+            elif need_count:
+                lines.append(f"{hi}пересчёт за {WEEKDAY_ACC[cw]} не записан. Сегодня утром, до поваров, — "
+                             "потом неделя смажется. Склад → Пересчитать → «Ключевые».")
+            if bank and slot == "first":
+                who = _bank_holder(db, site)
+                lines.append((f"{who}, " if who else "") + "и остаток в банке одной цифрой: "
+                             + ", ".join(a["org"].name for a in bank) + ". Касса → Остаток в банке.")
+            send(db, group, "\n\n".join(lines), "count_ask", job_key=key)
             out.append(key)
     return out
+
+
+def count_week_start(db: Session, d: date) -> date:
+    """Последний день пересчёта не позже d — начало «недели пересчёта»."""
+    return d - timedelta(days=(d.weekday() - rules.count_weekday(db)) % 7)
+
+
+def _bank_holder(db: Session, site: Organization) -> str | None:
+    """Кто вносит остаток в банке: управляющая площадки (Мунара)."""
+    from app.services.purchases import site_orgs as _orgs
+    org_ids = [o.id for o in _orgs(db, site.id)]
+    u = (db.query(User).filter(User.role == "manager", User.deleted_at.is_(None), User.organization_id.in_(org_ids))
+         .order_by(User.id).first())
+    return u.name if u else None
+
+
+# ── застряло → учредителю (23.09) ───────────────────────────────────────
+# Бот сам спрашивает исполнителя. Если спросил и ответа нет — одно сообщение в день
+# учредителю в личку (дисциплина — её слово, владелец 23.09) и копия владельцу.
+# Только то, о чём бот уже спрашивал: без вопроса нет и жалобы.
+
+ESCALATE_HOURS = (12, 16)       # 12 — после пропущенного пересчёта, 16 — после напоминания про едоков
+RECEIPTS_STUCK_DAYS = 3
+
+
+def stuck_items(db: Session, site: Organization, now: datetime) -> list[str]:
+    from app.services import meals
+    d, out = now.date(), []
+    # едоки: бот спрашивал сегодня и в прошлый рабочий день, записи нет ни за один
+    prev = d - timedelta(days=1)
+    while not meals.expected_today(db, site.id, prev) and prev > d - timedelta(days=7):
+        prev -= timedelta(days=1)
+    if (now.hour == 16 and all(_done(db, f"meal_ask:{x.isoformat()}:12") and meals.get(db, site.id, x) is None
+                               for x in (prev, d))):
+        out.append(f"сколько едят — не записано 2 рабочих дня ({_d(prev)} и сегодня)")
+    # пересчёт: утренний запасной вопрос был, а пересчёта так и нет
+    if now.hour != 12:
+        return out   # остальное — один раз в день, в 12
+    if rules.key_products(db) and _done(db, f"count_ask:{d.isoformat()}:8") and not key_count_done(db, site.id, d):
+        out.append(f"пересчёт склада за {WEEKDAY_ACC[rules.count_weekday(db)]} не сделан — неделя без точки")
+    # остаток в банке: спрашивали в день пересчёта, до сих пор не внесён
+    start = count_week_start(db, d)
+    if d != start and _done(db, f"count_ask:{start.isoformat()}:15"):
+        for a in cash.bank_due(db, site.id, start):
+            out.append(f"остаток в банке по счёту {a['org'].name} на этой неделе не внесён")
+    # чеки из чата ждут проверки дольше 3 дней
+    edge = datetime.combine(d - timedelta(days=RECEIPTS_STUCK_DAYS), datetime.min.time())
+    old = [r for r in today.unchecked_receipts(db, site.id) if r.created_at and r.created_at < edge]
+    if old:
+        out.append(f"чеки из чата: {len(old)} ждут проверки больше {RECEIPTS_STUCK_DAYS} дней")
+    return out
+
+
+def _escalate(db: Session, site: Organization, now: datetime) -> list[str]:
+    if now.hour not in ESCALATE_HOURS:
+        return []
+    key = f"escalate:{now.date().isoformat()}:{now.hour}"
+    if _done(db, key):
+        return []
+    items = stuck_items(db, site, now)
+    if not items:
+        return []
+    body = "Застряло:\n" + "\n".join(f"• {x}" for x in items) + "\n\nБот уже спрашивал в чате. Нужно ваше слово."
+    for f in db.query(User).filter(User.role == "founder", User.deleted_at.is_(None), User.tg_id.isnot(None)).all():
+        send(db, f.tg_id, f"{f.name}, это бот Жемчужины. {body}", "escalate", user_id=f.id, job_key=f"{key}:{f.id}")
+    owner = db.get(User, OWNER_USER_ID)
+    send(db, owner.tg_id if owner else None, "Копия учредителям. " + body, "escalate", user_id=OWNER_USER_ID, job_key=key)
+    return [key]
 
 
 def key_count_done(db: Session, site_org_id: int, d: date) -> bool:
@@ -262,7 +348,7 @@ def key_count_done(db: Session, site_org_id: int, d: date) -> bool:
     keys = rules.key_products(db)
     if not keys:
         return True
-    since = d - timedelta(days=(d.weekday() - rules.count_weekday(db)) % 7)
+    since = count_week_start(db, d)
     got = {pid for (pid,) in db.query(StockCountLine.product_id).join(StockCount, StockCount.id == StockCountLine.count_id)
            .filter(StockCount.organization_id == site_org_id, StockCount.status == "applied",
                    StockCount.count_date >= since, StockCountLine.product_id.in_(keys)).distinct().all()}
@@ -334,9 +420,13 @@ def handle_update(db: Session, update: dict) -> str | None:
     if media and media["kind"] == "document" and user:
         msg = {**msg, "_doc": media}
     if not user:
-        reply = (f"Здравствуйте. Ваш номер в Telegram: {from_id}. Передайте его Абдусаттару, "
-                 "он привяжет вас в системе, и я буду присылать вам ваши сообщения.")
+        # 23.09: номер человеку ни к чему — владелец привязывает кнопкой «Это он(а)»
+        reply = "Здравствуйте. Я бот Жемчужины. Абдусаттар подключит вас, передавать ничего не нужно."
         send(db, chat_id, reply, "reply")
+        owner = db.get(User, OWNER_USER_ID)
+        if owner and owner.tg_id and from_id != owner.tg_id:
+            send(db, owner.tg_id, f"Боту написал(а) {_sender_name(sender) or from_id}. Привязать: Настройки бота → "
+                 "«Писали, но не привязаны» → «Это он(а)».", "reply", user_id=OWNER_USER_ID)
         return reply
     site = site_for_bot(db)
     if (msg.get("photo") or msg.get("_doc")) and site is not None:
@@ -347,7 +437,10 @@ def handle_update(db: Session, update: dict) -> str | None:
         send(db, chat_id, meal, "reply", user_id=user.id)
         return meal
     low = text.lower()
-    if low in ("/start", "start"):
+    if low in ("/start", "start") and user.role == "founder":
+        reply = (f"Здравствуйте, {user.name}. Я буду писать вам, только когда что-то застряло: "
+                 "бот спросил в чате, а ответа нет. Остальное люди и бот решают сами.")
+    elif low in ("/start", "start"):
         reply = f"Здравствуйте, {user.name}. Фото чека или листа кухни можно отправить сюда или в чат «Жемчужина»: я положу его Махабат черновиком на проверку."
     elif low in ("ок", "ok", "да, отправляй") and user.id == OWNER_USER_ID:
         reply = _approve_summary(db)
