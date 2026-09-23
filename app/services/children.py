@@ -373,7 +373,11 @@ def add_child(db: Session, *, user: User, org_id: int, last_name: str, first_nam
     return student
 
 
-def set_discount(db: Session, *, user: User, student: Student, amount: float, reason: str) -> None:
+def set_discount(db: Session, *, user: User, student: Student, amount: float, reason: str) -> dict | None:
+    """Скидка ребёнку. Если месяц уже начислен — начисление этого месяца
+    пересчитывается тут же (billing.recompute_monthly_charge), чтобы правка
+    скидки после 1-го числа не оставляла долг, которого нет.
+    Возвращает, что стало с начислением ({old, new, period}) или None."""
     base = billing.tuition_base_price(db, student)
     if not (0 <= amount <= base):
         raise ValueError(f"Скидка от 0 до {base:,.0f} сом".replace(",", " "))
@@ -387,6 +391,11 @@ def set_discount(db: Session, *, user: User, student: Student, amount: float, re
         student.discount_set_at = datetime.now()
     student.discount_amount = amount
     student.discount_reason = reason.strip() or None
+    changed = billing.recompute_monthly_charge(db, student)
+    if changed:
+        audit(db, "charge", student.id, "update", user.id,
+              {"why": "скидка изменена", "period": changed["period"].isoformat(), "old": changed["old"], "new": changed["new"]})
+    return changed
 
 
 def set_status(db: Session, *, user: User, student: Student, status: str, d: date, reason: str | None) -> None:

@@ -123,6 +123,48 @@ def _proration_factor(
     return max(0.0, min(1.0, days_active / days_in_month))
 
 
+def _month_total(student: Student, base: float, services_total: float, factor: float, frozen_percent) -> float:
+    """Начисление за месяц одному ребёнку — одна формула для батча
+    (generate_monthly_charges) и для пересчёта после смены скидки
+    (recompute_monthly_charge), чтобы две копии денежной логики не разошлись."""
+    tuition = max(0.0, base - float(student.discount_amount or 0))  # уже с учётом скидки на тариф
+    if student.status == "frozen":
+        return round(tuition * float(frozen_percent or 0) / 100, 2)
+    return round((tuition + services_total) * factor, 2)
+
+
+MONTHLY = "Начисление за месяц"
+
+
+def recompute_monthly_charge(db: Session, student: Student, period: date | None = None) -> dict | None:
+    """Скидка изменилась после того, как месяц уже начислен (23.09, тариф школы:
+    332 ребёнка получают начисление сразу, а суммы по договорам Айжан заполняет
+    потом; в садике то же — Айлин 04.09: скидку сменили 3-го, сентябрь остался
+    без неё). Начисление текущего месяца приводится к тому, что дал бы расчёт
+    сейчас. Оплаты к начислению не привязаны (баланс = начисления − оплаты),
+    поэтому пересчёт безопасен. Прошлые месяцы не трогаем.
+    Возвращает {old, new, period} если сумма изменилась, иначе None."""
+    period = period or date.today().replace(day=1)
+    charge = (db.query(Charge).filter(Charge.student_id == student.id, Charge.date == period,
+                                      Charge.description == MONTHLY, Charge.deleted_at.is_(None))
+              .order_by(Charge.id.asc()).first())
+    if charge is None:
+        return None
+    org = db.get(Organization, student.organization_id)
+    enrollments = (db.query(Enrollment).filter(Enrollment.student_id == student.id)
+                   .order_by(Enrollment.start_date.asc(), Enrollment.id.asc()).all())
+    base = _tuition_base(org, get_tuition_service(db, student.organization_id), enrollments)
+    services_total = sum(float(ss.service.price) for ss in _active_services(db, student.id))
+    first_start = enrollments[0].start_date if enrollments else None
+    factor = _proration_factor(db, student.id, period, first_start=first_start)
+    new = _month_total(student, base, services_total, factor, org.frozen_discount_percent if org else 0)
+    old = float(charge.amount)
+    if abs(new - old) < 0.005:
+        return None
+    charge.amount = new
+    return {"old": old, "new": new, "period": period}
+
+
 def _active_services(db: Session, student_id: int) -> list[StudentService]:
     return (
         db.query(StudentService)
@@ -210,17 +252,10 @@ def generate_monthly_charges(db: Session) -> int:
         org = org_by_id.get(student.organization_id)
         enrollments = enrollments_by_student.get(student.id, [])
         base = _tuition_base(org, tuition_service_by_org.get(student.organization_id), enrollments)
-        tuition = max(0.0, base - float(student.discount_amount or 0))  # уже с учётом скидки на тариф
-
-        if student.status == "frozen":
-            percent = float(org_frozen_percent.get(student.organization_id) or 0)
-            total = round(tuition * percent / 100, 2)
-        else:
-            services = services_by_student.get(student.id, [])
-            services_total = sum(float(ss.service.price) for ss in services)
-            first_start = enrollments[0].start_date if enrollments else None
-            factor = _proration_factor(db, student.id, period, first_start=first_start)
-            total = round((tuition + services_total) * factor, 2)
+        services_total = sum(float(ss.service.price) for ss in services_by_student.get(student.id, []))
+        first_start = enrollments[0].start_date if enrollments else None
+        factor = 1.0 if student.status == "frozen" else _proration_factor(db, student.id, period, first_start=first_start)
+        total = _month_total(student, base, services_total, factor, org_frozen_percent.get(student.organization_id))
         if total <= 0:
             continue
 
@@ -231,7 +266,7 @@ def generate_monthly_charges(db: Session) -> int:
         db.add(Charge(
             student_id=student.id,
             amount=total,
-            description="Начисление за месяц",
+            description=MONTHLY,
             date=period,
         ))
         created += 1

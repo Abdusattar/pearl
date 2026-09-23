@@ -31,6 +31,7 @@
 {% if saved == 1 %}<div class="alert ok">Оплата записана, деньги в кармане. На счёт они не попадали.</div>
 {% elif saved == 2 %}<div class="alert ok">Ребёнок заведён, PIN {{ s.pin }}. Начисление пойдёт с текущего месяца.</div>
 {% elif saved == 3 %}<div class="alert ok">Скидка записана, следующее начисление её учтёт.</div>
+{% elif saved == 7 %}<div class="alert ok">Скидка записана, начисление за этот месяц пересчитано.</div>
 {% elif saved == 4 %}<div class="alert ok">Статус записан.</div>
 {% elif saved == 5 %}<div class="alert ok">Группа записана.</div>
 {% elif saved == 6 %}<div class="alert ok">Имя и родитель записаны.</div>{% endif %}

@@ -230,11 +230,11 @@ def child_discount(student_id: int, request: Request, amount: str = Form(""), re
         return HTMLResponse("Ребёнок не найден", status_code=404)
     try:
         val = float(amount.replace(" ", "").replace(",", ".")) if amount.strip() else 0.0
-        svc.set_discount(db, user=user, student=student, amount=val, reason=reason)
+        changed = svc.set_discount(db, user=user, student=student, amount=val, reason=reason)
     except ValueError as e:
         return RedirectResponse(f"/new/children/{student.id}?err={e}", status_code=303)
     db.commit()
-    return RedirectResponse(f"/new/children/{student.id}?saved=3", status_code=303)
+    return RedirectResponse(f"/new/children/{student.id}?saved={7 if changed else 3}", status_code=303)
 
 
 @router.post("/children/{student_id}/status")
