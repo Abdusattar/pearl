@@ -905,6 +905,18 @@ def stock_text_reply(db: Session, site: Organization, user: User | None, text: s
     kind = stock_text_kind(text)
     if kind is None or user is None or user.role not in ("owner", *OPERATIONAL_ROLES):
         return None
+    # Уточнение к своему открытому остатку за сегодня (Махабат 23.09: «80л до, после −12л, остаток 68л»
+    # стало вторым черновиком): короткая строка без списка — дописываем в тот же черновик
+    open_same = (db.query(Receipt).filter(Receipt.kind == kind, Receipt.created_by == user.id,
+                                          Receipt.ocr_status.in_(drafts.OPEN),
+                                          Receipt.created_at >= datetime.combine(date.today(), datetime.min.time()))
+                 .order_by(Receipt.id.desc()).first())
+    if open_same is not None and len(re.findall(r"[а-яё]{3,}\s*[:\-]?\s*\d", text.lower())) < 4:
+        p = dict(open_same.payload or {})
+        p["text"] = (p.get("text") or "") + "\nУточнение: " + text
+        p.pop("rows", None)          # разобрать заново, уже с уточнением
+        open_same.payload = p
+        return "Добавил уточнение в тот же черновик. " + draft_link_text(db, site, user, open_same)
     draft = drafts.create_text(db, site_org_id=site.id, author=user, text=text, kind=kind, source=source)
     return draft_link_text(db, site, user, draft)
 

@@ -92,3 +92,11 @@ def test_confirmed_words_are_learned(db, world):
                                          {"product_id": world["milk"].id, "raw": "Уточнения Махабат: масло для выпечки да"}]}
     assert drafts.learn_words(db, rc, {world["rice"].id, world["milk"].id}) == 1
     assert db.query(ProductAlias).filter_by(raw_text="томатище-чр", product_id=world["rice"].id).count() == 1
+
+
+def test_short_clarification_goes_into_same_draft(db, world):
+    _say(db, LINE, mid=5)
+    reply = _say(db, "80л до после -12л после  остаток 68л", mid=6)
+    assert reply.startswith("Добавил уточнение")
+    rows = db.query(Receipt).filter_by(kind="count", created_by=world["u"].id).all()
+    assert len(rows) == 1 and "68л" in rows[0].payload["text"]
