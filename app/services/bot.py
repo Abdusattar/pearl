@@ -20,6 +20,7 @@ from decimal import Decimal
 from pathlib import Path
 
 import httpx
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.models import BotMessage, Organization, Receipt, User
@@ -235,21 +236,37 @@ def handle_update(db: Session, update: dict) -> str | None:
     is_private = chat.get("type") == "private"
     text = (msg.get("text") or msg.get("caption") or "").strip()
     user = db.query(User).filter(User.tg_id == from_id, User.deleted_at.is_(None)).first() if from_id else None
+    sender = msg.get("from") or {}
+    media = _media(msg)
+    # Кто написал — в журнал всегда (23.09): непривязанного человека владелец потом
+    # сопоставляет одной кнопкой в Настройках бота, не спрашивая его номер.
     db.add(BotMessage(kind="inbound", chat_id=chat_id, user_id=user.id if user else None, direction="in",
-                      text=text[:2000], status="received", payload={"has_photo": bool(msg.get("photo"))}))
+                      text=text[:2000], status="received",
+                      payload={"has_photo": bool(msg.get("photo")), "media": media["kind"] if media else None,
+                               "from_id": from_id, "from_name": _sender_name(sender)}))
     db.flush()
     if not is_private:
         group = group_chat_id()
         if group is None or chat_id != group:
             return None  # чужие группы бот не слушает
         return _handle_group(db, msg, user, text)
+    if media and media["kind"] == "voice" and user:
+        site = site_for_bot(db)
+        transcript = _voice_text(db, msg, media, user, chat_id)
+        if transcript is None:
+            reply = "Голосовое не смог разобрать. Напишите текстом, пожалуйста."
+            send(db, chat_id, reply, "reply", user_id=user.id)
+            return reply
+        text, msg = transcript, {**msg, "text": transcript, "_voice": True}   # дальше как обычный текст
+    if media and media["kind"] == "document" and user:
+        msg = {**msg, "_doc": media}
     if not user:
         reply = (f"Здравствуйте. Ваш номер в Telegram: {from_id}. Передайте его Абдусаттару, "
                  "он привяжет вас в системе, и я буду присылать вам ваши сообщения.")
         send(db, chat_id, reply, "reply")
         return reply
     site = site_for_bot(db)
-    if msg.get("photo") and site is not None:
+    if (msg.get("photo") or msg.get("_doc")) and site is not None:
         reply = _handle_photo(db, msg, user, site, text)
         send(db, chat_id, reply, "reply", user_id=user.id)
         return reply
@@ -271,6 +288,8 @@ def handle_update(db: Session, update: dict) -> str | None:
     elif user.role in OPERATIONAL_ROLES and site is not None and _NUM.match(text):
         reply = ("Сумму на руках запишет Махабат в Кассе («Пересчитать наличные»). "
                  "Скоро такие сообщения будут сами становиться черновиком ей на проверку.")
+    elif msg.get("_voice"):
+        reply = f"Записал: «{text[:600]}»"
     else:
         reply = "Понял. Сигналы и вопросы приходят сюда сами; фото чека или листа кухни можно прислать в любой момент."
     send(db, chat_id, reply, "reply", user_id=user.id)
@@ -288,15 +307,28 @@ def _handle_group(db: Session, msg: dict, user: User | None, text: str) -> str |
     chat_id, message_id = msg["chat"]["id"], msg.get("message_id")
     today_d = date.today()
     reply, payload, kind = None, {"message_id": message_id}, None
+    media = _media(msg)
+    voice_note = None
     try:
-        if msg.get("photo"):
-            kind = "group_photo"
-            photo = sorted(msg["photo"], key=lambda p: p.get("file_size") or 0)[-1]
-            payload["file_unique_id"] = photo.get("file_unique_id")
-            data = download_file(photo["file_id"])
+        if media and media["kind"] == "voice":
+            # Голосовое (23.09): расшифровка в журнал всегда, дальше как текст о деньгах
+            transcript = _voice_text(db, msg, media, user, chat_id)
+            if transcript is None:
+                return None
+            text, voice_note = transcript, f"голосовое {media.get('duration') or '?'} с"
+            if grp.worth_reading(text):
+                kind = "group_text"
+                info = grp.read_text(db, text, user, today_d)
+                payload.update({k: (v.isoformat() if isinstance(v, date) else v) for k, v in info.items()})
+                reply = grp.text_reply(db, site, user, info, today_d)
+        elif media and media["kind"] in ("photo", "document"):
+            kind = "group_photo" if media["kind"] == "photo" else "group_document"
+            payload["file_unique_id"] = media.get("file_unique_id")
+            data = download_file(media["file_id"])
             if data is None:
                 return None
-            reply, info, draft = intake_photo(db, site, user, data, photo.get("file_unique_id"), text, "chat")
+            reply, info, draft = intake_photo(db, site, user, data, media.get("file_unique_id"), text, "chat",
+                                              mime=media.get("mime"), file_name=media.get("file_name"))
             payload.update({k: (v.isoformat() if isinstance(v, date) else v) for k, v in info.items()})
             if draft is not None:
                 payload["draft_id"] = draft.id
@@ -309,6 +341,13 @@ def _handle_group(db: Session, msg: dict, user: User | None, text: str) -> str |
         db.add(BotMessage(kind="group_error", chat_id=chat_id, user_id=user.id if user else None, direction="in",
                           status="failed", text=str(e)[:500], payload=payload))
         return None
+    who = user.name if user else (_sender_name(msg.get("from") or {}) or "не привязан")
+    if voice_note and not reply:
+        # голосовое не о деньгах: владельцу расшифровку всё равно (23.09 — «собираем информацию»)
+        owner = db.get(User, OWNER_USER_ID)
+        send(db, owner.tg_id if owner else None, f"Группа, {who}, {voice_note}:\n{text[:1500]}", "group_voice_owner",
+             user_id=OWNER_USER_ID)
+        return None
     if kind is None:
         return None
     payload["reply"] = reply
@@ -320,11 +359,76 @@ def _handle_group(db: Session, msg: dict, user: User | None, text: str) -> str |
         else:
             # бот молчит в группе: владелец видит, что бот ответил бы, у себя в личке
             owner = db.get(User, OWNER_USER_ID)
-            what = "фото" if kind == "group_photo" else f"«{text[:80]}»"
-            who = user.name if user else "не привязан"
+            what = {"group_photo": "фото", "group_document": f"файл {media.get('file_name') or ''}".strip()}.get(
+                kind, (f"{voice_note}: " if voice_note else "") + f"«{text[:80]}»")
             send(db, owner.tg_id if owner else None, f"Группа, {who}, {what}:\n{reply}", "group_reply_owner",
                  user_id=OWNER_USER_ID)
     return reply
+
+
+def unknown_senders(db: Session) -> list[dict]:
+    """Кто писал боту или в группу, но в системе не привязан: для кнопки «это Мунара»."""
+    rows = (db.query(BotMessage.payload["from_id"].as_string(), BotMessage.payload["from_name"].as_string(),
+                     func.max(BotMessage.created_at), func.count(BotMessage.id))
+            .filter(BotMessage.direction == "in", BotMessage.user_id.is_(None), BotMessage.kind == "inbound",
+                    BotMessage.payload["from_id"].as_string().isnot(None))
+            .group_by(BotMessage.payload["from_id"].as_string(), BotMessage.payload["from_name"].as_string())
+            .order_by(func.max(BotMessage.created_at).desc()).all())
+    linked = {str(u.tg_id) for u in db.query(User).filter(User.tg_id.isnot(None)).all()}
+    return [{"from_id": r[0], "name": r[1] or "без имени", "last": r[2], "n": r[3]} for r in rows if r[0] not in linked]
+
+
+# ── медиа: фото, файлы, голосовые ────────────────────────────────────────
+
+IMAGE_MIMES = ("image/jpeg", "image/png", "image/webp")
+
+
+def _sender_name(sender: dict) -> str | None:
+    name = " ".join(x for x in (sender.get("first_name"), sender.get("last_name")) if x).strip()
+    return name or sender.get("username") or None
+
+
+def _media(msg: dict) -> dict | None:
+    """Что прислали: фото (самое крупное), файл-картинка или PDF, голосовое/аудио."""
+    if msg.get("photo"):
+        p = sorted(msg["photo"], key=lambda p: p.get("file_size") or 0)[-1]
+        return {"kind": "photo", "file_id": p["file_id"], "file_unique_id": p.get("file_unique_id"), "mime": "image/jpeg"}
+    d = msg.get("document")
+    if d and ((d.get("mime_type") or "") in IMAGE_MIMES or (d.get("mime_type") or "") == "application/pdf"):
+        return {"kind": "document", "file_id": d["file_id"], "file_unique_id": d.get("file_unique_id"),
+                "mime": d.get("mime_type"), "file_name": d.get("file_name")}
+    v = msg.get("voice") or msg.get("audio")
+    if v:
+        return {"kind": "voice", "file_id": v["file_id"], "file_unique_id": v.get("file_unique_id"),
+                "mime": v.get("mime_type") or "audio/ogg", "duration": v.get("duration")}
+    return None
+
+
+def _voice_text(db: Session, msg: dict, media: dict, user: User | None, chat_id: int | None) -> str | None:
+    """Скачать голосовое, сохранить в media/bot/voice, расшифровать; в журнал — расшифровку.
+    Файл хранится: спорную запись потом можно переслушать."""
+    from app.services import bot_group as grp
+    data = download_file(media["file_id"])
+    if data is None:
+        return None
+    month = datetime.now().strftime("%Y-%m")
+    folder = MEDIA_ROOT / "bot" / "voice" / month
+    folder.mkdir(parents=True, exist_ok=True)
+    fname = f"{media.get('file_unique_id') or compute_hash(data)[:12]}.ogg"
+    (folder / fname).write_bytes(data)
+    try:
+        transcript = grp.transcribe(data, "ogg" if "ogg" in (media.get("mime") or "ogg") else "mp3")
+    except Exception as e:  # noqa: BLE001 — модель недоступна: файл сохранён, расшифруем позже
+        db.add(BotMessage(kind="voice", chat_id=chat_id, user_id=user.id if user else None, direction="in",
+                          status="failed", text=str(e)[:300], payload={"file": f"bot/voice/{month}/{fname}",
+                                                                       "message_id": msg.get("message_id")}))
+        return None
+    db.add(BotMessage(kind="voice", chat_id=chat_id, user_id=user.id if user else None, direction="in",
+                      status="transcribed", text=transcript[:4000],
+                      payload={"file": f"bot/voice/{month}/{fname}", "duration": media.get("duration"),
+                               "message_id": msg.get("message_id"), "from_id": (msg.get("from") or {}).get("id"),
+                               "from_name": _sender_name(msg.get("from") or {})}))
+    return transcript
 
 
 def _pending_summary(db: Session) -> BotMessage | None:
@@ -369,21 +473,32 @@ def _handle_pocket_answer(db: Session, user: User, site: Organization, text: str
 
 
 def intake_photo(db: Session, site: Organization, author: User | None, data: bytes, file_unique_id: str | None,
-                 caption: str, source: str) -> tuple[str | None, dict, "Receipt | None"]:
-    """Фото из чата или лички → черновик на проверку Махабат (11_bot_inbox.md, шаг 1).
-    Чек и лист кухни становятся черновиком; остальное бот только понимает и отвечает.
-    Возвращает (ответ, что понято, черновик)."""
+                 caption: str, source: str, mime: str | None = None,
+                 file_name: str | None = None) -> tuple[str | None, dict, "Receipt | None"]:
+    """Фото (или файл-картинка, PDF) из чата или лички → черновик на проверку Махабат
+    (11_bot_inbox.md, шаг 1). Чек и лист кухни становятся черновиком; остальное бот
+    только понимает и отвечает. Возвращает (ответ, что понято, черновик)."""
     from app.services import bot_group as grp, drafts
     today_d = date.today()
+    is_pdf = (mime or "") == "application/pdf"
     same = drafts.find_same(db, compute_hash(data), file_unique_id)
     if same is not None:
         dup = {"date": same.created_at.date() if same.created_at else None, "receipt_id": same.id}
         return grp.photo_reply(db, site, author, {"kind": "dup"}, today_d, dup=dup), {"kind": "dup", "same": same.id}, None
-    info = grp.apply_caption(grp.read_photo(data, today_d), caption)
+    if is_pdf:
+        info = grp.apply_caption(grp.read_photo(None, today_d, pdf=data), caption)
+    else:
+        info = grp.apply_caption(grp.read_photo(data, today_d, mime or "image/jpeg"), caption)
+    if file_name:
+        info["file_name"] = file_name
     reply = grp.photo_reply(db, site, author, info, today_d)
     kind = drafts.KIND_FROM_BOT.get(info["kind"])
     if kind == drafts.KITCHEN and not info.get("sure") and "кухн" not in caption.lower():
         kind = None   # «лист кухни или пересчёт?» — сначала ответ человека
+    if is_pdf and kind is not None:
+        # PDF (платёжка из банка, счёт-фактура): экран проверки показывает картинку,
+        # PDF в нём не откроется — пока только понимаем и отвечаем, черновик не заводим
+        return (reply or "Документ прочитал.") + " PDF в черновики пока не кладу — отправьте фото или скрин.", info, None
     if kind is None:
         return reply, info, None
     extra = {}
@@ -404,7 +519,8 @@ def intake_photo(db: Session, site: Organization, author: User | None, data: byt
             else:
                 extra["match"] = "в системе нет"
     draft = drafts.create(db, site_org_id=site.id, author=author, data=data, kind=kind, source=source,
-                          info={**info, **extra}, file_unique_id=file_unique_id)
+                          info={**info, **extra}, file_unique_id=file_unique_id,
+                          ext={"image/png": ".png", "image/webp": ".webp"}.get(mime or "", ".jpg"))
     tail = " Черновик у Махабат на проверке."
     return ((reply or ({drafts.KITCHEN: "Лист кухни.", drafts.SERVICE: "Услуга."}.get(kind, "Чек."))) + tail), info, draft
 
@@ -417,17 +533,20 @@ def owner_copy(db: Session, text: str) -> None:
 
 
 def _handle_photo(db: Session, msg: dict, user: User, site: Organization, caption: str) -> str:
-    """Фото в личку: тот же путь, что из группы — черновик на проверку Махабат."""
-    photo = sorted(msg["photo"], key=lambda p: p.get("file_size") or 0)[-1]
-    data = download_file(photo["file_id"])
+    """Фото или файл в личку: тот же путь, что из группы — черновик на проверку Махабат."""
+    media = msg.get("_doc") or _media(msg)
+    data = download_file(media["file_id"])
     if data is None:
-        return "Не смог скачать фото. Попробуйте ещё раз."
+        return "Не смог скачать файл. Попробуйте ещё раз."
     try:
-        reply, _info, draft = intake_photo(db, site, user, data, photo.get("file_unique_id"), caption, "private")
+        reply, _info, draft = intake_photo(db, site, user, data, media.get("file_unique_id"), caption, "private",
+                                           mime=media.get("mime"), file_name=media.get("file_name"))
     except Exception:  # noqa: BLE001 — модель недоступна: фото не теряем, кладём как чек
         from app.services import drafts
+        if (media.get("mime") or "") == "application/pdf":
+            return "Файл получил, разобрать не смог. Отправьте фото или скрин."
         draft = drafts.create(db, site_org_id=site.id, author=user, data=data, kind=drafts.RECEIPT, source="private",
-                              file_unique_id=photo.get("file_unique_id"))
+                              file_unique_id=media.get("file_unique_id"))
         reply = "Фото сохранил, разобрать не смог. Черновик у Махабат на проверке."
     if draft is not None and user.id != OWNER_USER_ID:
         owner_copy(db, f"Черновик от {user.name}: {reply}")

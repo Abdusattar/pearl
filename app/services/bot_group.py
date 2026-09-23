@@ -114,22 +114,45 @@ TEXT_PROMPT = (
 )
 
 
-def ask_model(prompt: str, image: bytes | None = None, mime: str = "image/jpeg") -> dict:
+VOICE_PROMPT = (
+    "Это голосовое сообщение из рабочего чата садика и школы в Кыргызстане. Говорят по-русски, "
+    "могут вставлять кыргызские фразы. Расшифруй дословно на русском; кыргызские фразы оставь как "
+    "сказаны и дай перевод в квадратных скобках. Верни только текст расшифровки, без заголовков и выводов."
+)
+
+
+def _call(content: list[dict], max_tokens: int = 1024, timeout: int = 60) -> str:
     key = os.getenv("OPENROUTER_API_KEY")
     if not key:
         raise RuntimeError("OPENROUTER_API_KEY не задан")
+    resp = httpx.post(OR_URL, json={"model": MODEL, "messages": [{"role": "user", "content": content}],
+                                    "max_tokens": max_tokens, "temperature": 0.1},
+                      headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json",
+                               "HTTP-Referer": "https://pearl.local", "X-Title": "Pearl group bot"},
+                      timeout=timeout)
+    resp.raise_for_status()
+    return (resp.json()["choices"][0]["message"]["content"] or "").strip()
+
+
+def ask_model(prompt: str, image: bytes | None = None, mime: str = "image/jpeg", pdf: bytes | None = None) -> dict:
     content: list[dict] = []
     if image is not None:
         b64 = base64.b64encode(_normalize_orientation(image)).decode()
         content.append({"type": "image_url", "image_url": {"url": f"data:{mime};base64,{b64}"}})
+    if pdf is not None:
+        # PDF из чата (платёжки Айжан из банка, счета-фактуры, 23.09) — модель читает файл целиком
+        b64 = base64.b64encode(pdf).decode()
+        content.append({"type": "file", "file": {"filename": "doc.pdf", "file_data": f"data:application/pdf;base64,{b64}"}})
     content.append({"type": "text", "text": prompt})
-    resp = httpx.post(OR_URL, json={"model": MODEL, "messages": [{"role": "user", "content": content}],
-                                    "max_tokens": 1024, "temperature": 0.1},
-                      headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json",
-                               "HTTP-Referer": "https://pearl.local", "X-Title": "Pearl group bot"},
-                      timeout=60)
-    resp.raise_for_status()
-    return _parse_json((resp.json()["choices"][0]["message"]["content"] or "").strip())
+    return _parse_json(_call(content))
+
+
+def transcribe(audio: bytes, fmt: str = "ogg") -> str:
+    """Голосовое из чата → текст (23.09, владелец: «бот должен сохранять голосовые»).
+    Та же модель, что читает чеки; проверено на голосовом Айжан 1:20 — читает и кыргызский."""
+    b64 = base64.b64encode(audio).decode()
+    return _call([{"type": "input_audio", "input_audio": {"data": b64, "format": fmt}},
+                  {"type": "text", "text": VOICE_PROMPT}], max_tokens=2048, timeout=180)
 
 
 def _date(v, today: date) -> date | None:
@@ -154,8 +177,8 @@ def _date(v, today: date) -> date | None:
     return None
 
 
-def read_photo(image: bytes, today: date, mime: str = "image/jpeg") -> dict:
-    data = ask_model(PHOTO_PROMPT, image, mime)
+def read_photo(image: bytes | None, today: date, mime: str = "image/jpeg", pdf: bytes | None = None) -> dict:
+    data = ask_model(PHOTO_PROMPT, image, mime, pdf=pdf)
     kind = data.get("kind") if data.get("kind") in (PURCHASE, KITCHEN, COUNT, SUPPLIER_PAY, SERVICE, BANK,
                                                      SALARY, OTHER) else OTHER
     d = _date(data.get("date"), today)

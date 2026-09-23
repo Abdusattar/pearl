@@ -20,6 +20,20 @@
     <thead><tr><th>Кто</th><th>Роль</th><th>Telegram id</th></tr></thead>
     {% for u in users %}<tr><td>{{ u.name }}</td><td class="q">{{ u.role }}</td><td><input class="in" name="tg_{{ u.id }}" value="{{ u.tg_id or '' }}" inputmode="numeric" placeholder="номер"></td></tr>{% endfor %}
   </table>
+  {% if unknown %}
+  <h4 style="margin-top:16px">Писали, но не привязаны</h4>
+  <p class="sub">Бот запомнил, кто писал в группу. Выберите, кто это, — дальше их сообщения и голосовые пойдут под именем.</p>
+  {% endif %}
+</form>
+{% for x in unknown %}
+<form method="post" action="/new/settings/bot" class="chips" style="align-items:center;margin:6px 0">
+  <input type="hidden" name="action" value="link"><input type="hidden" name="from_id" value="{{ x.from_id }}">
+  <span style="min-width:200px">{{ x.name }} <span class="q">({{ x.n }} сообщ., последнее {{ x.last.strftime('%d.%m %H:%M') if x.last else '' }})</span></span>
+  <select class="in" name="user_id" style="height:36px;width:180px">{% for u in users %}<option value="{{ u.id }}">{{ u.name }}</option>{% endfor %}</select>
+  <button class="btn ghost" type="submit">Это он(а)</button>
+</form>
+{% endfor %}
+<form method="post" action="/new/settings/bot">
   <div class="chips" style="margin-top:12px">
     <button class="btn" name="action" value="save">Сохранить</button>
     <button class="btn ghost" name="action" value="webhook">Подключить вебхук</button>

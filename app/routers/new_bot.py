@@ -31,7 +31,7 @@ async def webhook(secret: str, request: Request, background: BackgroundTasks, db
         # разбор фото моделью идёт секунды — не держим цикл событий
         await run_in_threadpool(svc.handle_update, db, update)
         db.commit()
-        if (update.get("message") or {}).get("photo"):
+        if (update.get("message") or {}).get("photo") or (update.get("message") or {}).get("document"):
             # строки листа кухни — сразу, фоном, после ответа Telegram (черновик готов к открытию)
             from app.services.drafts import prepare_pending
             background.add_task(prepare_pending)
@@ -84,7 +84,8 @@ def bot_settings(request: Request, sent: int = 0, db: Session = Depends(get_db))
     ctx = _base_ctx(request, user, site, db, "settings")
     users = db.query(User).filter(User.deleted_at.is_(None)).order_by(User.id).all()
     last = db.query(BotMessage).order_by(BotMessage.id.desc()).limit(15).all()
-    ctx.update({"users": users, "has_token": bool(svc.token()), "group_id": svc.group_chat_id(),
+    ctx.update({"users": users, "unknown": svc.unknown_senders(db),
+                "has_token": bool(svc.token()), "group_id": svc.group_chat_id(),
                 "secret": svc.webhook_secret(), "last": last, "sent": sent,
                 "preview_group": svc.group_signals_text(db, site.id) if site else None,
                 "preview_summary": svc.founders_summary_text(db, site.id) if site else None,
@@ -105,6 +106,18 @@ async def bot_settings_save(request: Request, db: Session = Depends(get_db)):
         for u in db.query(User).filter(User.deleted_at.is_(None)).all():
             raw = (form.get(f"tg_{u.id}") or "").strip()
             u.tg_id = int(raw) if raw.lstrip("-").isdigit() else None
+        db.commit()
+        return RedirectResponse("/new/settings/bot", status_code=303)
+    if action == "link":
+        # Непривязанный отправитель из группы → человек в системе (23.09): одна кнопка,
+        # без «напишите боту свой номер»
+        u = db.get(User, int(form.get("user_id") or 0))
+        raw = (form.get("from_id") or "").strip()
+        if u is not None and raw.lstrip("-").isdigit():
+            u.tg_id = int(raw)
+            db.query(BotMessage).filter(BotMessage.user_id.is_(None), BotMessage.direction == "in",
+                                        BotMessage.payload["from_id"].as_string() == raw).update(
+                {BotMessage.user_id: u.id}, synchronize_session=False)
         db.commit()
         return RedirectResponse("/new/settings/bot", status_code=303)
     site = _site(user, db)
