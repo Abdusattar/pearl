@@ -891,10 +891,11 @@ def draft_link_text(db: Session, site: Organization, user: User | None, draft) -
         rows = []
     found = [r for r in rows if r.get("product_id")]
     hi = f"{user.name}, " if user else ""
-    what = "остаток" if draft.kind == drafts.COUNT else "передачу"
+    # простыми словами, без «черновик» и номеров (владелец 23.09: «даже мне непонятно»)
+    what = "остаток" if draft.kind == drafts.COUNT else "что отдали"
     path = "count" if draft.kind == drafts.COUNT else "transfer"
-    n = f": {len(found)} позиций" if found else ""
-    return (f"{hi}{what} разобрал{n}. Проверьте и запишите — одна кнопка:\n"
+    n = f" ({len(found)} продуктов)" if found else ""
+    return (f"{hi}принял {what}{n}. Откройте, проверьте цифры и нажмите «Записать»:\n"
             f"{public_url()}/new/stock/{path}?draft={draft.id}")
 
 
@@ -916,8 +917,18 @@ def stock_text_reply(db: Session, site: Organization, user: User | None, text: s
         p["text"] = (p.get("text") or "") + "\nУточнение: " + text
         p.pop("rows", None)          # разобрать заново, уже с уточнением
         open_same.payload = p
-        return "Добавил уточнение в тот же черновик. " + draft_link_text(db, site, user, open_same)
+        return "Добавил к остатку. " + draft_link_text(db, site, user, open_same)
     draft = drafts.create_text(db, site_org_id=site.id, author=user, text=text, kind=kind, source=source)
+    # Доверие (владелец 23.09: «если бот будет гнать, подорвётся доверие к трансформации»):
+    # ссылку даём, только если бот правда что-то понял. Остаток — хотя бы 3 товара из каталога,
+    # передача — хотя бы один. Иначе черновик тихо закрываем и молчим: пустая ссылка хуже молчания.
+    try:
+        found = [r for r in drafts.stock_rows(db, draft, site.id) if r.get("product_id")]
+    except Exception:  # noqa: BLE001 — модель недоступна: текст сохранён, разберём при открытии
+        found = None
+    if found is not None and len(found) < (3 if kind == drafts.COUNT else 1):
+        draft.ocr_status, draft.reject_reason = "rejected", "бот не узнал товаров — не похоже на остаток/передачу"
+        return None
     return draft_link_text(db, site, user, draft)
 
 

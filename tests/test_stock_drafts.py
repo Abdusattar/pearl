@@ -64,7 +64,7 @@ def test_kind_detection():
 def test_count_text_becomes_draft_and_one_button_applies(client, db, world):
     reply = _say(db, LINE)
     rc = db.query(Receipt).filter_by(kind="count", created_by=world["u"].id).one()
-    assert f"/new/stock/count?draft={rc.id}" in reply and "3 позиций" in reply
+    assert f"/new/stock/count?draft={rc.id}" in reply and "3 продуктов" in reply
     assert rc.file_path.endswith(".txt") and (drafts.MEDIA_ROOT / rc.file_path).read_text(encoding="utf-8") == LINE
     page = client.get(f"/new/stock/count?draft={rc.id}")
     assert page.status_code == 200 and "По листу, 3" in page.text and 'value="80"' in page.text and "соль" in page.text
@@ -97,6 +97,13 @@ def test_confirmed_words_are_learned(db, world):
 def test_short_clarification_goes_into_same_draft(db, world):
     _say(db, LINE, mid=5)
     reply = _say(db, "80л до после -12л после  остаток 68л", mid=6)
-    assert reply.startswith("Добавил уточнение")
+    assert reply.startswith("Добавил к остатку")
     rows = db.query(Receipt).filter_by(kind="count", created_by=world["u"].id).all()
     assert len(rows) == 1 and "68л" in rows[0].payload["text"]
+
+
+def test_no_link_when_bot_understood_nothing(db, world, monkeypatch):
+    monkeypatch.setattr(recognize, "recognize_text", lambda db, text, kind, s, model=None: {"rows": [
+        {"raw": "до", "product_id": None, "name": "до", "qty": 80.0}]})
+    assert _say(db, "остаток: 80 до, 12 после, 68 итого", mid=7) is None or "draft=" not in (_say(db, "x", mid=8) or "")
+    assert db.query(Receipt).filter_by(kind="count", created_by=world["u"].id, ocr_status="pending").count() == 0
