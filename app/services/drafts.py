@@ -18,8 +18,10 @@ from app.services.purchases import audit
 
 MEDIA_ROOT = Path(__file__).parent.parent.parent / "media"
 RECEIPT, KITCHEN, SERVICE = "receipt", "kitchen", "service"
+# 23.09: остаток склада и передача в другой садик — из текста или фото, подтверждает Махабат
+COUNT, TRANSFER = "count", "transfer"
 OPEN = ("pending", "processed")          # ждёт проверки
-KIND_FROM_BOT = {"purchase": RECEIPT, "kitchen": KITCHEN, "service": SERVICE}   # чек товара, лист кухни, услуга
+KIND_FROM_BOT = {"purchase": RECEIPT, "kitchen": KITCHEN, "service": SERVICE, "count": COUNT}   # чек товара, лист кухни, услуга
 
 
 def find_same(db: Session, file_hash: str | None, file_unique_id: str | None) -> Receipt | None:
@@ -43,7 +45,7 @@ def create(db: Session, *, site_org_id: int, author: User | None, data: bytes, k
     """Сохранить фото и завести черновик. Дубль проверяет вызывающий (find_same)."""
     h = compute_hash(data)
     month = datetime.now().strftime("%Y-%m")
-    sub = "kitchen/inbox" if kind == KITCHEN else "receipts"
+    sub = "kitchen/inbox" if kind == KITCHEN else ("stock/inbox" if kind in (COUNT, TRANSFER) else "receipts")
     folder = MEDIA_ROOT / sub / month
     folder.mkdir(parents=True, exist_ok=True)
     fname = f"{h[:12]}{ext}"
@@ -57,6 +59,18 @@ def create(db: Session, *, site_org_id: int, author: User | None, data: bytes, k
     db.flush()
     audit(db, "receipt", r.id, "insert", author.id if author else None, {"from": source, "kind": kind})
     return r
+
+
+def create_text(db: Session, *, site_org_id: int, author: User | None, text: str, kind: str, source: str,
+                info: dict | None = None) -> Receipt:
+    """Черновик из текста (остаток или передача строкой в чат): текст сохраняем файлом
+    сразу — человек может удалить сообщение, а Telegram боту об этом не скажет."""
+    return create(db, site_org_id=site_org_id, author=author, data=text.encode("utf-8"), kind=kind, source=source,
+                  info={**(info or {}), "text": text[:4000]}, ext=".txt")
+
+
+def is_text(r: Receipt) -> bool:
+    return (r.file_path or "").endswith(".txt")
 
 
 def open_draft(db: Session, site_org_ids: set[int], draft_id: int | None, kind: str | None = None) -> Receipt | None:
@@ -92,6 +106,11 @@ def title(r: Receipt) -> dict:
     except ValueError:
         d = None
     from app.services.stock import _day
+    if r.kind in (COUNT, TRANSFER):
+        n = len(p.get("rows") or [])
+        head = "Остаток склада" if r.kind == COUNT else "Передали в другой садик"
+        return {"t": head + (f", {n} строк" if n else ""), "s": "из текста в чате" if is_text(r) else "лист с фото",
+                "warn": False}
     if (r.kind or RECEIPT) == KITCHEN:
         rows = p.get("rows")
         n = len(rows or [])
@@ -154,6 +173,29 @@ def receipt_rows(db: Session, r: Receipt, site_org_id: int, supplier_id: int) ->
     return rec
 
 
+def stock_rows(db: Session, r: Receipt, site_org_id: int) -> list[dict]:
+    """Строки остатка/передачи: распознаются один раз и запоминаются в черновике.
+    Товар — из каталога склада, количество — в единице карточки (граммы → кг и т.п.)."""
+    p = dict(r.payload or {})
+    if p.get("rows") is not None:
+        return p["rows"]
+    from app.services import recognize as rz
+    if is_text(r):
+        text = p.get("text") or (MEDIA_ROOT / r.file_path).read_text(encoding="utf-8")
+        out = rz.recognize_text(db, text, rz.COUNT if r.kind == COUNT else rz.TRANSFER, site_org_id)
+    else:
+        data = (MEDIA_ROOT / r.file_path).read_bytes()
+        out = rz.recognize(db, data, rz.COUNT, site_org_id,
+                           mime="image/png" if r.file_path.lower().endswith(".png") else "image/jpeg")
+    rows = [{"product_id": x["product_id"], "name": x["name"] or x["raw"], "raw": x["raw"], "qty": x["qty"],
+             "unit": x["unit"] if x["product_id"] else "", "minor": x.get("minor", False),
+             "note": (x.get("question") or {}).get("text") or "; ".join(x.get("notes") or []) or None}
+            for x in out["rows"]]
+    p["rows"] = rows
+    r.payload = p
+    return rows
+
+
 def prepare_pending(limit: int = 5) -> int:
     """Разобрать строки свежих черновиков сразу, как фото пришло (фоном после ответа
     Telegram и раз в минуту): лист кухни — всегда, чек — если поставщик узнан.
@@ -162,15 +204,17 @@ def prepare_pending(limit: int = 5) -> int:
     db = SessionLocal()
     done_n = 0
     try:
-        todo = (db.query(Receipt).filter(Receipt.kind.in_((KITCHEN, RECEIPT)), Receipt.ocr_status.in_(OPEN),
+        todo = (db.query(Receipt).filter(Receipt.kind.in_((KITCHEN, RECEIPT, COUNT, TRANSFER)), Receipt.ocr_status.in_(OPEN),
                                          Receipt.source.isnot(None))
                 .order_by(Receipt.id).all())
-        need = [x for x in todo if (x.kind == KITCHEN and (x.payload or {}).get("rows") is None)
+        need = [x for x in todo if (x.kind in (KITCHEN, COUNT, TRANSFER) and (x.payload or {}).get("rows") is None)
                 or (x.kind == RECEIPT and (x.payload or {}).get("supplier_id") and (x.payload or {}).get("receipt_rec") is None)]
         for r in need[:limit]:
             try:
                 if r.kind == KITCHEN:
                     kitchen_rows(db, r, r.organization_id)
+                elif r.kind in (COUNT, TRANSFER):
+                    stock_rows(db, r, r.organization_id)
                 else:
                     receipt_rows(db, r, r.organization_id, int(r.payload["supplier_id"]))
                 db.commit()

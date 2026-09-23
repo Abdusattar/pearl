@@ -59,10 +59,15 @@ def receipts_page(request: Request, db: Session = Depends(get_db)):
             url = f"/new/kitchen?draft={r.id}"
         elif r.kind == drafts.SERVICE:
             url = f"/new/nocheck?draft={r.id}"
+        elif r.kind == drafts.COUNT:
+            url = f"/new/stock/count?draft={r.id}"
+        elif r.kind == drafts.TRANSFER:
+            url = f"/new/stock/transfer?draft={r.id}"
         else:
             url = f"/new/buy?receipt={r.id}" + (f"&supplier={p['supplier_id']}" if p.get("supplier_id") else "")
         rows.append({"r": r, "by": names.get(r.created_by), "date": r.created_at.date() if r.created_at else None,
                      "what": drafts.title(r), "url": url, "kitchen": (r.kind or "receipt") == drafts.KITCHEN,
+                     "text": ((r.payload or {}).get("text") or "")[:160] if drafts.is_text(r) else None,
                      "source": r.source})
     ctx = _base_ctx(request, user, site, db, "today")
     ctx.update({"rows": rows, "can_write": user.role in WRITE_ROLES,

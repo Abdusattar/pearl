@@ -42,8 +42,22 @@ def stock_page(request: Request, saved: str | None = None, db: Session = Depends
     return templates.TemplateResponse("new/stock.html", ctx)
 
 
+def _open_stock_draft(db, site, draft_id, kind):
+    from app.services import drafts
+    from app.services.purchases import site_orgs
+    return drafts.open_draft(db, {o.id for o in site_orgs(db, site.id)} | {site.id}, draft_id, kind)
+
+
+def _before_count(db, site, draft_id=None):
+    """Что внести ДО пересчёта: закупки и передачи из чата — иначе лягут поверх
+    посчитанного и остаток задвоится (23.09, точка ноль)."""
+    from app.services import drafts, today as td
+    return [r for r in td.unchecked_receipts(db, site.id)
+            if r.id != draft_id and (r.kind or drafts.RECEIPT) in (drafts.RECEIPT, drafts.TRANSFER)]
+
+
 @router.get("/stock/count", response_class=HTMLResponse)
-def count_page(request: Request, cat: str | None = None, db: Session = Depends(get_db)):
+def count_page(request: Request, cat: str | None = None, draft: int | None = None, db: Session = Depends(get_db)):
     cat = int(cat) if cat and cat.isdigit() else (svc.KEY if cat == svc.KEY else None)
     user, site = _user_site(request, db)
     if not user:
@@ -51,7 +65,23 @@ def count_page(request: Request, cat: str | None = None, db: Session = Depends(g
     if site is None:
         return HTMLResponse("Объект не найден", status_code=404)
     ctx = _base_ctx(request, user, site, db, "warehouse")
-    ctx.update({"data": svc.count_rows(db, site.id, cat), "error": None, "values": {},
+    data, values, rc = svc.count_rows(db, site.id, cat), {}, None
+    if draft:
+        rc = _open_stock_draft(db, site, draft, "count")
+        if rc is None:
+            return RedirectResponse("/new/receipts", status_code=302)   # уже внесён или отложен
+        from app.services import drafts
+        try:
+            got = svc.draft_count_rows(db, site.id, drafts.stock_rows(db, rc, site.id))
+            db.commit()
+        except Exception as e:  # noqa: BLE001 — модель недоступна: пересчёт руками
+            got = {"rows": [], "values": {}, "skipped": [], "error": str(e)}
+        data = {**data, "current": svc.DRAFT, "rows": got["rows"], "n_draft": len(got["rows"]),
+                "skipped": got["skipped"], "draft_id": rc.id,
+                "draft_text": (rc.payload or {}).get("text"), "draft_by": rc.created_by,
+                "draft_date": rc.created_at.date() if rc.created_at else None}
+        values = got["values"]
+    ctx.update({"data": data, "error": None, "values": values, "before": _before_count(db, site, rc.id if rc else None),
                 "missing": svc.state(db, site.id)["missing"], "can_write": user.role in WRITE_ROLES})
     return templates.TemplateResponse("new/stock_count.html", ctx)
 
@@ -66,6 +96,8 @@ async def count_save(request: Request, db: Session = Depends(get_db)):
     form = await request.form()
     cat = str(form.get("cat") or "")
     cat = int(cat) if cat.isdigit() else (svc.KEY if cat == svc.KEY else None)
+    draft_raw = str(form.get("draft_id") or "")
+    rc = _open_stock_draft(db, site, int(draft_raw), "count") if draft_raw.isdigit() else None
     pids, vals = form.getlist("product_id"), form.getlist("actual")
     values = dict(zip(pids, vals))
     items, error = [], None
@@ -94,12 +126,22 @@ async def count_save(request: Request, db: Session = Depends(get_db)):
             (MEDIA_DIR / name).write_bytes(await photo.read())
             photo_path = f"stock_counts/{name}"
         try:
-            svc.quick_count(db, user=user, site_id=site.id, items=items, photo_path=photo_path)
+            res = svc.quick_count(db, user=user, site_id=site.id, items=items, photo_path=photo_path,
+                                  d=rc.created_at.date() if rc is not None and rc.created_at else None)
+            if rc is not None:
+                from app.services import drafts
+                drafts.done(db, rc, user=user, result_type="stock_count", result_id=res["count_id"])
         except ValueError as e:
             error = str(e)
     if error:
         ctx = _base_ctx(request, user, site, db, "warehouse")
-        ctx.update({"data": svc.count_rows(db, site.id, cat), "error": error, "values": values,
+        data = svc.count_rows(db, site.id, cat)
+        if rc is not None:
+            from app.services import drafts
+            got = svc.draft_count_rows(db, site.id, drafts.stock_rows(db, rc, site.id))
+            data = {**data, "current": svc.DRAFT, "rows": got["rows"], "n_draft": len(got["rows"]),
+                    "skipped": got["skipped"], "draft_id": rc.id, "draft_text": (rc.payload or {}).get("text")}
+        ctx.update({"data": data, "error": error, "values": values, "before": _before_count(db, site, rc.id if rc else None),
                     "missing": svc.state(db, site.id)["missing"], "can_write": True})
         return templates.TemplateResponse("new/stock_count.html", ctx)
     url = "/new/stock?saved=count"
@@ -111,20 +153,36 @@ async def count_save(request: Request, db: Session = Depends(get_db)):
 def _transfer_ctx(request, user, site, db, **kw) -> dict:
     ctx = _base_ctx(request, user, site, db, "warehouse")
     targets = svc.transfer_targets(db, site.id)
-    ctx.update({"rows": svc.transfer_rows(db, site.id), "targets": targets, "can_write": user.role in WRITE_ROLES,
+    inc = {int(k) for k in (kw.get("values") or {}) if str(k).isdigit()}
+    ctx.update({"rows": svc.transfer_rows(db, site.id, inc), "targets": targets, "can_write": user.role in WRITE_ROLES,
+                "draft_id": kw.get("draft_id"), "draft_text": kw.get("draft_text"), "skipped": kw.get("skipped", []),
                 "to_org_id": kw.get("to_org_id") or (targets[0].id if len(targets) == 1 else None),
                 "values": kw.get("values", {}), "error": kw.get("error"), "today": date.today(), "d": kw.get("d", date.today())})
     return ctx
 
 
 @router.get("/stock/transfer", response_class=HTMLResponse)
-def transfer_page(request: Request, db: Session = Depends(get_db)):
+def transfer_page(request: Request, draft: int | None = None, db: Session = Depends(get_db)):
     user, site = _user_site(request, db)
     if not user:
         return RedirectResponse("/login", status_code=302)
     if site is None:
         return HTMLResponse("Объект не найден", status_code=404)
-    return templates.TemplateResponse("new/stock_transfer.html", _transfer_ctx(request, user, site, db))
+    kw = {}
+    if draft:
+        rc = _open_stock_draft(db, site, draft, "transfer")
+        if rc is None:
+            return RedirectResponse("/new/receipts", status_code=302)
+        from app.services import drafts
+        try:
+            rows = drafts.stock_rows(db, rc, site.id)
+            db.commit()
+        except Exception:  # noqa: BLE001
+            rows = []
+        got = svc.draft_count_rows(db, site.id, rows)
+        kw = {"values": got["values"], "skipped": got["skipped"], "draft_id": rc.id,
+              "draft_text": (rc.payload or {}).get("text"), "d": rc.created_at.date() if rc.created_at else date.today()}
+    return templates.TemplateResponse("new/stock_transfer.html", _transfer_ctx(request, user, site, db, **kw))
 
 
 @router.post("/stock/transfer", response_class=HTMLResponse)
@@ -159,7 +217,12 @@ async def transfer_save(request: Request, db: Session = Depends(get_db)):
         if done := once.done_url(db, token):
             return RedirectResponse(done, status_code=303)
         try:
-            svc.transfer_out(db, user=user, site_id=site.id, to_org_id=to_org_id or 0, items=items, d=min(d, date.today()))
+            outs = svc.transfer_out(db, user=user, site_id=site.id, to_org_id=to_org_id or 0, items=items, d=min(d, date.today()))
+            draft_raw = str(form.get("draft_id") or "")
+            rc = _open_stock_draft(db, site, int(draft_raw), "transfer") if draft_raw.isdigit() else None
+            if rc is not None:
+                from app.services import drafts
+                drafts.done(db, rc, user=user, result_type="stock_transfer", result_id=outs[0].id)
         except ValueError as e:
             error = str(e)
     if error:

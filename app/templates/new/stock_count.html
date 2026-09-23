@@ -22,16 +22,19 @@
 <a href="/new/stock" style="font-size:14px;text-decoration:none">← Склад</a>
 <h3 class="title" style="margin:4px 0 0">Пересчитать склад</h3>
 {% if error %}<div class="alert bad" style="margin-top:10px">{{ error }}</div>{% endif %}
+{% if before %}<div class="alert warn" style="margin-top:10px">Сначала внесите {{ before | length }} {{ "черновик" if before | length == 1 else "черновика" if before | length < 5 else "черновиков" }} из чата (закупки, передачи): купленное уже на полке, и если внести его после пересчёта, остаток задвоится. <a href="/new/receipts">Открыть</a></div>{% endif %}
+{% if data.draft_id %}<div class="alert ok" style="margin-top:10px">По листу из чата{% if data.draft_date %} за {{ data.draft_date | human_date }}{% endif %}: цифры уже вписаны. Проверьте и нажмите «Записать пересчёт».{% if data.skipped %} Не в остаток (мелочь или нет в каталоге): {{ data.skipped | join(", ") }}.{% endif %}</div>{% endif %}
 {% if missing %}<div class="alert warn" style="margin-top:10px">Сначала внесите листы кухни: иначе разница будет большой только потому, что расход не записан. <a href="/new/kitchen?date={{ missing[0].isoformat() }}">Внести лист</a></div>{% endif %}
 <p class="sub">Посчитайте на полке только то, в чём сомневаетесь. Пустая строка значит «не считали»: её остаток не меняется.</p>
-<div class="chips">{% if data.n_keys %}<a class="chip {% if data.current == 'key' %}on{% endif %}" href="/new/stock/count?cat=key">Ключевые, {{ data.n_keys }}</a>{% endif %}{% for c in data.cats %}<a class="chip {% if c.id == data.current %}on{% endif %}" href="/new/stock/count?cat={{ c.id }}">{{ c.name | capitalize }}</a>{% endfor %}</div>
+<div class="chips">{% if data.draft_id %}<a class="chip on" href="/new/stock/count?draft={{ data.draft_id }}">По листу, {{ data.n_draft }}</a>{% endif %}{% if data.n_keys %}<a class="chip {% if data.current == 'key' %}on{% endif %}" href="/new/stock/count?cat=key">Ключевые, {{ data.n_keys }}</a>{% endif %}{% for c in data.cats %}<a class="chip {% if c.id == data.current %}on{% endif %}" href="/new/stock/count?cat={{ c.id }}">{{ c.name | capitalize }}</a>{% endfor %}</div>
 {% if data.rows %}
 <form method="post" action="/new/stock/count" enctype="multipart/form-data" autocomplete="off">
-  <input type="hidden" name="cat" value="{{ data.current or '' }}">
+  <input type="hidden" name="cat" value="{{ data.current if data.current != 'draft' else '' }}">
+  {% if data.draft_id %}<input type="hidden" name="draft_id" value="{{ data.draft_id }}">{% endif %}
   <table class="cnt">
     <tr><th>Продукт</th><th>По записям</th><th>На полке</th></tr>
     {% for r in data.rows %}
-    <tr><td>{{ r.p.name }}</td><td class="e">{{ r.balance | qty }} {{ r.p.unit or '' }}</td>
+    <tr><td>{{ r.p.name }}{% if r.note %}<span class="d" style="color:var(--muted)">{{ r.note }}</span>{% endif %}</td><td class="e">{{ r.balance | qty }} {{ r.p.unit or '' }}</td>
       <td><input type="hidden" name="product_id" value="{{ r.p.id }}"><input class="in" name="actual" value="{{ values.get(r.p.id | string, '') }}" inputmode="decimal" data-exp="{{ r.balance }}" data-u="{{ r.p.unit or '' }}" aria-label="{{ r.p.name }}, сколько на полке"><span class="d"></span></td></tr>
     {% endfor %}
   </table>

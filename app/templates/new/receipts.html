@@ -30,7 +30,7 @@
 {% for x in rows %}
   <div class="rc">
     <div class="row">
-      <a class="ph" href="/media/{{ x.r.file_path }}" target="_blank" aria-label="Открыть фото"><img src="/media/{{ x.r.file_path }}" alt="" loading="lazy"></a>
+      {% if x.text is not none %}<div class="ph" style="font-size:12px;line-height:1.3;overflow:hidden;padding:4px">{{ x.text }}</div>{% else %}<a class="ph" href="/media/{{ x.r.file_path }}" target="_blank" aria-label="Открыть фото"><img src="/media/{{ x.r.file_path }}" alt="" loading="lazy"></a>{% endif %}
       <div><div class="t">{{ x.what.t }}</div>
         <div class="s {% if x.what.warn %}warn{% endif %}">{{ x.what.s }}</div>
         <div class="s">{% if x.source == 'chat' %}из чата, {% elif x.source == 'private' %}боту в личку, {% endif %}{% if x.by %}прислал(а) {{ x.by }}{% endif %}{% if x.date %} {{ x.date | human_date }}{% endif %}{% if x.r.created_at %} в {{ x.r.created_at.strftime('%H:%M') }}{% endif %}</div></div>

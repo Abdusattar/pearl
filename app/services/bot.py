@@ -488,6 +488,9 @@ def handle_update(db: Session, update: dict) -> str | None:
     if site is not None and (meal := meal_reply(db, site, user, text)):
         send(db, chat_id, meal, "reply", user_id=user.id)
         return meal
+    if site is not None and (stock_reply := stock_text_reply(db, site, user, text, "private")):
+        send(db, chat_id, stock_reply, "reply", user_id=user.id)
+        return stock_reply
     low = text.lower()
     if low in ("/start", "start") and user.role == "founder":
         reply = (f"Здравствуйте, {user.name}. Я буду писать вам, только когда что-то застряло: "
@@ -545,6 +548,12 @@ def _handle_group(db: Session, msg: dict, user: User | None, text: str) -> str |
                                   text=text[:2000], status="understood", payload={"message_id": message_id, "reply": meal}))
                 send(db, chat_id, meal, "group_reply", user_id=user.id if user else None, reply_to=message_id)
                 return meal
+            stock_reply = stock_text_reply(db, site, user, text, "chat")
+            if stock_reply:
+                db.add(BotMessage(kind="stock_text", chat_id=chat_id, user_id=user.id if user else None, direction="in",
+                                  text=text[:2000], status="understood", payload={"message_id": message_id, "reply": stock_reply}))
+                send(db, chat_id, stock_reply, "group_reply", user_id=user.id if user else None, reply_to=message_id)
+                return stock_reply
         if voice_note:
             # Голосовое (23.09): расшифровка в журнал всегда, дальше как текст о деньгах
             if grp.worth_reading(text):
@@ -563,6 +572,10 @@ def _handle_group(db: Session, msg: dict, user: User | None, text: str) -> str |
             payload.update({k: (v.isoformat() if isinstance(v, date) else v) for k, v in info.items()})
             if draft is not None:
                 payload["draft_id"] = draft.id
+                if draft.kind == "count":
+                    # лист остатка (23.09): Махабат должна видеть ссылку — отвечаем в группе всегда
+                    link = draft_link_text(db, site, user, draft)
+                    send(db, chat_id, link, "group_reply", user_id=user.id if user else None, reply_to=message_id)
         elif grp.worth_reading(text):
             kind = "group_text"
             info = grp.read_text(db, text, user, today_d)
@@ -830,3 +843,56 @@ def set_webhook(base_url: str) -> dict:
                    json={"url": f"{base_url.rstrip('/')}/bot/webhook/{webhook_secret()}",
                          "allowed_updates": ["message"]}, timeout=20)
     return r.json()
+
+
+# ── остаток и передача текстом (23.09) ──────────────────────────────────
+
+_STOCK_WORDS = r"остат|пересч[её]т|на складе"
+_TRANSFER_WORDS = r"кожомкул|филиал|передал|передан|отправил|отдали"
+
+
+def stock_text_kind(text: str) -> str | None:
+    """«остаток склада: молоко 80л, рис 30кг, …» → count; «передали в Кожомкул 12 л молока» → transfer.
+    Передачу проверяем первой: в ней тоже бывает «из остатка». Остаток — хотя бы три числа."""
+    low = (text or "").lower()
+    nums = re.findall(r"\d", low)
+    if not nums or not re.search(r"[а-я]{3,}", low):
+        return None
+    # «передала Махабат 20 000» — деньги, не продукты: без единицы веса/объёма и без
+    # названия другого садика передачей продуктов не считаем
+    units = re.search(r"\d\s*(кг|г|гр|л|литр|шт|пач|мешок|уп)\b", low)
+    if re.search(_TRANSFER_WORDS, low) and (units or re.search(r"кожомкул|филиал", low)):
+        return "transfer"
+    if re.search(_STOCK_WORDS, low) and len(re.findall(r"\d+(?:[.,]\d+)?", low)) >= 3:
+        return "count"
+    return None
+
+
+def public_url() -> str:
+    return os.getenv("PUBLIC_BASE_URL", "https://pearl-production-eef5.up.railway.app").rstrip("/")
+
+
+def draft_link_text(db: Session, site: Organization, user: User | None, draft) -> str:
+    from app.services import drafts
+    try:
+        rows = drafts.stock_rows(db, draft, site.id)
+    except Exception:  # noqa: BLE001 — модель недоступна: разберётся при открытии
+        rows = []
+    found = [r for r in rows if r.get("product_id")]
+    hi = f"{user.name}, " if user else ""
+    what = "остаток" if draft.kind == drafts.COUNT else "передачу"
+    path = "count" if draft.kind == drafts.COUNT else "transfer"
+    n = f": {len(found)} позиций" if found else ""
+    return (f"{hi}{what} разобрал{n}. Проверьте и запишите — одна кнопка:\n"
+            f"{public_url()}/new/stock/{path}?draft={draft.id}")
+
+
+def stock_text_reply(db: Session, site: Organization, user: User | None, text: str, source: str) -> str | None:
+    """Остаток или передача текстом → черновик (подтверждает человек), ответ со ссылкой.
+    Пишут только люди площадки; сам текст сохраняется файлом сразу."""
+    from app.services import drafts
+    kind = stock_text_kind(text)
+    if kind is None or user is None or user.role not in ("owner", *OPERATIONAL_ROLES):
+        return None
+    draft = drafts.create_text(db, site_org_id=site.id, author=user, text=text, kind=kind, source=source)
+    return draft_link_text(db, site, user, draft)

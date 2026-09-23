@@ -40,7 +40,7 @@ from app.services.products import FUZZY_THRESHOLD, rank_candidates
 from app.services.purchases import site_orgs
 from app.services.warehouse import get_balance_map
 
-RECEIPT, KITCHEN, COUNT = "receipt", "kitchen", "count"
+RECEIPT, KITCHEN, COUNT, TRANSFER = "receipt", "kitchen", "count", "transfer"
 SURE_SCORE = 90   # нечёткое совпадение ниже — вопрос человеку, не подстановка
 
 OR_URL = "https://openrouter.ai/api/v1/chat/completions"
@@ -146,7 +146,7 @@ def count_context(db: Session, site_org_id: int) -> list[dict]:
 
 # ── вызов модели ─────────────────────────────────────────────────────────
 
-def _prompt(kind: str, candidates: list[dict]) -> str:
+def _prompt(kind: str, candidates: list[dict], text: str | None = None) -> str:
     lines = []
     for c in candidates:
         extra = []
@@ -162,12 +162,17 @@ def _prompt(kind: str, candidates: list[dict]) -> str:
         KITCHEN: ("a handwritten kitchen sheet: what the cooks took from the store for one day. "
                   "Each line: product and quantity with a unit (кг, г, л, мл, шт, пучок). No prices. "
                   "A line may contain several takes joined by '+' (e.g. '500г + 3,500'): return the sum in one unit."),
-        COUNT: ("a handwritten stock-count sheet: product and counted quantity with a unit. No prices."),
+        COUNT: ("a stock count: what is on the shelf now, product and counted quantity with a unit. No prices. "
+                "A line may hold arithmetic ('25кг + 5кг = 30кг', '750*7=5,250гр', '12 бут × 5л = 60л'): return the final "
+                "result with its unit. Numbers like '7,700' or '5,250' with no unit are decimals in the card unit (7.7)."),
+        TRANSFER: ("a message: products given away to another kindergarten branch, product and quantity with a unit. "
+                   "Ignore words about who or where; one object per product."),
     }[kind]
     numbers = ('"qty": number or null, "unit": unit exactly as written (кг, г, л, мл, шт, лоток, мешок, пучок…) or null, '
                '"price": unit price or null, "total": line total or null')
+    src = f"The text below is {what}\n\nTEXT:\n{text}\n\n" if text is not None else f"The image is {what}\n\n"
     return (
-        f"The image is {what}\n\n"
+        src +
         "EXPECTED PRODUCTS (id|name|unit|notes). The writer almost always means one of these; names may be misspelled, "
         "abbreviated, in Kyrgyz (жумуртка=яйцо, сабиз=морковь, пияз=лук, картошка/картош=картофель) or partly illegible. "
         "Match by meaning and by the unit/price notes. If a line clearly is NOT any of them, use product_id null and copy the text.\n"
@@ -183,19 +188,19 @@ def _prompt(kind: str, candidates: list[dict]) -> str:
     )
 
 
-def call_model(image_bytes: bytes, kind: str, candidates: list[dict], mime: str = "image/jpeg",
-               model: str | None = None) -> dict:
+def call_model(image_bytes: bytes | None, kind: str, candidates: list[dict], mime: str = "image/jpeg",
+               model: str | None = None, text: str | None = None) -> dict:
     key = os.getenv("OPENROUTER_API_KEY")
     if not key:
         raise RuntimeError("OPENROUTER_API_KEY не задан")
-    img = _normalize_orientation(image_bytes)
-    b64 = base64.b64encode(img).decode()
+    content = []
+    if image_bytes is not None:
+        b64 = base64.b64encode(_normalize_orientation(image_bytes)).decode()
+        content.append({"type": "image_url", "image_url": {"url": f"data:{mime};base64,{b64}"}})
+    content.append({"type": "text", "text": _prompt(kind, candidates, text)})
     payload = {
         "model": model or MODEL,
-        "messages": [{"role": "user", "content": [
-            {"type": "image_url", "image_url": {"url": f"data:{mime};base64,{b64}"}},
-            {"type": "text", "text": _prompt(kind, candidates)},
-        ]}],
+        "messages": [{"role": "user", "content": content}],
         "max_tokens": 4096, "temperature": 0.1,
     }
     resp = httpx.post(OR_URL, json=payload, headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json",
@@ -376,3 +381,11 @@ def recognize(db: Session, image_bytes: bytes, kind: str, site_org_id: int, supp
     rows = post_process(db, kind, result, candidates)
     return {"rows": rows, "amount": result.get("amount"), "raw": result.get("raw"), "usage": result.get("usage", {}),
             "candidates": len(candidates)}
+
+
+def recognize_text(db: Session, text: str, kind: str, site_org_id: int, model: str | None = None) -> dict:
+    """Текст из чата (остаток, передача) → строки формы тем же конвейером, что фото (23.09)."""
+    candidates = count_context(db, site_org_id)
+    result = call_model(None, kind, candidates, model=model, text=text)
+    rows = post_process(db, kind, result, candidates)
+    return {"rows": rows, "raw": result.get("raw"), "usage": result.get("usage", {}), "candidates": len(candidates)}

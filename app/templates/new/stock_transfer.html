@@ -24,7 +24,9 @@
 {% if not targets %}
 <p class="sub">Других садиков в системе нет.</p>
 {% else %}
+{% if draft_id %}<div class="alert ok" style="margin-top:10px">Из чата: «{{ draft_text }}». Цифры вписаны — проверьте и запишите.{% if skipped %} Не нашёл в каталоге: {{ skipped | join(", ") }}.{% endif %}</div>{% endif %}
 <form method="post" action="/new/stock/transfer" autocomplete="off">
+  {% if draft_id %}<input type="hidden" name="draft_id" value="{{ draft_id }}">{% endif %}
   <span class="lb">Кому</span>
   <div class="chips">{% for o in targets %}<label class="chip {% if to_org_id == o.id %}on{% endif %}"><input type="radio" name="to_org_id" value="{{ o.id }}" {% if to_org_id == o.id %}checked{% endif %} onchange="document.querySelectorAll('.chips label.chip').forEach(function(l){l.classList.toggle('on', l.contains(this))}, this)">{{ o.name }}</label>{% endfor %}</div>
   <span class="lb">Когда</span><input class="in" type="date" name="date" value="{{ d.isoformat() }}" max="{{ today.isoformat() }}" style="width:auto">

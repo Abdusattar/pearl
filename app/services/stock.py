@@ -206,6 +206,28 @@ def edit_product(db: Session, *, user: User, p: Product, category_id: int | None
 KEY = "key"
 
 
+DRAFT = "draft"
+
+
+def draft_count_rows(db: Session, site_id: int, rows: list[dict]) -> dict:
+    """Пересчёт по листу из чата (23.09): строки листа, узнанные в каталоге, с учётным
+    остатком; мелочь и неузнанное — отдельным списком словами, в остаток не идут."""
+    org_ids = _org_ids(db, site_id)
+    bal = get_balance_map(db, org_ids)
+    out, values, skipped, seen = [], {}, [], set()
+    for r in rows:
+        pid = r.get("product_id")
+        p = db.get(Product, pid) if pid else None
+        if p is None or kitchen.is_minor(p) or pid in seen:
+            skipped.append(r.get("raw") or r.get("name") or "")
+            continue
+        seen.add(pid)
+        out.append({"p": p, "balance": float(bal.get(pid, {}).get("balance", 0) or 0), "note": r.get("note")})
+        if r.get("qty") is not None:
+            values[str(pid)] = kitchen.fmt_qty(r["qty"])
+    return {"rows": out, "values": values, "skipped": [s for s in skipped if s]}
+
+
 def count_rows(db: Session, site_id: int, category_id: int | str | None) -> dict:
     """Строки пересчёта по одной категории: учётные товары с остатком или привозом за 60 дней.
     «Ключевые» (23.09) — первый чип и по умолчанию, если в Настройках они выбраны:
@@ -254,11 +276,14 @@ def last_price(db: Session, org_ids: set[int], product_id: int) -> Decimal | Non
     return Decimal(r[0]) if r else None
 
 
-def transfer_rows(db: Session, site_id: int) -> list[dict]:
-    """Что можно передать: всё, что есть на складе по записям."""
+def transfer_rows(db: Session, site_id: int, include: set[int] | None = None) -> list[dict]:
+    """Что можно передать: всё, что есть на складе по записям, и то, что названо в
+    черновике (по записям его может не быть, если покупку не внесли)."""
     bal = get_balance_map(db, _org_ids(db, site_id))
+    include = include or set()
     rows = [{"p": p, "balance": float(bal.get(p.id, {}).get("balance", 0) or 0)} for p in _live_products(db)]
-    return sorted([r for r in rows if r["balance"] > DUST], key=lambda r: r["p"].name.lower())
+    return sorted([r for r in rows if r["balance"] > DUST or r["p"].id in include],
+                  key=lambda r: (r["p"].id not in include, r["p"].name.lower()))
 
 
 def transfer_out(db: Session, *, user: User, site_id: int, to_org_id: int, items: list[tuple[int, Decimal]],
@@ -323,6 +348,7 @@ def quick_count(db: Session, *, user: User, site_id: int, items: list[tuple[int,
         db.add(StockCountPhoto(count_id=count.id, file_path=photo_path, uploaded_by=user.id))
     db.flush()
     result = sc.apply(db, count, org_ids, user.id)
+    result["count_id"] = count.id
     db.add(AuditLog(entity_type="stock_count", entity_id=count.id, action="insert", user_id=user.id,
                     new_data={"from": "new/stock", "lines": len(items), "changed": len(result["changed"])}))
     return result
