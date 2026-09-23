@@ -202,3 +202,10 @@ def test_skip_kitchen_draft_keeps_reason_and_list_shows_drafts(client, db, site,
     assert res.headers["location"].startswith("/new/receipts")
     db.refresh(r)
     assert r.ocr_status == "rejected" and r.reject_reason == "дубль" and r.decided_by == m.id
+
+
+@pytest.fixture(autouse=True)
+def _sheet_required_mode(monkeypatch):
+    """Эти тесты — про режим «лист кухни обязателен» (до 23.09 он был единственным)."""
+    from app.services import rules as _rules
+    monkeypatch.setattr(_rules, "kitchen_sheet_required", lambda db: True)

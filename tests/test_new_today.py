@@ -47,7 +47,8 @@ def test_missing_sheets_are_one_row_and_button_opens_first_day(client, db, site,
     first = svc.kitchen.missing_days(db, site.id)[0]
     assert len(items) == 1 and items[0]["title"].startswith("Листы кухни не внесены")
     assert items[0]["url"] == f"/new/kitchen?date={first.isoformat()}"
-    assert f'href="/new/kitchen?date={first.isoformat()}"' in page.text and "не внесён" in page.text
+    # плитка «Лист кухни» переехала в «Ещё» (23.09): ссылка на первый пропуск осталась, пропуск — строкой в «Ждёт вас»
+    assert f'href="/new/kitchen?date={first.isoformat()}"' in page.text and "не внесены" in page.text
 
 
 def test_all_done_when_sheets_entered_and_no_old_debt(client, db, site, staff):
@@ -92,3 +93,10 @@ def test_figures_count_only_stock_level_products(db, site, staff):
     db.flush()
     f = svc.now_figures(db, site.id)
     assert f["stock"] == 800   # долги поставщикам общие для базы, здесь не проверяем
+
+
+@pytest.fixture(autouse=True)
+def _sheet_required_mode(monkeypatch):
+    """Эти тесты — про режим «лист кухни обязателен» (до 23.09 он был единственным)."""
+    from app.services import rules as _rules
+    monkeypatch.setattr(_rules, "kitchen_sheet_required", lambda db: True)

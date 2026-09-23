@@ -95,11 +95,32 @@ def overview(db: Session, site_id: int) -> dict:
                for o in orgs]
     cats = db.query(ProductCategory).order_by(ProductCategory.sort_order, ProductCategory.name).all()
     rv = {k: rules.get(db, k) for k in rules.RULES}
-    return {"orgs": orgs, "tariffs": tariffs, "singles": singles, "holders": holders,
+    return {"key_products": key_products_view(db, site_id), "count_weekday": rules.count_weekday(db),
+            "orgs": orgs, "tariffs": tariffs, "singles": singles, "holders": holders,
             "people": [u for u in users if u.role in ROLE_TEXT],
             "frozen": [{"org": o, "percent": o.frozen_discount_percent} for o in orgs],
             "cats": cats, "minor": [c for c in cats if c.is_minor], "rules": rv,
             "weekdays_text": rules.weekdays_text(rules.kitchen_weekdays(db))}
+
+
+def key_products_view(db: Session, site_id: int) -> dict:
+    """Ключевые продукты (23.09): выбранные сверху, остальные кандидаты — учётные товары
+    в обороте площадки. Кандидатов не больше, чем реально покупают, — не весь каталог."""
+    from app.services import kitchen, stock_count as sc
+    from app.models import Product
+    org_ids = {o.id for o in site_orgs(db, site_id)} | {site_id}
+    chosen = set(rules.key_products(db))
+    live = {w["product_id"] for w in sc.working_set(db, org_ids)} | chosen
+    prods = [p for p in db.query(Product).filter(Product.id.in_(live), Product.merged_into_id.is_(None)).all()
+             if not kitchen.is_minor(p) or p.id in chosen]
+    prods.sort(key=lambda p: (p.id not in chosen, p.name.lower()))
+    return {"chosen": [p for p in prods if p.id in chosen], "all": prods, "ids": chosen}
+
+
+def set_key_products(db: Session, *, user: User, ids: list[int], weekday: int) -> None:
+    rules.put(db, user=user, key="key_products", value=sorted(set(ids)))
+    if 0 <= weekday <= 6:
+        rules.put(db, user=user, key="count_weekday", value=weekday)
 
 
 def set_tariff(db: Session, *, user: User, org: Organization, price_raw: str, month_raw: str) -> str:

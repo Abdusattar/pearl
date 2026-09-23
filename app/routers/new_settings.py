@@ -120,6 +120,19 @@ async def settings_minor(request: Request, db: Session = Depends(get_db)):
     return _back("Записано: склад считает остаток по новому списку.")
 
 
+@router.post("/settings/keys")
+async def settings_keys(request: Request, db: Session = Depends(get_db)):
+    user, site, stop = _owner(request, db)
+    if stop:
+        return stop
+    form = await request.form()
+    wd = str(form.get("weekday") or "")
+    svc.set_key_products(db, user=user, ids=[int(x) for x in form.getlist("key") if str(x).isdigit()],
+                         weekday=int(wd) if wd.isdigit() else rules.count_weekday(db))
+    db.commit()
+    return _back("Ключевые продукты записаны: пересчёт открывается с них.")
+
+
 @router.post("/settings/service/{service_id}")
 async def settings_service(service_id: int, request: Request, db: Session = Depends(get_db)):
     user, site, stop = _owner(request, db)

@@ -201,8 +201,14 @@ def edit_product(db: Session, *, user: User, p: Product, category_id: int | None
                         old_data=old, new_data=new))
 
 
-def count_rows(db: Session, site_id: int, category_id: int | None) -> dict:
-    """Строки пересчёта по одной категории: учётные товары с остатком или привозом за 60 дней."""
+KEY = "key"
+
+
+def count_rows(db: Session, site_id: int, category_id: int | str | None) -> dict:
+    """Строки пересчёта по одной категории: учётные товары с остатком или привозом за 60 дней.
+    «Ключевые» (23.09) — первый чип и по умолчанию, если в Настройках они выбраны:
+    их считают каждую неделю, из них потом нормы на едока."""
+    from app.services import rules
     org_ids = _org_ids(db, site_id)
     ws = {w["product_id"]: w for w in sc.working_set(db, org_ids)}
     cats = [c for c in db.query(ProductCategory).order_by(ProductCategory.sort_order, ProductCategory.name).all()
@@ -210,11 +216,17 @@ def count_rows(db: Session, site_id: int, category_id: int | None) -> dict:
     prods = [p for p in _live_products(db) if p.id in ws and not kitchen.is_minor(p)]
     used = {p.category_id for p in prods}
     cats = [c for c in cats if c.id in used]
-    if category_id is None and cats:
-        category_id = cats[0].id
-    rows = [{"p": p, "balance": float(ws[p.id]["balance"])} for p in prods if p.category_id == category_id]
+    keys = rules.key_products(db)
+    if category_id is None:
+        category_id = KEY if keys else (cats[0].id if cats else None)
+    if category_id == KEY:
+        bal = get_balance_map(db, org_ids)
+        rows = [{"p": p, "balance": float(bal.get(p.id, {}).get("balance", 0) or 0)}
+                for p in _live_products(db) if p.id in set(keys)]
+    else:
+        rows = [{"p": p, "balance": float(ws[p.id]["balance"])} for p in prods if p.category_id == category_id]
     rows.sort(key=lambda r: r["p"].name.lower())
-    return {"cats": cats, "current": category_id, "rows": rows, "has_no_cat": None in used}
+    return {"cats": cats, "current": category_id, "rows": rows, "has_no_cat": None in used, "keys": len(keys)}
 
 
 def quick_count(db: Session, *, user: User, site_id: int, items: list[tuple[int, Decimal]],

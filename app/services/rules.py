@@ -23,6 +23,11 @@ RULES = {
     "income_tax_rate": {"default": 10, "title": "Подоходный", "unit": "%", "min": 0, "max": 50},
     "tax_deduction": {"default": 650, "title": "Стандартный вычет", "unit": "сом", "min": 0, "max": 100000},
     "kitchen_weekdays": {"default": [0, 1, 2, 3, 4], "title": "Кухня работает"},
+    # Склад по нормам (23.09): ключевые продукты считаем раз в неделю, лист кухни —
+    # по желанию. Пока лист обязателен, система напоминает о каждом невнесённом дне.
+    "key_products": {"default": [], "title": "Ключевые продукты"},
+    "count_weekday": {"default": 4, "title": "День пересчёта ключевых"},
+    "kitchen_sheet_required": {"default": False, "title": "Лист кухни обязателен"},
 }
 WEEKDAYS = ["понедельник", "вторник", "среда", "четверг", "пятница", "суббота", "воскресенье"]
 WEEKDAYS_SHORT = ["пн", "вт", "ср", "чт", "пт", "сб", "вс"]
@@ -83,6 +88,18 @@ def tax_rates(db: Session) -> dict:
 
 def kitchen_weekdays(db: Session) -> set[int]:
     return set(int(x) for x in get(db, "kitchen_weekdays"))
+
+
+def key_products(db: Session) -> list[int]:
+    return [int(x) for x in (get(db, "key_products") or [])]
+
+
+def count_weekday(db: Session) -> int:
+    return int(get(db, "count_weekday"))
+
+
+def kitchen_sheet_required(db: Session) -> bool:
+    return bool(get(db, "kitchen_sheet_required"))
 
 
 def weekdays_text(days) -> str:

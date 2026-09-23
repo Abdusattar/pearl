@@ -79,6 +79,22 @@ def todo(db: Session, site_org_id: int) -> list[dict]:
                       "sub": "пока их нет, склад показывает больше, чем на полках",
                       "go": "Внести за сегодня" if first == today else f"Внести за {_date_short(first)}"})
 
+    # Склад по нормам (23.09): едоки за день и недельный пересчёт ключевых — строкой,
+    # только когда их нет. Записали (из чата или здесь) — строка уходит сама.
+    from app.services import meals
+    if meals.missing_today(db, site_org_id):
+        items.append({"src": "meals", "kind": "warn", "url": "/new/meals",
+                      "title": "Сегодня едят: не записано",
+                      "sub": "три числа: школа, садик, персонал — можно одной строкой в чат",
+                      "go": "Записать"})
+    keys = rules.key_products(db)
+    if keys and today.weekday() == rules.count_weekday(db):
+        from app.services.bot import key_count_done
+        if not key_count_done(db, site_org_id, today):
+            items.append({"src": "count", "kind": "warn", "url": "/new/stock/count?cat=key",
+                          "title": f"Пересчёт ключевых продуктов: сегодня",
+                          "sub": f"{len(keys)} позиций, минут 15", "go": "Пересчитать"})
+
     # Чеки с фото — одной строкой, список на отдельном экране (туда же придут записи бота).
     receipts = unchecked_receipts(db, site_org_id)
     if receipts:
@@ -143,7 +159,10 @@ def now_figures(db: Session, site_org_id: int) -> dict:
                       if b["balance"] > 0 and b["product"].product_category and not b["product"].product_category.is_minor)
     last_count = stock_count.last_applied(db, site_org_id) if hasattr(stock_count, "last_applied") else None
     debts = supplier_debts(db, site_org_id)
+    from app.services import meals
+    mc = meals.get(db, site_org_id, date.today())
     return {
+        "meals": meals.text(mc) if mc else None,
         "cash": float(st["cash"]["total"]), "cash_ok": st["cash"]["ok"],
         "pockets": [{"name": r["user"].name, "amount": float(r["balance"])} for r in st["cash"]["rows"]],
         "accounts": [{"name": a["org"].name, "amount": float(a["expected"]), "ok": a["ok"]} for a in st["accounts"]],

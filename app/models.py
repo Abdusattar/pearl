@@ -541,6 +541,26 @@ class KitchenSheet(Base):
     creator = relationship("User", foreign_keys=[created_by])
 
 
+class MealCount(Base):
+    """Сколько сегодня едят (23.09, склад по нормам): три числа в день и одна строка
+    меню. Норма продукта = расход между пересчётами ÷ едоко-дни. Приходит из чата
+    одной строкой («школа 310, садик 48, персонал 12») или с экрана — запись одна."""
+    __tablename__ = "meal_counts"
+    __table_args__ = (UniqueConstraint("site_org_id", "date", name="uq_meal_count_site_date"),)
+    id          = Column(Integer, primary_key=True)
+    site_org_id = Column(Integer, ForeignKey("organizations.id"), nullable=False)
+    date        = Column(Date, nullable=False)
+    school      = Column(Integer)
+    sadik       = Column(Integer)
+    staff       = Column(Integer)
+    menu        = Column(Text)
+    source      = Column(String(10))   # chat | form
+    created_by  = Column(Integer, ForeignKey("users.id"))
+    updated_by  = Column(Integer, ForeignKey("users.id"))
+    created_at  = Column(DateTime, server_default=func.now())
+    updated_at  = Column(DateTime, server_default=func.now(), onupdate=func.now())
+
+
 class Asset(Base):
     """Реестр капитальных покупок (мебель, оборудование, игровые комплексы) — лёгкая версия,
     без расчёта амортизации (это решает бухгалтер по своему методу, когда появится 1С).

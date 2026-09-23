@@ -196,3 +196,10 @@ def test_founder_sees_overview_and_totals(client, db, site, monkeypatch):
     assert client.get("/new/overview").status_code == 200
     page = client.get("/new/today").text
     assert 'href="/new/overview"' in page and "Продуктов на складе" in page
+
+
+@pytest.fixture(autouse=True)
+def _sheet_required_mode(monkeypatch):
+    """Эти тесты — про режим «лист кухни обязателен» (до 23.09 он был единственным)."""
+    from app.services import rules as _rules
+    monkeypatch.setattr(_rules, "kitchen_sheet_required", lambda db: True)

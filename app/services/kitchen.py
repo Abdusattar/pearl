@@ -91,7 +91,12 @@ def last_sheet(db: Session, site_org_id: int, before: date | None = None) -> Kit
 
 
 def missing_days(db: Session, site_org_id: int, until: date | None = None) -> list[date]:
-    """Рабочие дни без листа в окне LOOKBACK_DAYS до `until` включительно."""
+    """Рабочие дни без листа в окне LOOKBACK_DAYS до `until` включительно.
+    Пусто, если лист кухни не обязателен (23.09, склад по нормам): тогда ни «Сегодня»,
+    ни Склад, ни бот не напоминают о листах — расход даёт недельный пересчёт."""
+    from app.services import rules as _rules
+    if not _rules.kitchen_sheet_required(db):
+        return []
     until = until or date.today()
     start = until - timedelta(days=LOOKBACK_DAYS)
     # пересчёт склада уже привёл остаток к полке — дни до него не пробел

@@ -197,6 +197,7 @@ def run_scheduled(db: Session, now: datetime | None = None) -> list[str]:
             else:
                 _send_founders(db, text, key)
             sent.append(key)
+    sent += _meal_and_count_asks(db, site, now)
     # Пятничный «у вас на руках X, верно?» с записью ответа выключен 21.09: это ритуал
     # пересчёта (владелец: пересчёт — признак слабости), и бот не пишет в деньги мимо
     # проверки Махабат. Сумму на руках человек присылает сам — она станет черновиком.
@@ -211,6 +212,78 @@ def run_scheduled(db: Session, now: datetime | None = None) -> list[str]:
                 db.add(BotMessage(kind="group_threshold", job_key=key, status="skipped"))
             sent.append(key)
     return sent
+
+
+def _counter_name(db: Session, site: Organization) -> str | None:
+    """Кому адресовать вопросы про едоков и пересчёт: учётчик площадки (роль staff)."""
+    from app.services.purchases import site_orgs as _orgs
+    org_ids = [o.id for o in _orgs(db, site.id)]
+    u = (db.query(User).filter(User.role == "staff", User.deleted_at.is_(None), User.organization_id.in_(org_ids))
+         .order_by(User.id).first())
+    return u.name if u else None
+
+
+def _meal_and_count_asks(db: Session, site: Organization, now: datetime) -> list[str]:
+    """Вопросы в группу с образцом ответа (23.09, владелец: «пример, чтобы не парились»).
+    Спрашиваем в своё окно и один раз: едоки в 12, напоминание в 15, если не записано;
+    пересчёт ключевых в день пересчёта в 14 и один раз в 18. Вопрос — не распознавание,
+    поэтому идёт в группу и при молчащем боте. Окно в час, а не «после 12»: перезапуск
+    сервера вечером не должен задавать утренний вопрос."""
+    from app.services import meals, stock_count as sc
+    d, out = now.date(), []
+    name = _counter_name(db, site)
+    hi = f"{name}, " if name else ""
+    group = group_chat_id()
+    if meals.missing_today(db, site.id) and now.hour in (12, 15):
+        key = f"meal_ask:{d.isoformat()}:{now.hour}"
+        if not _done(db, key):
+            first = now.hour == 12
+            text = ((f"{hi}сколько сегодня едят? " if first else f"{hi}сколько сегодня ели, ещё не записано. ")
+                    + f"Одной строкой, например:\n{meals.EXAMPLE}")
+            send(db, group, text, "meal_ask", job_key=key)
+            out.append(key)
+    keys = rules.key_products(db)
+    if keys and d.weekday() == rules.count_weekday(db) and now.hour in (14, 18) and not key_count_done(db, site.id, d):
+        key = f"count_ask:{d.isoformat()}:{now.hour}"
+        if not _done(db, key):
+            if now.hour == 14:
+                text = (f"{hi}сегодня пересчёт ключевых продуктов: {len(keys)} позиций, минут 15.\n"
+                        "Склад → Пересчитать → «Ключевые». Пустая строка = не считали.")
+            else:
+                text = f"{hi}пересчёт ключевых сегодня не записан. Если считали на бумаге — пришлите фото листа сюда."
+            send(db, group, text, "count_ask", job_key=key)
+            out.append(key)
+    return out
+
+
+def key_count_done(db: Session, site_org_id: int, d: date) -> bool:
+    """Ключевые пересчитаны с начала этой «недели пересчёта» (с последнего дня пересчёта)."""
+    from app.models import StockCount, StockCountLine
+    keys = rules.key_products(db)
+    if not keys:
+        return True
+    since = d - timedelta(days=(d.weekday() - rules.count_weekday(db)) % 7)
+    got = {pid for (pid,) in db.query(StockCountLine.product_id).join(StockCount, StockCount.id == StockCountLine.count_id)
+           .filter(StockCount.organization_id == site_org_id, StockCount.status == "applied",
+                   StockCount.count_date >= since, StockCountLine.product_id.in_(keys)).distinct().all()}
+    return len(got) >= max(1, len(keys) // 2)   # половина ключевых — считаем, что пересчёт был
+
+
+def meal_reply(db: Session, site: Organization, user: User | None, text: str) -> str | None:
+    """Строка про едоков → запись. None — это не про едоков."""
+    from app.services import meals
+    p = meals.parse(text)
+    if p is None:
+        return None
+    if user is None or user.role not in ("owner", *OPERATIONAL_ROLES):
+        return None
+    row = meals.record(db, site_org_id=site.id, d=p["date"], values=p, menu=p.get("menu"), user=user, source="chat")
+    when = "сегодня" if p["date"] == date.today() else f"на {_d(p['date'])}"
+    reply = f"Записал {when}: {meals.text(row)}." + (f" Меню: {row.menu}." if p.get("menu") else "")
+    doubt = meals.doubts(db, site.id, p, p["date"])
+    if doubt:
+        reply += " Проверьте: " + "; ".join(doubt) + ". Если верно — ничего не делайте; ошиблись — пришлите строку заново."
+    return reply
 
 
 def _send_founders(db: Session, text: str, key: str | None = None) -> None:
@@ -270,6 +343,9 @@ def handle_update(db: Session, update: dict) -> str | None:
         reply = _handle_photo(db, msg, user, site, text)
         send(db, chat_id, reply, "reply", user_id=user.id)
         return reply
+    if site is not None and (meal := meal_reply(db, site, user, text)):
+        send(db, chat_id, meal, "reply", user_id=user.id)
+        return meal
     low = text.lower()
     if low in ("/start", "start"):
         reply = f"Здравствуйте, {user.name}. Фото чека или листа кухни можно отправить сюда или в чат «Жемчужина»: я положу его Махабат черновиком на проверку."
@@ -311,11 +387,21 @@ def _handle_group(db: Session, msg: dict, user: User | None, text: str) -> str |
     voice_note = None
     try:
         if media and media["kind"] == "voice":
-            # Голосовое (23.09): расшифровка в журнал всегда, дальше как текст о деньгах
             transcript = _voice_text(db, msg, media, user, chat_id)
             if transcript is None:
                 return None
             text, voice_note = transcript, f"голосовое {media.get('duration') or '?'} с"
+        if not (media and media["kind"] in ("photo", "document")):
+            # Едоки за день (23.09): разбор без модели, запись сразу. Отвечаем в группе
+            # и при молчащем боте — человек должен видеть «Записал», иначе пришлёт ещё раз.
+            meal = meal_reply(db, site, user, text)
+            if meal:
+                db.add(BotMessage(kind="meal_count", chat_id=chat_id, user_id=user.id if user else None, direction="in",
+                                  text=text[:2000], status="understood", payload={"message_id": message_id, "reply": meal}))
+                send(db, chat_id, meal, "group_reply", user_id=user.id if user else None, reply_to=message_id)
+                return meal
+        if voice_note:
+            # Голосовое (23.09): расшифровка в журнал всегда, дальше как текст о деньгах
             if grp.worth_reading(text):
                 kind = "group_text"
                 info = grp.read_text(db, text, user, today_d)

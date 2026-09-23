@@ -1,0 +1,46 @@
+{% extends "new/base.html" %}
+{% block title %}Сегодня едят — Жемчужина{% endblock %}
+
+{% block head %}
+<style>
+  .box { background: var(--accent-soft); border-radius: 8px; padding: 14px 16px; margin: 12px 0 0; max-width: 520px; }
+  .lb { display: block; font-size: 13px; color: var(--muted); margin: 10px 0 4px; }
+  .three { display: flex; gap: 12px; flex-wrap: wrap; }
+  .three label { display: block; font-size: 13px; color: var(--muted); }
+  .three .in { width: 110px; height: 44px; text-align: right; font-variant-numeric: tabular-nums; display: block; margin-top: 4px; }
+  .three .of { display: block; font-size: 12px; color: var(--muted); margin-top: 3px; }
+  .box .in.wide { height: 44px; }
+  .bt { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 14px; align-items: center; }
+  .days { display: flex; gap: 8px; flex-wrap: wrap; margin: 12px 0 0; }
+</style>
+{% endblock %}
+
+{% block content %}
+<a href="/new/today" style="font-size:14px;text-decoration:none">← Сегодня</a>
+<h3 class="title" style="margin:4px 0 0">Сегодня едят</h3>
+{% if error %}<div class="alert bad" style="margin-top:10px">{{ error }}</div>
+{% elif saved == 1 %}<div class="alert ok" style="margin-top:10px">Записано.</div>
+{% elif saved == 2 %}<div class="alert warn" style="margin-top:10px">Записано. Числа необычные — проверьте ещё раз: если верно, ничего делать не нужно.</div>{% endif %}
+<p class="sub">То же можно одной строкой в чат «Жемчужина», например: {{ example }}</p>
+
+<div class="days">
+  {% for back in range(0, 4) %}{% set day = today - timedelta(days=back) %}
+  <a class="chip {% if day == d %}on{% endif %}" href="/new/meals?d={{ day.isoformat() }}">{{ 'сегодня' if back == 0 else ('вчера' if back == 1 else day | human_date) }}</a>
+  {% endfor %}
+</div>
+
+<form class="box" method="post" action="/new/meals" autocomplete="off">
+  <input type="hidden" name="d" value="{{ d.isoformat() }}">
+  <div class="three">
+    {% for k, label in [('school', 'Школа'), ('sadik', 'Садик'), ('staff', 'Персонал')] %}
+    <label for="f-{{ k }}">{{ label }}
+      <input class="in" id="f-{{ k }}" name="{{ k }}" inputmode="numeric" value="{{ values[k] if k in values else (row[k] if row and row[k] is not none else '') }}" aria-label="{{ label }}, человек">
+      <span class="of">{% if k in roster and roster[k] %}по списку {{ roster[k] }}{% elif k == 'staff' and prev and prev.staff is not none %}раньше {{ prev.staff }}{% else %}&nbsp;{% endif %}</span>
+    </label>
+    {% endfor %}
+  </div>
+  <label class="lb" for="f-menu">Что готовят, по желанию</label>
+  <input class="in wide" id="f-menu" name="menu" value="{{ menu or (row.menu if row and row.menu else '') }}" placeholder="борщ, плов, компот">
+  {% if can_write %}<div class="bt"><button class="btn" type="submit">Записать</button>{% if row %}<span class="after" style="margin:0">{{ 'из чата' if row.source == 'chat' else 'с экрана' }}; поправить можно здесь</span>{% endif %}</div>{% endif %}
+</form>
+{% endblock %}

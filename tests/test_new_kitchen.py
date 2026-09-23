@@ -201,3 +201,10 @@ def test_same_form_token_twice_writes_sheet_once(client, db, site, staff, butter
     audits = db.query(AuditLog).filter(AuditLog.entity_type == "kitchen_sheet", AuditLog.action == "replace",
                                        AuditLog.entity_id == svc.sheet_for(db, site.id, d).id).count()
     assert audits == 0 and len(_lines(db, svc.sheet_for(db, site.id, d))) == 1
+
+
+@pytest.fixture(autouse=True)
+def _sheet_required_mode(monkeypatch):
+    """Эти тесты — про режим «лист кухни обязателен» (до 23.09 он был единственным)."""
+    from app.services import rules as _rules
+    monkeypatch.setattr(_rules, "kitchen_sheet_required", lambda db: True)

@@ -3,7 +3,7 @@
 
 {% block head %}
 <style>
-  .acts { display: grid; grid-template-columns: 1.3fr 1fr 1fr; gap: 12px; margin: 16px 0 8px; }
+  .acts { display: grid; grid-template-columns: 1.3fr 1fr; gap: 12px; margin: 16px 0 8px; }
   @media (max-width: 640px) { .acts { grid-template-columns: 1fr; } }
   .act { display: block; padding: 16px 18px; border-radius: 8px; min-height: 44px; color: inherit; text-decoration: none; }
   .act .t { font-size: 17px; font-weight: 600; display: block; }
@@ -45,10 +45,9 @@
 {% if can_write %}
 <div class="acts">
   <a class="act main" href="/new/buy"><span class="t">Купили</span><span class="s">{{ buy_sub }}</span></a>
-  <a class="act sec" href="{{ kitchen.url }}"><span class="t">Лист кухни</span><span class="s {% if kitchen.late %}warn{% endif %}">{{ kitchen.sub }}</span></a>
   <a class="act sec" href="/new/nocheck"><span class="t">Расход без чека</span><span class="s">такси, доставка, свет, вода</span></a>
 </div>
-<div class="more"><span>Ещё:</span><a href="/new/pay">Оплатить поставщику</a><a href="/new/cash/withdraw">Снятие со счёта</a><a href="/new/cash/transfer">Передать деньги</a></div>
+<div class="more"><span>Ещё:</span><a href="/new/pay">Оплатить поставщику</a><a href="/new/cash/withdraw">Снятие со счёта</a><a href="/new/cash/transfer">Передать деньги</a><a href="/new/meals">Сегодня едят</a><a href="{{ kitchen.url }}">Лист кухни</a></div>
 {% endif %}
 <div class="cols">
   <section>
@@ -69,6 +68,7 @@
     {% for a in figures.accounts %}
     <a class="fig" href="/new/cash"><div class="l">На счёте {{ a.name }}</div><div class="v {% if a.amount < 0 %}bad{% endif %}">{{ a.amount | money }}<span>сом</span></div><div class="w {{ 'ok' if a.ok else 'warn' }}">{{ 'сходится' if a.ok else 'не хватает записи' }}</div></a>
     {% endfor %}
+    {% if figures.meals %}<a class="fig" href="/new/meals"><div class="l">Едят сегодня</div><div class="who" style="font-size:15px;color:var(--text)">{{ figures.meals }}</div></a>{% endif %}
     {% if founder %}
     <div class="fig"><div class="l">Продуктов на складе</div><div class="v">{{ figures.stock | money }}<span>сом</span></div><div class="who">{{ figures.stock_when }}</div></div>
     <div class="fig"><div class="l">Должны поставщикам</div><div class="v">{{ figures.debt | money }}<span>сом</span></div><div class="who">{{ figures.debt_who }}</div></div>

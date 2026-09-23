@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import uuid
+from datetime import date
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 
@@ -42,7 +43,8 @@ def stock_page(request: Request, saved: str | None = None, db: Session = Depends
 
 
 @router.get("/stock/count", response_class=HTMLResponse)
-def count_page(request: Request, cat: int | None = None, db: Session = Depends(get_db)):
+def count_page(request: Request, cat: str | None = None, db: Session = Depends(get_db)):
+    cat = int(cat) if cat and cat.isdigit() else (svc.KEY if cat == svc.KEY else None)
     user, site = _user_site(request, db)
     if not user:
         return RedirectResponse("/login", status_code=302)
@@ -62,8 +64,8 @@ async def count_save(request: Request, db: Session = Depends(get_db)):
     if user.role not in WRITE_ROLES or site is None:
         return HTMLResponse("Пересчитывают сотрудники площадки", status_code=403)
     form = await request.form()
-    cat = form.get("cat")
-    cat = int(cat) if cat and str(cat).isdigit() else None
+    cat = str(form.get("cat") or "")
+    cat = int(cat) if cat.isdigit() else (svc.KEY if cat == svc.KEY else None)
     pids, vals = form.getlist("product_id"), form.getlist("actual")
     values = dict(zip(pids, vals))
     items, error = [], None
@@ -101,6 +103,73 @@ async def count_save(request: Request, db: Session = Depends(get_db)):
                     "missing": svc.state(db, site.id)["missing"], "can_write": True})
         return templates.TemplateResponse("new/stock_count.html", ctx)
     url = "/new/stock?saved=count"
+    once.remember(db, token, user.id, url)
+    db.commit()
+    return RedirectResponse(url, status_code=303)
+
+
+def _meals_ctx(request, user, site, db, d, **kw) -> dict:
+    from app.services import meals
+    ctx = _base_ctx(request, user, site, db, "today")
+    row = meals.get(db, site.id, d)
+    prev = (db.query(meals.MealCount).filter(meals.MealCount.site_org_id == site.id, meals.MealCount.date < d)
+            .order_by(meals.MealCount.date.desc()).first())
+    from datetime import timedelta
+    ctx.update({"d": d, "row": row, "prev": prev, "roster": meals.roster(db, site.id), "example": meals.EXAMPLE,
+                "can_write": user.role in WRITE_ROLES, "today": date.today(), "timedelta": timedelta,
+                "values": {}, "menu": None, **kw})
+    return ctx
+
+
+@router.get("/meals", response_class=HTMLResponse)
+def meals_page(request: Request, d: str | None = None, saved: int = 0, db: Session = Depends(get_db)):
+    """«Сегодня едят» (23.09): та же запись, что приходит из чата, — поправить или внести пропущенный день."""
+    user, site = _user_site(request, db)
+    if not user:
+        return RedirectResponse("/login", status_code=302)
+    if site is None:
+        return HTMLResponse("Объект не найден", status_code=404)
+    try:
+        day = date.fromisoformat(d) if d else date.today()
+    except ValueError:
+        day = date.today()
+    return templates.TemplateResponse("new/meals.html", _meals_ctx(request, user, site, db, min(day, date.today()), saved=saved))
+
+
+@router.post("/meals", response_class=HTMLResponse)
+async def meals_save(request: Request, db: Session = Depends(get_db)):
+    from app.services import meals
+    user, site = _user_site(request, db)
+    if not user:
+        return RedirectResponse("/login", status_code=302)
+    if user.role not in WRITE_ROLES or site is None:
+        return HTMLResponse("Нет прав", status_code=403)
+    form = await request.form()
+    try:
+        day = min(date.fromisoformat(str(form.get("d") or "")), date.today())
+    except ValueError:
+        day = date.today()
+    values, error = {}, None
+    for k in meals.FIELDS:
+        v = str(form.get(k) or "").strip().replace(" ", "")
+        if not v:
+            continue
+        if not v.isdigit() or int(v) > 2000:
+            error = f"{meals.LABEL[k].capitalize()}: нужно число людей, например 310"
+            break
+        values[k] = int(v)
+    if not error and not values:
+        error = "Впишите хотя бы одно число"
+    if error:
+        return templates.TemplateResponse("new/meals.html", _meals_ctx(request, user, site, db, day, error=error,
+                                                                       values=values, menu=form.get("menu")))
+    token = once.clean(str(form.get("form_token") or ""))
+    if done := once.done_url(db, token):
+        return RedirectResponse(done, status_code=303)
+    meals.record(db, site_org_id=site.id, d=day, values=values, menu=str(form.get("menu") or "").strip() or None,
+                 user=user, source="form")
+    doubt = meals.doubts(db, site.id, values, day)
+    url = f"/new/meals?d={day.isoformat()}&saved={2 if doubt else 1}"
     once.remember(db, token, user.id, url)
     db.commit()
     return RedirectResponse(url, status_code=303)
