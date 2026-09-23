@@ -214,15 +214,19 @@ def draft_count_rows(db: Session, site_id: int, rows: list[dict]) -> dict:
     остатком; мелочь и неузнанное — отдельным списком словами, в остаток не идут."""
     org_ids = _org_ids(db, site_id)
     bal = get_balance_map(db, org_ids)
-    out, values, skipped, seen = [], {}, [], set()
+    out, values, skipped, seen = [], {}, [], {}
     for r in rows:
         pid = r.get("product_id")
         p = db.get(Product, pid) if pid else None
-        if p is None or kitchen.is_minor(p) or pid in seen:
+        if p is None or kitchen.is_minor(p):
             skipped.append(r.get("raw") or r.get("name") or "")
             continue
-        seen.add(pid)
-        out.append({"p": p, "balance": float(bal.get(pid, {}).get("balance", 0) or 0), "note": r.get("note")})
+        if pid in seen:
+            # тот же товар ниже — это уточнение («масло всего 70 л»): побеждает последняя строка
+            seen[pid]["note"] = r.get("note") or f"уточнено: «{r.get('raw')}»"
+        else:
+            seen[pid] = {"p": p, "balance": float(bal.get(pid, {}).get("balance", 0) or 0), "note": r.get("note")}
+            out.append(seen[pid])
         if r.get("qty") is not None:
             values[str(pid)] = kitchen.fmt_qty(r["qty"])
     return {"rows": out, "values": values, "skipped": [s for s in skipped if s]}
