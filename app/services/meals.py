@@ -31,7 +31,7 @@ _WORDS = {
 _NUM = r"(\d{1,4})"
 
 
-def parse(text: str, today: date | None = None) -> dict | None:
+def parse(text: str, today: date | None = None, min_fields: int = 2) -> dict | None:
     """«школа 310, садик 48, персонал 12. Меню: борщ, плов» → числа, меню, дата.
     Число можно и перед словом («310 школа»). Нужно хотя бы два из трёх — иначе это
     не про едоков (одно «школа 18000» — про деньги). «вчера» — за вчера."""
@@ -46,7 +46,7 @@ def parse(text: str, today: date | None = None) -> dict | None:
             # Махабат 23.09: «школа 328, персонал 33, садик 97, персонал 10» — персонал
             # по объектам; едят все, поэтому складываем
             found[key] = sum(int(n) for n in nums) if key == "staff" else int(nums[0])
-    if len(found) < 2:
+    if len(found) < min_fields:
         return None
     if any(v > 2000 for v in found.values()):
         return None   # тысячи — это деньги, не люди
@@ -58,7 +58,26 @@ def parse(text: str, today: date | None = None) -> dict | None:
         body = m.group(0) if m.group(1).lower() in ("завтрак", "обед", "полдник", "ужин") else m.group(2)
         menu = body.strip().strip(".").strip() or None
     d = today - timedelta(days=1) if re.search(r"\bвчера\b", low) else today
+    if not found and menu is None:
+        return None   # дописка (min_fields=0) — хотя бы число или меню
     return {**found, "menu": menu, "date": d}
+
+
+def lacks_keys(row: MealCount) -> list[str]:
+    """Чего не хватает в дне: три числа и меню (владелец 23.09 — неполное бот дожимает сам)."""
+    return [k for k in FIELDS if getattr(row, k) is None] + ([] if row.menu else ["menu"])
+
+
+def lacks(row: MealCount) -> list[str]:
+    return [LABEL.get(k, "что дали на завтрак и обед") for k in lacks_keys(row)]
+
+
+def lack_example(row: MealCount) -> str:
+    keys = lacks_keys(row)
+    parts = [f"{LABEL[k]} {n}" for k, n in zip(FIELDS, (310, 48, 12)) if k in keys]
+    if "menu" in keys:
+        parts.append("Завтрак: каша. Обед: борщ")
+    return ", ".join(parts)
 
 
 def roster(db: Session, site_org_id: int) -> dict:

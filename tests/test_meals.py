@@ -133,6 +133,7 @@ def test_stuck_goes_to_founder_only_after_bot_asked(db, site, counter, monkeypat
     db.add(founder)
     db.flush()
     monkeypatch.setattr(bot.cash, "bank_due", lambda db, s, start: [])
+    monkeypatch.setattr(rules, "escalate_from", lambda db: date.today() - timedelta(days=1))
     d = date.today()
     at16 = datetime(d.year, d.month, d.day, 16, 5)
     assert bot._escalate(db, site, at16) == []            # бот не спрашивал — жаловаться не на что
@@ -169,3 +170,33 @@ def test_unknown_in_group_linked_by_unique_first_name(db, site, counter):
     bot.handle_update(db, upd)
     assert u.tg_id == 555999
     assert db.query(MealCount).filter_by(site_org_id=site.id, date=date.today()).one().created_by == u.id
+
+
+def test_first_week_stuck_only_to_owner(db, site, counter, monkeypatch):
+    founder = User(name="Учредитель пн", role="founder", organization_id=site.id, tg_id=555778)
+    db.add(founder)
+    db.flush()
+    monkeypatch.setattr(bot.cash, "bank_due", lambda db, s, start: [])
+    monkeypatch.setattr(rules, "escalate_from", lambda db: date.today() + timedelta(days=3))
+    d = date.today()
+    for x in (d - timedelta(days=1), d):
+        db.add(BotMessage(kind="meal_ask", job_key=f"meal_ask:{x.isoformat()}:12", direction="out", status="logged"))
+    db.flush()
+    assert bot._escalate(db, site, datetime(d.year, d.month, d.day, 16, 5))
+    assert db.query(BotMessage).filter_by(user_id=founder.id, kind="escalate").count() == 0
+    owner_copy = db.query(BotMessage).filter_by(job_key=f"escalate:{d.isoformat()}:16").one()
+    assert "Привыкание" in owner_copy.text and "что мешает" in owner_copy.text
+
+
+def test_incomplete_line_asks_for_rest_then_accepts_one_part(db, site, counter):
+    upd = {"message": {"message_id": 5, "chat": {"id": -100555, "type": "supergroup"}, "from": {"id": 555001},
+                       "text": "школа 18, персонал 5. Обед: плов"}}
+    reply = bot.handle_update(db, upd)
+    assert "Не хватает: садик" in reply and "садик 48" in reply
+    upd["message"]["text"] = "садик 8"
+    reply = bot.handle_update(db, upd)
+    row = db.query(MealCount).filter_by(site_org_id=site.id, date=date.today()).one()
+    assert (row.school, row.sadik, row.staff) == (18, 8, 5) and reply.endswith("Спасибо!")
+    # когда день полный — одиночное «садик 9» в чате больше не ловим
+    upd["message"]["text"] = "садик 9"
+    assert bot.handle_update(db, upd) is None or row.sadik == 8

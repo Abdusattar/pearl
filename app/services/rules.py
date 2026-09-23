@@ -29,6 +29,8 @@ RULES = {
     # Четверг (владелец 23.09): после кухни, до пятничной закладки; пятница утром — запасной день.
     "count_weekday": {"default": 3, "title": "День пересчёта ключевых"},
     "kitchen_sheet_required": {"default": False, "title": "Лист кухни обязателен"},
+    # Первая неделя новой схемы (владелец 23.09): застрявшее — только владельцу, учредителям — с этой даты
+    "escalate_from": {"default": "2026-10-01", "title": "С какого дня застрявшее видят учредители"},
 }
 WEEKDAYS = ["понедельник", "вторник", "среда", "четверг", "пятница", "суббота", "воскресенье"]
 WEEKDAYS_SHORT = ["пн", "вт", "ср", "чт", "пт", "сб", "вс"]
@@ -97,6 +99,11 @@ def key_products(db: Session) -> list[int]:
 
 def count_weekday(db: Session) -> int:
     return int(get(db, "count_weekday"))
+
+
+def escalate_from(db: Session):
+    from datetime import date as _date
+    return _date.fromisoformat(str(get(db, "escalate_from")))
 
 
 def kitchen_sheet_required(db: Session) -> bool:

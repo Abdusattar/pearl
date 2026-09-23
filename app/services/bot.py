@@ -199,6 +199,7 @@ def run_scheduled(db: Session, now: datetime | None = None) -> list[str]:
             sent.append(key)
     sent += _meal_and_count_asks(db, site, now)
     sent += _escalate(db, site, now)
+    sent += _week_praise(db, site, now)
     # Пятничный «у вас на руках X, верно?» с записью ответа выключен 21.09: это ритуал
     # пересчёта (владелец: пересчёт — признак слабости), и бот не пишет в деньги мимо
     # проверки Махабат. Сумму на руках человек присылает сам — она станет черновиком.
@@ -239,8 +240,10 @@ def _meal_and_count_asks(db: Session, site: Organization, now: datetime) -> list
         key = f"meal_ask:{d.isoformat()}:{now.hour}"
         if not _done(db, key):
             first = now.hour == 12
-            text = ((f"{hi}сколько сегодня едят? " if first else f"{hi}сколько сегодня ели, ещё не записано. ")
-                    + f"Одной строкой, например:\n{meals.EXAMPLE}")
+            # 15:00 — не упрёк, а как проще (владелец 23.09: «мягко, но твёрдо»)
+            text = (f"{hi}сколько сегодня едят? Одной строкой, например:\n{meals.EXAMPLE}" if first else
+                    f"{hi}если сейчас некогда — можно и завтра утром одной строкой: "
+                    "«вчера: школа …, садик …, персонал …». Главное, чтобы день не пропал.")
             send(db, group, text, "meal_ask", job_key=key)
             out.append(key)
     # Пересчёт (владелец 23.09): в день пересчёта после кухни — 15:00, напоминание в 18:00,
@@ -300,28 +303,29 @@ RECEIPTS_STUCK_DAYS = 3
 def stuck_items(db: Session, site: Organization, now: datetime) -> list[str]:
     from app.services import meals
     d, out = now.date(), []
+    who = _counter_name(db, site) or "учётчик"
     # едоки: бот спрашивал сегодня и в прошлый рабочий день, записи нет ни за один
     prev = d - timedelta(days=1)
     while not meals.expected_today(db, site.id, prev) and prev > d - timedelta(days=7):
         prev -= timedelta(days=1)
     if (now.hour == 16 and all(_done(db, f"meal_ask:{x.isoformat()}:12") and meals.get(db, site.id, x) is None
                                for x in (prev, d))):
-        out.append(f"сколько едят — не записано 2 рабочих дня ({_d(prev)} и сегодня)")
+        out.append(f"{who} второй день не присылает, сколько едят ({_d(prev)} и сегодня)")
     # пересчёт: утренний запасной вопрос был, а пересчёта так и нет
     if now.hour != 12:
         return out   # остальное — один раз в день, в 12
     if rules.key_products(db) and _done(db, f"count_ask:{d.isoformat()}:8") and not key_count_done(db, site.id, d):
-        out.append(f"пересчёт склада за {WEEKDAY_ACC[rules.count_weekday(db)]} не сделан — неделя без точки")
+        out.append(f"{who} не успела пересчитать склад за {WEEKDAY_ACC[rules.count_weekday(db)]} — неделю не с чем сравнить")
     # остаток в банке: спрашивали в день пересчёта, до сих пор не внесён
     start = count_week_start(db, d)
     if d != start and _done(db, f"count_ask:{start.isoformat()}:15"):
         for a in cash.bank_due(db, site.id, start):
-            out.append(f"остаток в банке по счёту {a['org'].name} на этой неделе не внесён")
+            out.append(f"{_bank_holder(db, site) or 'управляющая'}: остаток в банке по счёту {a['org'].name} на этой неделе не пришёл")
     # чеки из чата ждут проверки дольше 3 дней
     edge = datetime.combine(d - timedelta(days=RECEIPTS_STUCK_DAYS), datetime.min.time())
     old = [r for r in today.unchecked_receipts(db, site.id) if r.created_at and r.created_at < edge]
     if old:
-        out.append(f"чеки из чата: {len(old)} ждут проверки больше {RECEIPTS_STUCK_DAYS} дней")
+        out.append(f"{who}: {len(old)} черновиков из чата ждут проверки больше {RECEIPTS_STUCK_DAYS} дней")
     return out
 
 
@@ -334,11 +338,47 @@ def _escalate(db: Session, site: Organization, now: datetime) -> list[str]:
     items = stuck_items(db, site, now)
     if not items:
         return []
-    body = "Застряло:\n" + "\n".join(f"• {x}" for x in items) + "\n\nБот уже спрашивал в чате. Нужно ваше слово."
-    for f in db.query(User).filter(User.role == "founder", User.deleted_at.is_(None), User.tg_id.isnot(None)).all():
-        send(db, f.tg_id, f"{f.name}, это бот Жемчужины. {body}", "escalate", user_id=f.id, job_key=f"{key}:{f.id}")
+    # Не жалоба, а просьба помочь (владелец 23.09): сотрудник этого не видит, учредитель
+    # спрашивает «что мешает?» — если неудобно, узнаём и чиним систему, а не человека.
+    body = ("Похоже, не успевают:\n" + "\n".join(f"• {x}" for x in items)
+            + "\n\nБот уже мягко напоминал в чате. Может, спросите, что мешает — вдруг неудобно или нужна помощь.")
+    start = rules.escalate_from(db)
+    if now.date() >= start:
+        for f in db.query(User).filter(User.role == "founder", User.deleted_at.is_(None), User.tg_id.isnot(None)).all():
+            send(db, f.tg_id, f"{f.name}, это бот Жемчужины. {body}", "escalate", user_id=f.id, job_key=f"{key}:{f.id}")
+        head = "Копия учредителям. "
+    else:
+        head = f"Привыкание: до {_d(start)} учредителям не пишу, только вам. "
     owner = db.get(User, OWNER_USER_ID)
-    send(db, owner.tg_id if owner else None, "Копия учредителям. " + body, "escalate", user_id=OWNER_USER_ID, job_key=key)
+    send(db, owner.tg_id if owner else None, head + body, "escalate", user_id=OWNER_USER_ID, job_key=key)
+    return [key]
+
+
+def _week_praise(db: Session, site: Organization, now: datetime) -> list[str]:
+    """Пятница 16:00 — похвала в группу, только за сделанное; не за что — молчим.
+    Хвалим при всех, вопросы — лично (владелец 23.09)."""
+    from app.services import meals
+    d = now.date()
+    if d.weekday() != 4 or now.hour != 16:
+        return []
+    key = f"praise:{d.isoformat()}"
+    if _done(db, key):
+        return []
+    monday = d - timedelta(days=d.weekday())
+    asked = [x for x in (monday + timedelta(days=i) for i in range(5))
+             if meals.expected_today(db, site.id, x) and _done(db, f"meal_ask:{x.isoformat()}:12")]
+    good = []
+    if asked and all(meals.get(db, site.id, x) is not None for x in asked):
+        good.append(f"сколько едят — каждый день, {len(asked)} из {len(asked)}")
+    if rules.key_products(db) and _done(db, f"count_ask:{count_week_start(db, d).isoformat()}:15") \
+            and key_count_done(db, site.id, d):
+        good.append("пересчёт склада сделан")
+    if not good:
+        db.add(BotMessage(kind="praise", job_key=key, status="skipped"))
+        return []
+    who = _counter_name(db, site)
+    send(db, group_chat_id(), "Неделя: " + ", ".join(good) + "." + (f" {who}, спасибо!" if who else " Спасибо!"),
+         "praise", job_key=key)
     return [key]
 
 
@@ -358,17 +398,27 @@ def key_count_done(db: Session, site_org_id: int, d: date) -> bool:
 def meal_reply(db: Session, site: Organization, user: User | None, text: str) -> str | None:
     """Строка про едоков → запись. None — это не про едоков."""
     from app.services import meals
-    p = meals.parse(text)
-    if p is None:
-        return None
     if user is None or user.role not in ("owner", *OPERATIONAL_ROLES):
         return None
+    p = meals.parse(text)
+    if p is None:
+        # дописка к начатому дню после переспроса: «садик 97» или «меню: …»
+        p = meals.parse(text, min_fields=0)
+        row = meals.get(db, site.id, p["date"]) if p else None
+        if row is None or not meals.lacks(row) or not any(p.get(k) is not None for k in meals.lacks_keys(row)):
+            return None
     row = meals.record(db, site_org_id=site.id, d=p["date"], values=p, menu=p.get("menu"), user=user, source="chat")
     when = "сегодня" if p["date"] == date.today() else f"на {_d(p['date'])}"
-    reply = f"Записал {when}: {meals.text(row)}." + (f" Меню: {row.menu}." if p.get("menu") else "")
+    reply = f"Записал {when}: {meals.text(row)}." + (f" Меню: {row.menu}." if row.menu else "")
     doubt = meals.doubts(db, site.id, p, p["date"])
+    lack = meals.lacks(row)
     if doubt:
         reply += " Проверьте: " + "; ".join(doubt) + ". Если верно — ничего не делайте; ошиблись — пришлите строку заново."
+    if lack:
+        # неполное — переспросить сразу, с образцом (владелец 23.09: бот сам дожимает, не я)
+        reply += " Не хватает: " + ", ".join(lack) + ". Допишите одной строкой, например: «" + meals.lack_example(row) + "»."
+    elif not doubt:
+        reply += " Спасибо!"
     return reply
 
 
