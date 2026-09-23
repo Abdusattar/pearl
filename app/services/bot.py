@@ -501,7 +501,9 @@ def handle_update(db: Session, update: dict) -> str | None:
         reply = (f"Здравствуйте, {user.name}. Я буду писать вам, только когда что-то застряло: "
                  "бот спросил в чате, а ответа нет. Остальное люди и бот решают сами.")
     elif low in ("/start", "start"):
-        reply = f"Здравствуйте, {user.name}. Фото чека или листа кухни можно отправить сюда или в чат «Жемчужина»: я положу его Махабат черновиком на проверку."
+        who = "вам" if user.role == "staff" else "Махабат"
+        reply = (f"Здравствуйте, {user.name}. Фото чека, остаток или сколько едят можно присылать сюда или в чат "
+                 f"«Жемчужина»: я разберу и дам {who} проверить одной кнопкой. Иногда буду писать сюда лично.")
     elif low in ("ок", "ok", "да, отправляй") and user.id == OWNER_USER_ID:
         reply = _approve_summary(db)
     elif low in ("не так", "нет") and user.id == OWNER_USER_ID and _pending_summary(db):
