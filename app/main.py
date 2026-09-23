@@ -13,6 +13,19 @@ from app.dependencies import get_current_user
 app = FastAPI(title="Жемчужина ИС")
 app.add_middleware(SessionMiddleware, secret_key=os.getenv("SESSION_SECRET", "pearl-dev-secret"))
 
+
+@app.middleware("http")
+async def _remember_target(request: Request, call_next):
+    # Ссылку, присланную в чат (23.09: «Дети» Школы для Айжан), после входа
+    # открываем там, куда она вела, а не на «Сегодня». Роутов с переходом на
+    # /login больше сотни — запоминаем здесь, в одном месте.
+    response = await call_next(request)
+    if (request.method == "GET" and response.status_code in (302, 307)
+            and response.headers.get("location") == "/login" and request.url.path != "/"):
+        target = request.url.path + (f"?{request.url.query}" if request.url.query else "")
+        response.set_cookie("next", target, max_age=900, httponly=True, samesite="lax")
+    return response
+
 MEDIA_DIR = Path(__file__).parent.parent / "media"
 MEDIA_DIR.mkdir(exist_ok=True)
 app.mount("/media", StaticFiles(directory=str(MEDIA_DIR)), name="media")

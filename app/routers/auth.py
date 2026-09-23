@@ -53,7 +53,11 @@ def login(
         })
 
     request.session["user_id"] = user.id
-    return RedirectResponse("/", status_code=302)
+    # Куда шёл до входа (кука из main._remember_target); только свой путь.
+    target = request.cookies.get("next") or ""
+    response = RedirectResponse(target if target.startswith("/") and not target.startswith("//") else "/", status_code=302)
+    response.delete_cookie("next")
+    return response
 
 
 @router.post("/logout")
