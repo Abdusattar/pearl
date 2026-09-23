@@ -85,7 +85,7 @@ def todo(db: Session, site_org_id: int) -> list[dict]:
     if meals.missing_today(db, site_org_id):
         items.append({"src": "meals", "kind": "warn", "url": "/new/meals",
                       "title": "Сегодня едят: не записано",
-                      "sub": "три числа: школа, садик, персонал — можно одной строкой в чат",
+                      "sub": "школа, садик, персонал и что дали на завтрак и обед — можно одной строкой в чат",
                       "go": "Записать"})
     keys = rules.key_products(db)
     cw = rules.count_weekday(db)

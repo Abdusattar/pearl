@@ -45,6 +45,9 @@ def test_parse_line_and_yesterday():
     assert meals.parse("вчера 300 школа 45 садик", date(2026, 9, 23))["date"] == date(2026, 9, 22)
     assert meals.parse("школа 18000 садик 10000") is None       # это деньги
     assert meals.parse("школа 310") is None                      # одно число — не про едоков
+    # завтрак и обед — с подписями, целиком (владелец 23.09)
+    p = meals.parse(meals.EXAMPLE, date(2026, 9, 23))
+    assert p["menu"] == "Завтрак: каша, чай. Обед: борщ, плов, компот" and p["school"] == 310
 
 
 def test_chat_line_records_and_replies_with_doubt(db, site, counter):

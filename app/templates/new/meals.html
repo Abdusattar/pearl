@@ -39,8 +39,8 @@
     </label>
     {% endfor %}
   </div>
-  <label class="lb" for="f-menu">Что готовят, по желанию</label>
-  <input class="in wide" id="f-menu" name="menu" value="{{ menu or (row.menu if row and row.menu else '') }}" placeholder="борщ, плов, компот">
+  <label class="lb" for="f-menu">Что дали: завтрак и обед</label>
+  <input class="in wide" id="f-menu" name="menu" value="{{ menu or (row.menu if row and row.menu else '') }}" placeholder="Завтрак: каша. Обед: борщ, плов">
   {% if can_write %}<div class="bt"><button class="btn" type="submit">Записать</button>{% if row %}<span class="after" style="margin:0">{{ 'из чата' if row.source == 'chat' else 'с экрана' }}; поправить можно здесь</span>{% endif %}</div>{% endif %}
 </form>
 {% endblock %}

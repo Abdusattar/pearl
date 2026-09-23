@@ -21,7 +21,7 @@ FIELDS = ("school", "sadik", "staff")
 LABEL = {"school": "школа", "sadik": "садик", "staff": "персонал"}
 LOW_SHARE = 0.7          # меньше 70 % списка — переспросить (эпидемия бывает, опечатка чаще)
 STAFF_JUMP = 3           # персонал почти постоянен: скачок больше трёх — переспросить
-EXAMPLE = "школа 310, садик 48, персонал 12. Меню: борщ, плов, компот"
+EXAMPLE = "школа 310, садик 48, персонал 12. Завтрак: каша, чай. Обед: борщ, плов, компот"
 
 _WORDS = {
     "school": r"школ\w*|ученик\w*|класс\w*",
@@ -48,10 +48,13 @@ def parse(text: str, today: date | None = None) -> dict | None:
         return None
     if any(v > 2000 for v in found.values()):
         return None   # тысячи — это деньги, не люди
+    # Меню (владелец 23.09): что дали на завтрак и на обед. С первого «завтрак:/обед:/
+    # полдник:» — до конца, с подписями; «меню:/готовят:» — просто список после двоеточия.
     menu = None
-    m = re.search(r"(?:меню|обед|готов\w*|блюда)\s*[:\-–—]\s*(.+)$", text, re.I | re.S)
+    m = re.search(r"(завтрак|обед|полдник|ужин|меню|готов\w*|блюда)\s*[:\-–—]\s*(.+)$", text, re.I | re.S)
     if m:
-        menu = m.group(1).strip().strip(".").strip() or None
+        body = m.group(0) if m.group(1).lower() in ("завтрак", "обед", "полдник", "ужин") else m.group(2)
+        menu = body.strip().strip(".").strip() or None
     d = today - timedelta(days=1) if re.search(r"\bвчера\b", low) else today
     return {**found, "menu": menu, "date": d}
 
