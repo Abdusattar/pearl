@@ -24,7 +24,7 @@
 {% if error %}<div class="alert bad" style="margin-top:10px">{{ error }}</div>{% endif %}
 {% if missing %}<div class="alert warn" style="margin-top:10px">Сначала внесите листы кухни: иначе разница будет большой только потому, что расход не записан. <a href="/new/kitchen?date={{ missing[0].isoformat() }}">Внести лист</a></div>{% endif %}
 <p class="sub">Посчитайте на полке только то, в чём сомневаетесь. Пустая строка значит «не считали»: её остаток не меняется.</p>
-<div class="chips">{% if data.keys %}<a class="chip {% if data.current == 'key' %}on{% endif %}" href="/new/stock/count?cat=key">Ключевые, {{ data.keys }}</a>{% endif %}{% for c in data.cats %}<a class="chip {% if c.id == data.current %}on{% endif %}" href="/new/stock/count?cat={{ c.id }}">{{ c.name | capitalize }}</a>{% endfor %}</div>
+<div class="chips">{% if data.n_keys %}<a class="chip {% if data.current == 'key' %}on{% endif %}" href="/new/stock/count?cat=key">Ключевые, {{ data.n_keys }}</a>{% endif %}{% for c in data.cats %}<a class="chip {% if c.id == data.current %}on{% endif %}" href="/new/stock/count?cat={{ c.id }}">{{ c.name | capitalize }}</a>{% endfor %}</div>
 {% if data.rows %}
 <form method="post" action="/new/stock/count" enctype="multipart/form-data" autocomplete="off">
   <input type="hidden" name="cat" value="{{ data.current or '' }}">

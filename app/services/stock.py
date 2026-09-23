@@ -226,7 +226,7 @@ def count_rows(db: Session, site_id: int, category_id: int | str | None) -> dict
     else:
         rows = [{"p": p, "balance": float(ws[p.id]["balance"])} for p in prods if p.category_id == category_id]
     rows.sort(key=lambda r: r["p"].name.lower())
-    return {"cats": cats, "current": category_id, "rows": rows, "has_no_cat": None in used, "keys": len(keys)}
+    return {"cats": cats, "current": category_id, "rows": rows, "has_no_cat": None in used, "n_keys": len(keys)}
 
 
 def quick_count(db: Session, *, user: User, site_id: int, items: list[tuple[int, Decimal]],
