@@ -178,7 +178,7 @@ def _date(v, today: date) -> date | None:
 
 
 def read_photo(image: bytes | None, today: date, mime: str = "image/jpeg", pdf: bytes | None = None) -> dict:
-    data = ask_model(PHOTO_PROMPT, image, mime, pdf=pdf)
+    data = ask_model(PHOTO_PROMPT, image, mime) if pdf is None else ask_model(PHOTO_PROMPT, None, mime, pdf=pdf)
     kind = data.get("kind") if data.get("kind") in (PURCHASE, KITCHEN, COUNT, SUPPLIER_PAY, SERVICE, BANK,
                                                      SALARY, OTHER) else OTHER
     d = _date(data.get("date"), today)
