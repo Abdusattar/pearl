@@ -39,6 +39,9 @@ REVIEW_ENV = "BOT_REVIEW_SUMMARY"      # «1» — сводка учредите
 # только в журнал — пока на живых сообщениях не станет видно, что понимает верно.
 GROUP_TALK_ENV = "BOT_GROUP_TALK"
 OWNER_USER_ID = 1                      # Абдусаттар: проверяет сводку
+# Копии владельцу, которые днём не шлём, а копим до вечерней строки (24.09)
+NOTE_KINDS = ("owner_copy", "group_reply_owner", "group_voice_owner")
+OWNER_EVENING_HOUR = 18
 COUNT_GRACE_DAYS = 3                   # пересчёт за столько дней до дня пересчёта засчитан
 
 MEDIA_ROOT = Path(__file__).parent.parent.parent / "media"
@@ -86,6 +89,11 @@ def send(db: Session, chat_id: int | None, text: str, kind: str, *, user_id: int
     db.add(msg)
     db.flush()
     if status != "sent":
+        return msg
+    if user_id == OWNER_USER_ID and kind in NOTE_KINDS:
+        # Владельцу днём не пишем (24.09: «голова пойдёт кругом»): заметка ждёт вечерней строки
+        # и видна на /new/settings/bot/chat
+        msg.status = "noted"
         return msg
     if not token() or chat_id is None:
         msg.status = "logged"
@@ -212,6 +220,9 @@ def run_scheduled(db: Session, now: datetime | None = None) -> list[str]:
     sent += _week_praise(db, site, now)
     sent += _purchases_ask(db, site, now)
     sent += _morning_checks(db, site, now)
+    from app.services import bot_money
+    sent += bot_money.settle_deferred(db, site, now.date())
+    sent += _owner_evening(db, site, now)
     # Пятничный «у вас на руках X, верно?» с записью ответа выключен 21.09: это ритуал
     # пересчёта (владелец: пересчёт — признак слабости), и бот не пишет в деньги мимо
     # проверки Махабат. Сумму на руках человек присылает сам — она станет черновиком.
@@ -685,6 +696,10 @@ def _handle_group(db: Session, msg: dict, user: User | None, text: str) -> str |
             if transcript is None:
                 return None
             text, voice_note = transcript, f"голосовое {media.get('duration') or '?'} с"
+        if media and media["kind"] == "file" and user is not None:
+            # Excel/Word в группу (Махабат 24.09: ответы по детям): сохраняем как из лички, в группе молчим
+            _save_file(db, msg, media, user, chat_id)
+            return None
         if not (media and media["kind"] in ("photo", "document")):
             # Едоки за день (23.09): разбор без модели, запись сразу. Отвечаем в группе
             # и при молчащем боте — человек должен видеть «Записал», иначе пришлёт ещё раз.
@@ -1188,6 +1203,60 @@ def _purchases_ask(db: Session, site: Organization, now: datetime) -> list[str]:
     for sid in crossed:
         db.add(BotMessage(kind="debt_old", job_key=f"debt_old:{site.id}:{sid}", status="logged"))
     send(db, group_chat_id(), "\n\n".join(parts), "purchases_ask", job_key=key)
+    return [key]
+
+
+def owner_evening_text(db: Session, site: Organization, d: date) -> str:
+    """Одна строка владельцу (24.09: «сошлось / не сошлось: что»): сверки за день с разницей,
+    что висит у людей, сколько заметок бот отложил."""
+    from app.models import Reconciliation
+    from app.services import bot_money
+    from app.services.purchases import site_orgs as _orgs
+    org_ids = [o.id for o in _orgs(db, site.id)]
+    bad = []
+    for r in (db.query(Reconciliation).filter(Reconciliation.organization_id.in_(org_ids), Reconciliation.date == d,
+                                              Reconciliation.cancelled_at.is_(None)).all()):
+        if abs(Decimal(r.delta or 0)) > 1:
+            who = db.get(User, r.subject_id) if r.kind == "pocket" else None
+            what = f"наличные {_first(who.name)}" if who else f"счёт {db.get(Organization, r.organization_id).name}"
+            bad.append(f"{what} {_signed(Decimal(r.delta))}")
+    waiting = len(today.unchecked_receipts(db, site.id))
+    open_q = (db.query(BotMessage).filter(BotMessage.kind == bot_money.OFFER, BotMessage.status.in_(("sent", "paused")),
+                                          BotMessage.created_at >= datetime.combine(d, datetime.min.time())).count())
+    deferred = db.query(BotMessage).filter(BotMessage.kind == bot_money.OFFER, BotMessage.status == "deferred").count()
+    head = f"{site.name}: " + ("не сошлось — " + "; ".join(bad) if bad else "сошлось")
+    tail = []
+    if waiting:
+        tail.append(f"чеков на проверке {waiting}")
+    if open_q:
+        tail.append(f"без ответа {open_q}")
+    if deferred:
+        tail.append(f"ждёт проверки чеков {deferred}")
+    notes = (db.query(BotMessage).filter(BotMessage.status == "noted",
+                                         BotMessage.created_at >= datetime.combine(d, datetime.min.time())).count())
+    if notes:
+        tail.append(f"заметок бота {notes}: {public_url()}/new/settings/bot/chat")
+    return head + (". " + ", ".join(tail) if tail else ".")
+
+
+def _first(name: str) -> str:
+    return (name or "").split()[0] if name else ""
+
+
+def _signed(v: Decimal) -> str:
+    return ("+" if v > 0 else "−") + fmt_money(float(abs(v)))
+
+
+def _owner_evening(db: Session, site: Organization, now: datetime) -> list[str]:
+    if now.hour != OWNER_EVENING_HOUR:
+        return []
+    d = now.date()
+    key = f"owner_evening:{site.id}:{d.isoformat()}"
+    if _done(db, key):
+        return []
+    owner = db.get(User, OWNER_USER_ID)
+    send(db, owner.tg_id if owner else None, owner_evening_text(db, site, d), "owner_evening",
+         user_id=OWNER_USER_ID, job_key=key)
     return [key]
 
 

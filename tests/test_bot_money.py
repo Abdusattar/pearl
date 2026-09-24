@@ -256,11 +256,16 @@ def test_second_bank_screenshot_same_day_records_today(db, world, monkeypatch):
     _model(monkeypatch, {"kind": "bank", "bank_op": "balance", "balance": 1.35, "date": None, "sure": True})
     svc.handle_update(db, _group(n, photo_id="bank2"))
     o = _offer(db, n)
-    assert o is not None and "на конец " + date.today().strftime("%d.%m") in o.text and "комиссия" in o.text
-    assert "Записал" in svc.handle_update(db, _private(n, "да, комиссия"))
+    # владелец 24.09: «если комиссия — пиши комиссия»: расход со счёта, без вопроса
+    assert o.status == "answered" and o.text.startswith("Записал: остаток счёта садика 1,35 на конец "
+                                                        + date.today().strftime("%d.%m") + ", комиссия банка 134,33.")
     rec = (db.query(Reconciliation).filter_by(kind="account", organization_id=world["sadik"].id)
            .order_by(Reconciliation.id.desc()).first())
-    assert rec.date == date.today() and rec.reason == "комиссия"
+    assert rec.date == date.today() and rec.reason == "комиссия банка" and rec.delta == 0
+    from app.models import Transaction
+    from app.models import ExpenseCategory
+    fee = db.query(Transaction).filter_by(organization_id=world["sadik"].id, paid_directly=True).one()
+    assert fee.amount == Decimal("134.33") and db.get(ExpenseCategory, fee.category_id).name == "Комиссия банка"
 
 
 def test_cash_on_hand_in_group_is_pocket_not_bank(db, world, monkeypatch):
@@ -300,6 +305,7 @@ def test_commission_word_is_yes_with_reason_and_kopecks_shown(db, world, monkeyp
     cash.withdraw(db, user=n, site_org_id=world["sadik"].id, account_org_id=world["sadik"].id,
                   amount=Decimal("64662"), d=date.today())
     _model(monkeypatch, {"kind": "bank", "bank_op": "balance", "balance": 1.35, "date": None, "sure": True})
+    monkeypatch.setattr(bot_money, "_withdrew_today", lambda db, org, today: False)   # без снятия — спрашиваем
     svc.handle_update(db, _group(n, photo_id="bank3"))
     o = _offer(db, n)
     assert "остаток счёта садика 1,35" in o.text and "По записям 135,68" in o.text
@@ -381,7 +387,7 @@ def test_bot_paused_sends_nothing_to_people_but_owner(db, world, monkeypatch):
     m = svc.send(db, n.tg_id, "вопрос", "money_offer", user_id=n.id)
     assert m.status == "paused"
     monkeypatch.setattr(svc.httpx, "post", lambda *a, **k: type("R", (), {"status_code": 200, "text": ""})())
-    assert svc.send(db, owner.tg_id, "копия", "owner_copy", user_id=owner.id).status == "sent"
+    assert svc.send(db, owner.tg_id, "строка", "owner_evening", user_id=owner.id).status == "sent"
 
 
 def test_matching_figure_is_recorded_without_asking(db, world, monkeypatch):
@@ -395,3 +401,39 @@ def test_matching_figure_is_recorded_without_asking(db, world, monkeypatch):
     rec = db.query(Reconciliation).filter_by(kind="pocket", subject_id=n.id).one()
     assert rec.actual_amount == Decimal("38322") and rec.delta == 0
     assert _offer(db, n).status == "answered"
+
+
+def test_cash_figure_waits_for_receipt_drafts_then_settles(db, world, monkeypatch):
+    """Мунара 24.09: «на руках 38 322» при 4 непроведённых чеках — «по записям 69 891» бессмысленно.
+    Бот держит цифру, после проверки чеков сверяет: сошлось — записал, нет — один вопрос."""
+    from app.services import cash
+    n = world["n"]
+    cash.withdraw(db, user=n, site_org_id=world["sadik"].id, account_org_id=world["sadik"].id,
+                  amount=Decimal("64662"), d=date.today())
+    _model(monkeypatch, {"kind": "purchase", "amount": 26340, "supplier": None, "sure": True})
+    svc.handle_update(db, _group(n, photo_id="rc26340"))
+    reply = svc.handle_update(db, _private(n, "Остаток наличными 38322"))
+    assert reply == "Принял 38 322, сверю, когда Махабат проведёт чеки."
+    assert _offer(db, n).status == "deferred"
+    assert bot_money.settle_deferred(db, world["sadik"], date.today()) == []   # чек ещё висит
+    from app.models import Receipt
+    for rc in db.query(Receipt).filter_by(organization_id=world["sadik"].id).all():
+        rc.ocr_status = "rejected"   # Махабат провела (здесь — сняла с проверки), карман 64 662
+    done = bot_money.settle_deferred(db, world["sadik"], date.today())
+    assert len(done) == 1
+    o = _offer(db, n)
+    assert o.status in ("sent", "logged") and "на руках 38 322. По записям 64 662, разница −26 340" in o.text
+
+
+def test_owner_evening_line(db, world, monkeypatch):
+    from app.services import cash
+    n = world["n"]
+    assert svc.owner_evening_text(db, world["sadik"], date.today()) == "Садик тест-дн: сошлось."
+    cash.withdraw(db, user=n, site_org_id=world["sadik"].id, account_org_id=world["sadik"].id,
+                  amount=Decimal("1000"), d=date.today())
+    cash.recount(db, user=n, site_org_id=world["sadik"].id, pocket_user_id=n.id, actual=Decimal("900"),
+                 d=date.today(), reason="x")
+    svc.owner_copy(db, "заметка")
+    text = svc.owner_evening_text(db, world["sadik"], date.today())
+    assert text.startswith("Садик тест-дн: не сошлось — наличные Мунаратест −100. заметок бота 1")
+    assert db.query(BotMessage).filter_by(kind="owner_copy").one().status == "noted"

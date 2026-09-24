@@ -135,6 +135,7 @@ def build(db: Session, site: Organization, author: User | None, info: dict, toda
         first = not db.query(Reconciliation.id).filter(Reconciliation.organization_id == acc.id,
                                                        Reconciliation.kind == "account",
                                                        Reconciliation.cancelled_at.is_(None)).first()
+        fee, delta = None, Decimal(0)
         if first:
             # первая цифра по счёту (школа 24.09): сравнивать не с чем — «по записям 80» сбило Айжан
             tail = " — первая цифра по этому счёту, станет точкой отсчёта"
@@ -143,17 +144,23 @@ def build(db: Session, site: Organization, author: User | None, info: dict, toda
             delta = Decimal(str(bal)) - expected
             tail = " — с записями сходится" if abs(delta) <= 1 else \
                 f". По записям {_kop(expected)}, разница {_kop(delta, signed=True)}"
-            if -500 < delta < -1 and on == today:
-                tail += " — похоже, комиссия банка за сегодняшнее снятие; если так, ответьте «да, комиссия»"
+            if -500 < delta < -1 and on == today and _withdrew_today(db, acc.id, today):
+                # Комиссия за снятие (владелец 24.09: «если комиссия — пиши комиссия»): расход со
+                # счёта, остаток сходится в ноль, никого не спрашиваем
+                fee = -delta
+                tail = f", комиссия банка {_kop(fee)}"
             if delta > max(Decimal("5000"), abs(expected) * Decimal("0.2")):
                 # счёт не растёт сам: без прихода такой скачок — скорее не про счёт (наличные?)
                 return {"op": "bank", "ask": holder.id if holder else None, "amount": str(bal),
                         "date": on.strftime(_DATE_FMT), "org_id": acc.id,
                         "what": f"остаток счёта {_label(acc)} {_kop(bal)}{tail}",
                         "doubt": "счёт не мог вырасти без прихода — возможно, это наличные"}
-        return {"op": "bank", "amount": str(bal), "date": on.strftime(_DATE_FMT), "org_id": acc.id,
-                "ask": holder.id if holder else None, "matches": not first and abs(delta) <= 1,
-                "what": f"остаток счёта {_label(acc)} {_kop(bal)} на конец {grp._dd(on)}{tail}"}
+        o = {"op": "bank", "amount": str(bal), "date": on.strftime(_DATE_FMT), "org_id": acc.id,
+             "ask": holder.id if holder else None, "matches": not first and (abs(delta) <= 1 or fee is not None),
+             "what": f"остаток счёта {_label(acc)} {_kop(bal)} на конец {grp._dd(on)}{tail}"}
+        if fee is not None:
+            o["fee"] = str(fee)
+        return o
     return None
 
 
@@ -171,6 +178,19 @@ def offer(db: Session, site: Organization, author: User | None, info: dict, toda
         from app.services.bot import owner_copy
         owner_copy(db, f"{who.name}: {o['what']} — не спросил, {o['doubt']}. Разберитесь в Кассе.")
         return None
+    if o["op"] == "recount" and not o.get("matches") and _drafts_pending(db, site):
+        # Чеки ещё не проведены (24.09: «по записям 69 891» при непроведённых 26 340) — сверять
+        # рано. Цифру держим, сверим, когда Махабат проведёт (settle_deferred).
+        prev = open_offer(db, who)
+        if prev is not None:
+            prev.status = "superseded"
+        for old in db.query(BotMessage).filter(BotMessage.kind == OFFER, BotMessage.user_id == who.id,
+                                               BotMessage.status == "deferred").all():
+            old.status = "superseded"
+        m = send(db, who.tg_id, f"Принял {grp.fmt_money(Decimal(o['amount']))}, сверю, когда Махабат проведёт чеки.",
+                 OFFER, user_id=who.id, payload=o)
+        m.status = "deferred"
+        return m
     d = datetime.strptime(o["date"], _DATE_FMT).date()
     day = "сегодня" if d == today else ("вчера" if d == today - timedelta(days=1) else grp._d(d))
     when = "" if o["op"] in ("bank", "recount") else f", {day}"
@@ -251,11 +271,44 @@ def answer(db: Session, site: Organization, user: User, ask: BotMessage, yes: bo
             rec = cash.recount(db, user=user, site_org_id=site.id, pocket_user_id=o["pocket_user_id"], actual=amount, d=d,
                                reason=reason or "по сообщению в боте")
         else:
+            if o.get("fee"):
+                cash.bank_fee(db, user=user, org_id=o["org_id"], amount=Decimal(o["fee"]), d=d)
             # разница видна в Кассе как есть; «да, причина» — причина пишется рядом
             rec = cash.bank_balance(db, user=user, org_id=o["org_id"], actual=amount, d=d,
-                                    reason=reason or "по скрину, подтверждено в боте")
+                                    reason=reason or ("комиссия банка" if o.get("fee") else "по скрину, подтверждено в боте"))
     except ValueError as e:
         return f"Не записал: {e}. Поправьте в приложении: {public_url()}/new/cash"
     ask.status = "answered"
     ask.payload = {**o, "result_id": rec.id, "auto": auto}
     return "Записал. Спасибо!"
+
+
+def _withdrew_today(db: Session, account_org_id: int, today: date) -> bool:
+    from app.models import CashFunding
+    return db.query(CashFunding.id).filter(CashFunding.source_type == "withdrawal", CashFunding.date == today,
+                                           CashFunding.deleted_at.is_(None),
+                                           (CashFunding.account_org_id == account_org_id)
+                                           | ((CashFunding.account_org_id.is_(None))
+                                              & (CashFunding.organization_id == account_org_id))).first() is not None
+
+
+def _drafts_pending(db: Session, site: Organization) -> bool:
+    from app.services import today as td
+    return bool(td.unchecked_receipts(db, site.id))
+
+
+def settle_deferred(db: Session, site: Organization, today: date) -> list[str]:
+    """Чеки проведены — сверяем отложенные цифры наличных: сошлось — записали молча,
+    нет — один вопрос человеку."""
+    if _drafts_pending(db, site):
+        return []
+    done = []
+    for m in db.query(BotMessage).filter(BotMessage.kind == OFFER, BotMessage.status == "deferred").all():
+        who = db.get(User, m.user_id)
+        m.status = "superseded"
+        if who is None:
+            continue
+        info = {"kind": "pocket", "amount": float(m.payload["amount"]), "date": today}
+        res = offer(db, site, who, info, today)
+        done.append(f"deferred:{m.id}:{res.id if res is not None else 'none'}")
+    return done

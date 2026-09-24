@@ -370,6 +370,28 @@ def bank_balance(db: Session, *, user: User, org_id: int, actual: Decimal, d: da
     return rec
 
 
+BANK_FEE_CATEGORY = "Комиссия банка"
+
+
+def bank_fee(db: Session, *, user: User, org_id: int, amount: Decimal, d: date, comment: str | None = None):
+    """Комиссия банка за снятие (владелец 24.09: «если комиссия — пиши комиссия»): расход со
+    счёта объекта, чтобы остаток по записям сошёлся с банком в ноль."""
+    from app.models import ExpenseCategory, Transaction
+    cat = db.query(ExpenseCategory).filter(ExpenseCategory.name == BANK_FEE_CATEGORY).first()
+    if cat is None:
+        parent = db.query(ExpenseCategory).filter(ExpenseCategory.name == "Сервисные расходы").first()
+        cat = ExpenseCategory(name=BANK_FEE_CATEGORY, parent_id=parent.id if parent else None)
+        db.add(cat)
+        db.flush()
+    t = Transaction(organization_id=org_id, account_org_id=org_id, type="expense", amount=amount, date=d,
+                    category_id=cat.id, paid_directly=True, description=comment or "Комиссия банка за снятие",
+                    created_by=user.id)
+    db.add(t)
+    db.flush()
+    audit(db, "transaction", t.id, "insert", user.id, {"kind": "bank_fee", "org": org_id, "amount": float(amount)})
+    return t
+
+
 # ── история и «Убрать» ───────────────────────────────────────────────────
 
 CHECKS = ("recount", "bank")
