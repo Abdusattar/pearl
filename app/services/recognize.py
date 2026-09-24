@@ -162,7 +162,10 @@ def _prompt(kind: str, candidates: list[dict], text: str | None = None) -> str:
     catalog = "\n".join(lines) or "(список пуст)"
     what = {
         RECEIPT: ("a handwritten or printed purchase receipt from Kyrgyzstan (Russian/Kyrgyz, Cyrillic). "
-                  "Each line: product, quantity, unit price, line total; the final total may be written below."),
+                  "Each line: product, quantity, unit price, line total; the final total may be written below. "
+                  "Printed shop receipts often put the name on one line and 'qty * unit price' on the next line, with "
+                  "'= line total' on the right: 'Белизна / 4 * 80,00 = 320,00' means qty 4, price 80, total 320 — "
+                  "always read qty and price from that '*' line."),
         KITCHEN: ("a handwritten kitchen sheet: what the cooks took from the store for one day. "
                   "Each line: product and quantity with a unit (кг, г, л, мл, шт, пучок). No prices. "
                   "A line may contain several takes joined by '+' (e.g. '500г + 3,500'): return the sum in one unit."),
@@ -348,6 +351,13 @@ def post_process(db: Session, kind: str, result: dict, candidates: list[dict]) -
             if cand is None and question is None:
                 question = {"kind": "new", "text": f"«{raw}» — такого товара нет. Новый товар: категория и единица."}
         qty, price, total = _num(ln.get("qty")), _num(ln.get("price")), _num(ln.get("total"))
+        if kind == RECEIPT and total:
+            # Есть итог строки и одно из двух — второе считаем (чек 5 855, 24.09: модель взяла
+            # только итоги, Махабат вбивала количество и цену руками)
+            if qty is None and price:
+                qty = round(total / price, 3)
+            elif price is None and qty:
+                price = round(total / qty, 2)
         if kind == RECEIPT:
             qty, price, total, note = fix_numbers(qty, price, total, cand.get("usual") if cand else None)
             if note:
