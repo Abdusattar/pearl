@@ -110,6 +110,11 @@ def build(db: Session, site: Organization, author: User | None, info: dict, toda
         return {"op": "recount", "amount": str(amount), "date": today.strftime(_DATE_FMT), "pocket_user_id": author.id,
                 "ask": author.id, "what": f"наличных у {grp._first(author.name)} на руках {grp.fmt_money(amount)}{tail}",
                 "matches": abs(delta) < 1}
+    if kind == "expense" and author is not None and amount:
+        # мелкий расход без товара (24.09): из наличных автора, сегодня
+        return {"op": "expense", "amount": str(amount), "date": d.strftime(_DATE_FMT), "payer_id": author.id,
+                "exp_kind": info["exp_kind"], "what": info["what"], "ask": author.id,
+                "what_text": f"{info['what']} {grp.fmt_money(amount)} из наличных {grp._first(author.name)}"}
     if kind in (grp.BALANCE, grp.BANK):
         bal = info.get("balance") or (info.get("amount") if kind == grp.BALANCE else None)
         if not bal or (kind == grp.BANK and info.get("bank_op") not in ("balance", None)):
@@ -202,12 +207,12 @@ def offer(db: Session, site: Organization, author: User | None, info: dict, toda
         # Сходится с записями (владелец 24.09: «если всё совпадает, переспрашивать не нужно») — тоже.
         m = send(db, who.tg_id, "", OFFER, user_id=who.id, payload=o, status="logged")
         res = answer(db, site, who, m, True, None, auto=True)
-        m.text = f"Записал: {o['what']}{when}." + ("" if o.get("matches") else " Если не так — напишите «не так».")
+        m.text = f"Записал: {o.get('what_text') or o['what']}{when}." + ("" if o.get("matches") else " Если не так — напишите «не так».")
         m.status = "answered"
         from app.services.bot import send as _send
         _send(db, who.tg_id, m.text, "money_auto", user_id=who.id, payload={**o, "result": res})
         return m
-    text = f"{grp._first(who.name)}, {o['what']}{when}. Верно? Да / нет"
+    text = f"{grp._first(who.name)}, {o.get('what_text') or o['what']}{when}. Верно? Да / нет"
     return send(db, who.tg_id, text, OFFER, user_id=who.id, payload=o)
 
 
@@ -266,6 +271,19 @@ def answer(db: Session, site: Organization, user: User, ask: BotMessage, yes: bo
         elif o["op"] == "founder_in":
             rec = cash.founder_fund(db, user=user, site_org_id=site.id, founder_id=o["founder_id"],
                                     pocket_user_id=o["pocket_user_id"], amount=amount, d=d, comment=note)
+        elif o["op"] == "expense":
+            from app.models import Supplier
+            from app.services import no_receipt
+            label = {"delivery": "Такси и доставка", "light": "Свет", "water": "Вода", "net": "Интернет и связь",
+                     "guard": "Охрана"}.get(o["exp_kind"], "Разное")
+            sup = db.query(Supplier).filter(Supplier.name == label).first()
+            if sup is None:
+                sup = Supplier(name=label, phone="")
+                db.add(sup)
+                db.flush()
+            rec = no_receipt.record(db, user=user, site_org_id=site.id, supplier=sup, kind=o["exp_kind"], amount=amount,
+                                    what=o["what"], payment="cash", payer_id=o["payer_id"], account_org_id=None,
+                                    founder_id=None, for_org_id=None, d=d, repeat_confirmed=True)
         elif o["op"] == "recount":
             rec = cash.recount(db, user=user, site_org_id=site.id, pocket_user_id=o["pocket_user_id"], actual=amount, d=d,
                                reason=reason or "по сообщению в боте")

@@ -554,6 +554,8 @@ def handle_update(db: Session, update: dict) -> str | None:
         if morning:
             send(db, chat_id, morning, "reply", user_id=user.id)
         return morning or None
+    if site is not None and (exp_text := small_expense_reply(db, site, user, text)):
+        return exp_text   # «верно?» уже отправлен offer()
     if site is not None and (buy_text := purchase_text_reply(db, site, user, text, "private")):
         send(db, chat_id, buy_text, "reply", user_id=user.id)
         return buy_text
@@ -675,6 +677,49 @@ def purchase_text(text: str) -> bool:
     return bool(re.search(r"[а-яёa-z]{3,}", rest, re.I))
 
 
+# Мелкий расход без товара (владелец 24.09: «такси 200» — не черновик, а «верно?» автору)
+_SMALL_KINDS = (
+    (re.compile(r"такси|доставк|курьер|перевоз", re.I), "delivery", "такси"),
+    (re.compile(r"свет|электр", re.I), "light", "свет"),
+    (re.compile(r"\bвод[аыу]\b|водоканал", re.I), "water", "вода"),
+    (re.compile(r"интернет|связь|телефон", re.I), "net", "интернет"),
+    (re.compile(r"охран", re.I), "guard", "охрана"),
+)
+
+
+def small_expense(db: Session, text: str) -> dict | None:
+    """«такси 200», «доставка 150 сом» → {kind, what, amount}; товар, деньги между людьми,
+    сумма выше порога — нет (там черновик или другой разбор)."""
+    t = text or ""
+    if _HANDED.search(t) or _MONEY_WORDS.search(t) or purchase_text(t) and not any(k[0].search(t) for k in _SMALL_KINDS):
+        return None
+    m = re.search(r"\d[\d\s]*(?:[.,]\d+)?", t)
+    if not m:
+        return None
+    for rx, kind, what in _SMALL_KINDS:
+        if rx.search(t):
+            amount = float(parse_amount(m.group(0)))
+            if amount <= 0 or amount > float(rules.get(db, "small_expense_max") or 0):
+                return None
+            hit = rx.search(t)
+            word = t[hit.start():hit.end()].lower()
+            return {"kind": "expense", "exp_kind": kind, "what": what if what != "такси" else ("доставка" if word.startswith("доставк") else "такси"),
+                    "amount": amount, "date": date.today()}
+    return None
+
+
+def small_expense_reply(db: Session, site: Organization, user: User, text: str) -> str | None:
+    """Вопрос автору «верно?» — тот же путь, что снятия и передачи (после N «да» — сам)."""
+    from app.services import bot_money
+    if user is None or user.role not in OPERATIONAL_ROLES:
+        return None
+    info = small_expense(db, text)
+    if info is None:
+        return None
+    asked = bot_money.offer(db, site, user, info, date.today())
+    return asked.text if asked is not None else None
+
+
 def purchase_text_reply(db: Session, site: Organization, user: User, text: str, source: str) -> str | None:
     """Закуп текстом → черновик закупа у Махабат без фото (владелец 24.09: «сейчас бот подготовит
     черновик»). Учётчику — ссылка на проверку, остальным — «принял, Махабат проверит»."""
@@ -785,6 +830,10 @@ def _handle_group(db: Session, msg: dict, user: User | None, text: str) -> str |
                     send(db, owner.tg_id if owner else None, f"Группа, {user.name}, «{text[:80]}»: наличные на руках — "
                          + bot_money.asked_note(db, asked).strip(), "group_reply_owner", user_id=OWNER_USER_ID)
                 return None
+            if user is not None and (exp_text := small_expense_reply(db, site, user, text)):
+                db.add(BotMessage(kind="expense_text", chat_id=chat_id, user_id=user.id, direction="in",
+                                  text=text[:500], status="understood", payload={"message_id": message_id}))
+                return None   # вопрос ушёл автору в личку; в группе молчим
             if user is not None and (buy_text := purchase_text_reply(db, site, user, text, "chat")):
                 db.add(BotMessage(kind="purchase_text", chat_id=chat_id, user_id=user.id, direction="in",
                                   text=text[:2000], status="understood", payload={"message_id": message_id}))

@@ -501,3 +501,24 @@ def test_purchase_text_becomes_draft(db, world, monkeypatch):
     assert reply == "Мунаратест, принял закуп текстом — Махабаттест проверит и запишет."
     assert db.query(Receipt).filter_by(created_by=n.id).count() == 1
     assert db.query(BotMessage).filter_by(kind="draft_ping", user_id=m.id).count() == 1
+
+
+def test_small_expense_text_asks_author_and_yes_records_from_her_pocket(db, world, monkeypatch):
+    """Владелец 24.09: «такси 200» — не черновик, а «верно?» автору; «да» — расход из её наличных."""
+    from app.models import Transaction
+    from app.services.bot import small_expense
+    n, m = world["n"], world["m"]
+    assert small_expense(db, "такси 200") == {"kind": "expense", "exp_kind": "delivery", "what": "такси",
+                                              "amount": 200.0, "date": date.today()}
+    assert small_expense(db, "доставка 150 сом")["what"] == "доставка"
+    assert small_expense(db, "такси 1500") is None            # выше порога — черновик
+    assert small_expense(db, "500 сом корм птицам 2 кг") is None   # товар — черновик
+    assert small_expense(db, "отдала Махабат 200 на такси") is None
+    assert svc.handle_update(db, _group(n, "такси 200")) is None   # в группе молчим
+    o = _offer(db, n)
+    assert o.text == "Мунаратест, такси 200 из наличных Мунаратест, сегодня. Верно? Да / нет"
+    assert "Записал" in svc.handle_update(db, _private(n, "да"))
+    t = db.query(Transaction).filter_by(organization_id=world["sadik"].id, type="expense").one()
+    assert t.amount == Decimal("200") and t.paid_from_user_id == n.id and t.description == "такси"
+    from app.models import ExpenseCategory
+    assert db.get(ExpenseCategory, t.category_id).name == "Сервисные расходы"
