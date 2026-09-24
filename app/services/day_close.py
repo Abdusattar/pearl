@@ -97,6 +97,35 @@ def items(db: Session, site: Organization, d: date) -> list[dict]:
     return out
 
 
+def done_items(db: Session, site: Organization, d: date) -> list[str]:
+    """Что за день уже сделано (владелец 24.09: «вот это сделали, хорошо, но вот это ещё осталось»)."""
+    from app.models import Receipt
+    out = []
+    since = datetime.combine(d, datetime.min.time())
+    org_ids = [o.id for o in site_orgs(db, site.id)] + [site.id]
+    n = db.query(Receipt).filter(Receipt.organization_id.in_(org_ids), Receipt.ocr_status == "confirmed",
+                                 Receipt.decided_at >= since).count()
+    if n:
+        out.append(f"{n} {'чек проведён' if n == 1 else 'чека проведены' if n < 5 else 'чеков проведено'}")
+    if meals.expected_today(db, site.id, d) and meals.get(db, site.id, d) is not None:
+        out.append("едоки записаны")
+    for u in holders(db, site):
+        rec = db.query(Reconciliation.id).filter(Reconciliation.kind == "pocket", Reconciliation.subject_id == u.id,
+                                                 Reconciliation.date == d, Reconciliation.cancelled_at.is_(None)).first()
+        if rec is not None:
+            out.append(f"наличные {_first(u.name)} сверены")
+    if db.query(Reconciliation.id).filter(Reconciliation.kind == "account", Reconciliation.organization_id.in_(org_ids),
+                                          Reconciliation.date == d, Reconciliation.cancelled_at.is_(None)).first():
+        out.append("счёт сверен")
+    return out
+
+
+def _with_done(db: Session, site: Organization, d: date, head: str, lines: list[str]) -> str:
+    done = done_items(db, site, d)
+    top = ("Сделано: " + ", ".join(done) + ". Спасибо!\n") if done else ""
+    return top + head + "\n" + "\n".join(lines)
+
+
 def closed(db: Session, site: Organization, d: date) -> bool:
     return not items(db, site, d)
 
@@ -123,8 +152,8 @@ def group_text(db: Session, site: Organization, d: date, to_manager: bool = Fals
     if to_manager:
         m = manager(db, site)
         if m is not None:
-            return f"{_first(m.name)}, до конца дня не закрыто:\n" + "\n".join(lines)
-    return "До конца дня осталось:\n" + "\n".join(lines)
+            return _with_done(db, site, d, f"{_first(m.name)}, до конца дня осталось:", lines)
+    return _with_done(db, site, d, "Осталось:", lines)
 
 
 def manager_text(db: Session, site: Organization, d: date) -> str | None:
@@ -143,7 +172,7 @@ def result_text(db: Session, site: Organization, d: date) -> str:
     its = items(db, site, d)
     if not its:
         return "День закрыт: чеки проведены, наличные и счёт сошлись. Спасибо!"
-    return "День не закрыт:\n" + "\n".join(by_person(its))
+    return _with_done(db, site, d, "День не закрыт, осталось:", by_person(its))
 
 
 def owner_line(db: Session, site: Organization, d: date) -> str:

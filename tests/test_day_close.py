@@ -71,7 +71,7 @@ def test_open_day_lists_items_by_person_then_closes(db, world, monkeypatch):
     # 15:00 — в группу каждому по имени
     keys = svc._day_close(db, s, _at(15, 0))
     msg = db.query(BotMessage).filter_by(kind="day_close").one()
-    assert msg.chat_id == GROUP and msg.text.startswith("До конца дня осталось:\nМахабаттест, 1 чек подтвердить")
+    assert msg.chat_id == GROUP and msg.text.startswith("Сделано: едоки записаны. Спасибо!\nОсталось:\nМахабаттест, 1 чек подтвердить")
     # 16:00 — заведующей в личку
     svc._day_close(db, s, _at(16, 0))
     mgr = db.query(BotMessage).filter_by(kind="day_close", user_id=n.id).one()
