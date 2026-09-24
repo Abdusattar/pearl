@@ -530,9 +530,13 @@ def handle_update(db: Session, update: dict) -> str | None:
     if site is not None and (meal := meal_reply(db, site, user, text)):
         send(db, chat_id, meal, "reply", user_id=user.id)
         return meal
-    if site is not None and (morning := morning_answer(db, site, user, text)):
-        send(db, chat_id, morning, "reply", user_id=user.id)
-        return morning
+    if site is not None and (morning := morning_answer(db, site, user, text)) is not None:
+        if morning:
+            send(db, chat_id, morning, "reply", user_id=user.id)
+        return morning or None
+    if site is not None and (buy := _private_buy(db, site, user, text)):
+        send(db, chat_id, buy, "reply", user_id=user.id)
+        return buy
     if site is not None and (stock_reply := stock_text_reply(db, site, user, text, "private")):
         send(db, chat_id, stock_reply, "reply", user_id=user.id)
         return stock_reply
@@ -556,8 +560,10 @@ def handle_update(db: Session, update: dict) -> str | None:
             m = send(db, chat_id, reply + "\n\nОтправить Айдай и Таласу? Ответьте «ок» или «не так».",
                      "founders_review", user_id=user.id, payload={"summary": reply}, status="pending")
             return m.text
-    elif site is not None and (money := _private_money(db, site, user, text)):
-        return money
+    elif site is not None and (money := _private_money(db, site, user, text)) is not None:
+        return money or None
+    elif _answer_to_question(db, user, text):
+        return None
     elif user.role in OPERATIONAL_ROLES and site is not None and _NUM.match(text):
         reply = ("Сумму на руках запишет Махабат в Кассе («Пересчитать наличные»). "
                  "Скоро такие сообщения будут сами становиться черновиком ей на проверку.")
@@ -573,9 +579,12 @@ def handle_update(db: Session, update: dict) -> str | None:
 
 
 # «на руках 15 000», «наличных 0», «Нал остаток 51090-12700=38 390» (Мунара 24.09): берём последнее число
-_ON_HAND = re.compile(r"(?:на\s*руках|наличн\w*|\bнал\b\.?)\D{0,25}?(\d[\d\s]*(?:[.,]\d+)?)"
+_ON_HAND = re.compile(r"(?:на\s*руках|налич\w*|\bнал\b\.?)\D{0,25}?(\d[\d\s]*(?:[.,]\d+)?)"
                       r"(?:[^\n]*?=\s*(\d[\d\s]*(?:[.,]\d+)?))?"
-                      r"|(\d[\d\s]*(?:[.,]\d+)?)\s*(?:сом\w*\s*)?(?:на\s*руках|наличн|\bнал\b)", re.I)
+                      r"|(\d[\d\s]*(?:[.,]\d+)?)\D{0,25}?(?:на\s*руках|налич|\bнал\b)", re.I)
+# «Комиссия», «камисса», «да комиссия» — ответ на подсказку «ответьте „да, комиссия“» (Мунара 24.09)
+_COMMISSION = re.compile(r"^\s*(?:да[\s,.!—-]*)?к[ао]м+[иеы]с+\w*\s*(?:банк\w*)?\s*[.!]*\s*$", re.I)
+_BUY = re.compile(r"^\s*(?:ещ[её]\s+)?закуп\w*\s*[-—:]?\s*(\d[\d\s]*(?:[.,]\d+)?)", re.I)
 
 
 def on_hand_amount(text: str):
@@ -591,6 +600,38 @@ def _last_out(db: Session, user_id: int) -> str | None:
     m = (db.query(BotMessage).filter(BotMessage.user_id == user_id, BotMessage.direction == "out")
          .order_by(BotMessage.id.desc()).first())
     return m.text if m else None
+
+
+def _private_buy(db: Session, site: Organization, user: User, text: str) -> str | None:
+    """«Ещё закуп 12770» в личку (Мунара 24.09): если такой чек уже в черновиках — сказать это,
+    иначе — попросить фото чека. Суммы без чека не записываем."""
+    from app.services import bot_group as grp
+    m = _BUY.match(text or "")
+    if not m or user.role not in OPERATIONAL_ROLES:
+        return None
+    amount = float(parse_amount(m.group(1)))
+    since = datetime.combine(date.today(), datetime.min.time())
+    for r in db.query(Receipt).filter(Receipt.kind == "receipt", Receipt.ocr_status == "pending",
+                                      Receipt.created_at >= since).all():
+        if abs(float((r.payload or {}).get("amount") or 0) - amount) < 1:
+            return f"Чек на {fmt_money(amount)} уже у Махабат на проверке."
+    return (f"{grp._first(user.name)}, закуп {fmt_money(amount)} — пришлите фото чека сюда: "
+            "я подготовлю запись из ваших наличных, Махабат проверит и подтвердит.")
+
+
+def _answer_to_question(db: Session, user: User, text: str) -> bool:
+    """Короткий текст при открытом вопросе бота «ответьте одним словом» (третье фото, 24.09:
+    «Часть чека») — это ответ, не новое сообщение: вопрос закрываем, владельцу — что ответили."""
+    since = datetime.combine(date.today(), datetime.min.time())
+    q = (db.query(BotMessage).filter(BotMessage.user_id == user.id, BotMessage.direction == "out",
+                                     BotMessage.kind == "group_question", BotMessage.status.in_(("sent", "logged")),
+                                     BotMessage.created_at >= since).order_by(BotMessage.id.desc()).first())
+    if q is None or len((text or "").split()) > 4:
+        return False
+    q.status = "answered"
+    q.payload = {**(q.payload or {}), "answer": text[:200]}
+    owner_copy(db, f"{user.name} на «{q.text[:100]}…» ответил(а): «{text[:200]}»")
+    return True
 
 
 def _private_money(db: Session, site: Organization, user: User, text: str) -> str | None:
@@ -613,6 +654,10 @@ def _private_money(db: Session, site: Organization, user: User, text: str) -> st
     asked = bot_money.offer(db, site, user, info, date.today())
     if asked is not None and asked.user_id == user.id:
         return asked.text
+    if asked is None and info.get("kind") in (grp.BANK, grp.BALANCE):
+        # Не спросили (сомнение → владельцу, или уже записано): остаток счёта человеку не
+        # озвучиваем (24.09: «51090 остаток у меня наличка» ушло Мунаре как остаток счёта)
+        return ""   # молчание, без «не понял» владельцу
     reply = (grp.text_reply(db, site, user, info, date.today()) or "Понял.") + bot_money.asked_note(db, asked)
     send(db, user.tg_id, reply, "reply", user_id=user.id)
     return reply
@@ -1218,14 +1263,18 @@ def morning_answer(db: Session, site: Organization, user: User, text: str) -> st
     offer = bot_money.open_offer(db, user)
     if offer is not None and (ask is None or offer.id > ask.id):
         yes, no = _YES_REASON.match(text), _NO.match(text)
+        if not (yes or no) and (offer.payload or {}).get("op") == "bank" and _COMMISSION.match(text):
+            # «Комиссия» на подсказку «ответьте „да, комиссия“» (Мунара 24.09) — это «да» с причиной
+            return bot_money.answer(db, site, user, offer, True, "комиссия банка")
         if not (yes or no):
-            if text.strip().endswith("?") or len(text.split()) <= 6:
-                # «По каким записям?» (Айжан 24.09): вопрос при открытом «верно?» — владельцу,
-                # человеку — как ответить; дежурная фраза здесь хуже молчания
+            if text.strip().endswith("?"):
+                # «По каким записям?» (Айжан 24.09): вопрос при открытом «верно?» — владельцу
                 owner_copy(db, f"{user.name} на «{offer.text[:120]}…» спрашивает: «{text[:300]}»")
-                return ("Передал ваш вопрос Абдусаттару, он ответит. Если цифра верна — напишите «да», "
-                        "если нет — «нет».")
-            return None
+                return "Передал Абдусаттару, он ответит."
+            # Не «да», не «нет», не вопрос (24.09: «Часть чека», «Овощи») — молчим, владельцу копия;
+            # подсказка «если верна — да» после «Комиссия» вызвала «Нет» и потерянную запись
+            owner_copy(db, f"{user.name} при открытом «{offer.text[:100]}…» пишет: «{text[:300]}»")
+            return ""   # молчание: пустой ответ, дальше текст не разбираем
         return bot_money.answer(db, site, user, offer, bool(yes), yes.group(1).strip() if yes else None)
     if ask is None or not (_YES.match(text) or _NO.match(text) or _NUM.match(text)):
         return None

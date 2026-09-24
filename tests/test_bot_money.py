@@ -161,7 +161,7 @@ def test_first_bank_figure_is_point_zero_and_question_goes_to_owner(db, world, m
     o = _offer(db, n)
     assert "первая цифра" in o.text and "По записям" not in o.text
     reply = svc.handle_update(db, _private(n, "По каким записям?"))
-    assert reply.startswith("Передал ваш вопрос")
+    assert reply.startswith("Передал")
     assert db.query(BotMessage).filter_by(kind="owner_copy").count() == 1
     assert _offer(db, n).status in ("sent", "logged")   # вопрос открыт, «да» ещё сработает
     assert "Записал" in svc.handle_update(db, _private(n, "да", mid=52))
@@ -288,3 +288,110 @@ def test_on_hand_phrases():
     assert on_hand_amount("нал. 0") == Decimal("0")
     assert on_hand_amount("сняла 25 000") is None
     assert on_hand_amount("Снятия с банка 64662") is None
+
+
+def test_commission_word_is_yes_with_reason_and_kopecks_shown(db, world, monkeypatch):
+    """Мунара 24.09: на «ответьте „да, комиссия“» написала «Комиссия» — бот не понял, потом «Нет»,
+    остаток 1,35 потерян. Теперь «Комиссия» — «да» с причиной; остаток показываем с копейками."""
+    from app.services import cash
+    n = world["n"]
+    cash.bank_balance(db, user=n, org_id=world["sadik"].id, actual=Decimal("64797.68"),
+                      d=date.today() - timedelta(days=1), reason="утро")
+    cash.withdraw(db, user=n, site_org_id=world["sadik"].id, account_org_id=world["sadik"].id,
+                  amount=Decimal("64662"), d=date.today())
+    _model(monkeypatch, {"kind": "bank", "bank_op": "balance", "balance": 1.35, "date": None, "sure": True})
+    svc.handle_update(db, _group(n, photo_id="bank3"))
+    o = _offer(db, n)
+    assert "остаток счёта садика 1,35" in o.text and "По записям 135,68" in o.text
+    assert "Записал" in svc.handle_update(db, _private(n, "Камиссия"))
+    rec = (db.query(Reconciliation).filter_by(kind="account", organization_id=world["sadik"].id)
+           .order_by(Reconciliation.id.desc()).first())
+    assert rec.actual_amount == Decimal("1.35") and rec.reason == "комиссия банка"
+
+
+def test_short_non_answer_while_offer_open_is_silent_and_offer_stays(db, world, monkeypatch):
+    """«Часть чека», «Овощи» при открытом «верно?» — не ответ: молчим, владельцу копия, вопрос жив."""
+    n = world["n"]
+    _model(monkeypatch, {"kind": "withdrawal", "amount": 25000, "date": "today", "sure": True})
+    svc.handle_update(db, _group(n, "сняла 25 000"))
+    assert svc.handle_update(db, _private(n, "Часть чека")) is None
+    assert db.query(BotMessage).filter_by(kind="reply", user_id=n.id).count() == 0
+    copies = db.query(BotMessage).filter_by(kind="owner_copy").all()
+    assert len(copies) == 1 and "пишет: «Часть чека»" in copies[0].text
+    assert _offer(db, n).status in ("sent", "logged")
+    assert "Записал" in svc.handle_update(db, _private(n, "да", mid=53))
+
+
+def test_on_hand_after_number_with_words_between(db, world):
+    from app.services.bot import on_hand_amount
+    assert on_hand_amount("51090остаток у меня наличка") == Decimal("51090")
+    assert on_hand_amount("Остаток наличными 38322 Мунара") == Decimal("38322")
+    n = world["n"]
+    reply = svc.handle_update(db, _private(n, "51090остаток у меня наличка"))
+    assert reply.startswith("Мунаратест, наличных у Мунаратест на руках 51 090")
+
+
+def test_bank_doubt_in_private_is_silent_to_person(db, world, monkeypatch):
+    """Модель приняла наличные за счёт, сомнение ушло владельцу — а ответ «остаток счёта 51 090»
+    всё равно улетел Мунаре (24.09). В личке при сомнении — тишина."""
+    from app.services import cash
+    n = world["n"]
+    cash.bank_balance(db, user=n, org_id=world["sadik"].id, actual=Decimal("136"),
+                      d=date.today() - timedelta(days=1), reason="утро")
+    _model(monkeypatch, {"kind": "balance", "amount": 51090, "date": "today", "sure": True})
+    assert svc.handle_update(db, _private(n, "у меня осталось 51090 после закупа")) is None
+    assert db.query(BotMessage).filter_by(kind="reply", user_id=n.id).count() == 0
+    assert _offer(db, n) is None
+    copies = db.query(BotMessage).filter_by(kind="owner_copy").all()
+    assert len(copies) == 1 and "не спросил" in copies[0].text
+
+
+def test_purchase_amount_in_private_points_to_existing_draft(db, world, monkeypatch):
+    """«Ещё закуп 12770» в личку: чек на 12 770 уже в черновиках — говорим это; иначе просим фото."""
+    n = world["n"]
+    _model(monkeypatch, {"kind": "purchase", "amount": 12770, "supplier": "Торговый центр", "sure": True})
+    svc.handle_update(db, _group(n, photo_id="rc12770"))
+    assert svc.handle_update(db, _private(n, "Ещё закуп 12770")) == "Чек на 12 770 уже у Махабат на проверке."
+    reply = svc.handle_update(db, _private(n, "закуп 5000", mid=54))
+    assert reply.startswith("Мунаратест, закуп 5 000") and "фото чека" in reply
+
+
+def test_one_word_answer_to_bot_question_closes_it(db, world, monkeypatch):
+    """«Ответьте одним словом» → «Часть чека»: вопрос закрыт, владельцу — ответ, а не «не понял»."""
+    n = world["n"]
+    q = svc.send(db, n.tg_id, "Мунаратест, третье фото — список без цен. Это лист кухни, остаток склада или часть чека? "
+                 "Ответьте одним словом.", "group_question", user_id=n.id)
+    assert svc.handle_update(db, _private(n, "Часть чека")) is None
+    assert q.status == "answered" and q.payload["answer"] == "Часть чека"
+    copies = db.query(BotMessage).filter_by(kind="owner_copy").all()
+    assert len(copies) == 1 and "ответил(а): «Часть чека»" in copies[0].text
+
+
+def test_bot_paused_sends_nothing_to_people_but_owner(db, world, monkeypatch):
+    from app.services import rules
+    from app.models import User as _U
+    owner = _U(name="Владелец тест-дн", role="owner", organization_id=world["sadik"].id, tg_id=900000000299)
+    db.add(owner)
+    db.flush()
+    monkeypatch.setattr(svc, "OWNER_USER_ID", owner.id)
+    monkeypatch.setattr(rules, "bot_paused", lambda db: True)
+    monkeypatch.setenv(svc.TOKEN_ENV, "t")
+    monkeypatch.setattr(svc.httpx, "post", lambda *a, **k: (_ for _ in ()).throw(AssertionError("не должен слать")))
+    n = world["n"]
+    m = svc.send(db, n.tg_id, "вопрос", "money_offer", user_id=n.id)
+    assert m.status == "paused"
+    monkeypatch.setattr(svc.httpx, "post", lambda *a, **k: type("R", (), {"status_code": 200, "text": ""})())
+    assert svc.send(db, owner.tg_id, "копия", "owner_copy", user_id=owner.id).status == "sent"
+
+
+def test_matching_figure_is_recorded_without_asking(db, world, monkeypatch):
+    """Владелец 24.09: «по остаткам, если всё совпадает, переспрашивать не нужно»."""
+    from app.services import cash
+    n = world["n"]
+    cash.withdraw(db, user=n, site_org_id=world["sadik"].id, account_org_id=world["sadik"].id,
+                  amount=Decimal("38322"), d=date.today())
+    reply = svc.handle_update(db, _private(n, "Остаток наличными 38322"))
+    assert reply.startswith("Записал: наличных у Мунаратест на руках 38 322 — с записями сходится")
+    rec = db.query(Reconciliation).filter_by(kind="pocket", subject_id=n.id).one()
+    assert rec.actual_amount == Decimal("38322") and rec.delta == 0
+    assert _offer(db, n).status == "answered"

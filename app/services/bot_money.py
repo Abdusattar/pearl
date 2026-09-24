@@ -46,6 +46,15 @@ def _can_answer(u: User | None) -> bool:
     return u is not None and u.tg_id is not None and u.deleted_at is None and u.role in OPERATIONAL_ROLES + ("owner",)
 
 
+def _kop(x, signed: bool = False) -> str:
+    """Остаток счёта с копейками: «1,35», а не «1» (Мунара 24.09 ответила «нет» на «1»)."""
+    x = Decimal(str(x))
+    if x == x.to_integral_value():
+        return grp._signed(x) if signed else grp.fmt_money(x)
+    s = f"{abs(x):,.2f}".replace(",", " ").replace(".", ",")
+    return ("+" if signed and x > 0 else "−" if x < 0 else "") + s
+
+
 def build(db: Session, site: Organization, author: User | None, info: dict, today: date) -> dict | None:
     """Понятое сообщение → что записать и кого спросить. None — спрашивать нечего."""
     kind, amount = info.get("kind"), info.get("amount")
@@ -99,7 +108,8 @@ def build(db: Session, site: Organization, author: User | None, info: dict, toda
         tail = " — с записями сходится" if abs(delta) < 1 else \
             f". По записям {grp.fmt_money(expected)}, разница {grp._signed(delta)}"
         return {"op": "recount", "amount": str(amount), "date": today.strftime(_DATE_FMT), "pocket_user_id": author.id,
-                "ask": author.id, "what": f"наличных у {grp._first(author.name)} на руках {grp.fmt_money(amount)}{tail}"}
+                "ask": author.id, "what": f"наличных у {grp._first(author.name)} на руках {grp.fmt_money(amount)}{tail}",
+                "matches": abs(delta) < 1}
     if kind in (grp.BALANCE, grp.BANK):
         bal = info.get("balance") or (info.get("amount") if kind == grp.BALANCE else None)
         if not bal or (kind == grp.BANK and info.get("bank_op") not in ("balance", None)):
@@ -132,18 +142,18 @@ def build(db: Session, site: Organization, author: User | None, info: dict, toda
             expected = cash.expected_account(db, acc.id, on)
             delta = Decimal(str(bal)) - expected
             tail = " — с записями сходится" if abs(delta) <= 1 else \
-                f". По записям {grp.fmt_money(expected)}, разница {grp._signed(delta)}"
+                f". По записям {_kop(expected)}, разница {_kop(delta, signed=True)}"
             if -500 < delta < -1 and on == today:
                 tail += " — похоже, комиссия банка за сегодняшнее снятие; если так, ответьте «да, комиссия»"
             if delta > max(Decimal("5000"), abs(expected) * Decimal("0.2")):
                 # счёт не растёт сам: без прихода такой скачок — скорее не про счёт (наличные?)
                 return {"op": "bank", "ask": holder.id if holder else None, "amount": str(bal),
                         "date": on.strftime(_DATE_FMT), "org_id": acc.id,
-                        "what": f"остаток счёта {_label(acc)} {grp.fmt_money(bal)}{tail}",
+                        "what": f"остаток счёта {_label(acc)} {_kop(bal)}{tail}",
                         "doubt": "счёт не мог вырасти без прихода — возможно, это наличные"}
         return {"op": "bank", "amount": str(bal), "date": on.strftime(_DATE_FMT), "org_id": acc.id,
-                "ask": holder.id if holder else None,
-                "what": f"остаток счёта {_label(acc)} {grp.fmt_money(bal)} на конец {grp._dd(on)}{tail}"}
+                "ask": holder.id if holder else None, "matches": not first and abs(delta) <= 1,
+                "what": f"остаток счёта {_label(acc)} {_kop(bal)} на конец {grp._dd(on)}{tail}"}
     return None
 
 
@@ -168,11 +178,12 @@ def offer(db: Session, site: Organization, author: User | None, info: dict, toda
     prev = open_offer(db, who)
     if prev is not None:
         prev.status = "superseded"
-    if trusted(db, who, o["op"]):
-        # Ступень 3: пять «да» подряд без «нет» — пишем сами, человек видит «записал»
+    if o.get("matches") or trusted(db, who, o["op"]):
+        # Ступень 3: пять «да» подряд без «нет» — пишем сами, человек видит «записал».
+        # Сходится с записями (владелец 24.09: «если всё совпадает, переспрашивать не нужно») — тоже.
         m = send(db, who.tg_id, "", OFFER, user_id=who.id, payload=o, status="logged")
         res = answer(db, site, who, m, True, None, auto=True)
-        m.text = f"Записал: {o['what']}{when}. Если не так — напишите «не так»."
+        m.text = f"Записал: {o['what']}{when}." + ("" if o.get("matches") else " Если не так — напишите «не так».")
         m.status = "answered"
         from app.services.bot import send as _send
         _send(db, who.tg_id, m.text, "money_auto", user_id=who.id, payload={**o, "result": res})
