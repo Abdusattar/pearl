@@ -457,3 +457,14 @@ def test_first_receipt_of_day_pings_checker_once(db, world, monkeypatch):
     _model(monkeypatch, {"kind": "purchase", "amount": 1600, "supplier": None, "sure": True})
     svc.handle_update(db, _group(n, photo_id="rcB", mid=2))
     assert db.query(BotMessage).filter_by(kind="draft_ping").count() == 1   # второй чек дня — молча
+
+
+def test_handed_over_cash_is_transfer_not_on_hand(db, world, monkeypatch):
+    """Мунара 24.09: «Вчерашний остаток наличными 5229сом отдала Махабату» — передача, не пересчёт."""
+    from app.services.bot import on_hand_amount
+    assert on_hand_amount("Вчерашний остаток наличными 5229сом отдала Махабату") is None
+    n = world["n"]
+    _model(monkeypatch, {"kind": "transfer", "amount": 5229, "who": None, "to": "Махабаттест",
+                         "date": (date.today() - timedelta(days=1)).isoformat(), "sure": True})
+    reply = svc.handle_update(db, _private(n, "Вчерашний остаток наличными 5229сом отдала Махабату"))
+    assert reply == "Мунаратест, передача Мунаратест → Махабаттест 5 229, вчера. Верно? Да / нет"
