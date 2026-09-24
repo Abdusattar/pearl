@@ -598,7 +598,7 @@ _ON_HAND = re.compile(r"(?:на\s*руках|налич\w*|\bнал\b\.?)\D{0,25
                       r"|(\d[\d\s]*(?:[.,]\d+)?)\D{0,25}?(?:на\s*руках|налич|\bнал\b)", re.I)
 # «Комиссия», «камисса», «да комиссия» — ответ на подсказку «ответьте „да, комиссия“» (Мунара 24.09)
 _COMMISSION = re.compile(r"^\s*(?:да[\s,.!—-]*)?к[ао]м+[иеы]с+\w*\s*(?:банк\w*)?\s*[.!]*\s*$", re.I)
-_BUY = re.compile(r"^\s*(?:ещ[её]\s+)?закуп\w*\s*[-—:]?\s*(\d[\d\s]*(?:[.,]\d+)?)", re.I)
+_BUY = re.compile(r"^\s*(?:ещ[её]\s+)?закуп\w*[^\d\n]{0,30}?(\d[\d\s]*(?:[.,]\d+)?)", re.I)
 
 
 def on_hand_amount(text: str):
@@ -629,6 +629,16 @@ def _private_buy(db: Session, site: Organization, user: User, text: str) -> str 
                                       Receipt.created_at >= since).all():
         if abs(float((r.payload or {}).get("amount") or 0) - amount) < 1:
             return f"Чек на {fmt_money(amount)} уже у Махабат на проверке."
+    return _buy_ask_text(user, amount)
+
+
+def _buy_ask_text(user: User, amount: float) -> str:
+    """Закуп суммой без чека: учётчику (Махабат, «корм 1 200» 24.09) — сразу форма, остальным —
+    фото чека, из которого бот сделает запись ей на проверку."""
+    from app.services import bot_group as grp
+    if user.role == "staff":
+        return (f"{grp._first(user.name)}, закуп {fmt_money(amount)} без чека — внесите через «Закуп» "
+                f"из своих наличных: {public_url()}/new/buy")
     return (f"{grp._first(user.name)}, закуп {fmt_money(amount)} — пришлите фото чека сюда: "
             "я подготовлю запись из ваших наличных, Махабат проверит и подтвердит.")
 
@@ -726,12 +736,10 @@ def _handle_group(db: Session, msg: dict, user: User | None, text: str) -> str |
                     send(db, owner.tg_id if owner else None, f"Группа, {user.name}, «{text[:80]}»: наличные на руках — "
                          + bot_money.asked_note(db, asked).strip(), "group_reply_owner", user_id=OWNER_USER_ID)
                 return None
-            if user is not None and re.match(r"^\s*закуп\w*\s*[-—:]?\s*\d", text.lower()):
+            if user is not None and _BUY.match(text):
                 # «Закуп 13570» — суммы без чека не записываем: закуп идёт строками со склада
                 m_buy = re.search(r"\d[\d\s]*(?:[.,]\d+)?", text)
-                buy_sum = fmt_money(float(parse_amount(m_buy.group(0)))) if m_buy else ""
-                reply_buy = (f"{grp._first(user.name)}, закуп {buy_sum} — пришлите фото чека сюда: "
-                             "я подготовлю запись из ваших наличных, Махабат проверит и подтвердит.")
+                reply_buy = _buy_ask_text(user, float(parse_amount(m_buy.group(0))) if m_buy else 0.0)
                 send(db, chat_id, reply_buy, "group_reply", user_id=user.id, reply_to=message_id)
                 return reply_buy
             stock_reply = stock_text_reply(db, site, user, text, "chat")

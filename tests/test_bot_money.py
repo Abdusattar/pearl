@@ -437,3 +437,12 @@ def test_owner_evening_line(db, world, monkeypatch):
     text = svc.owner_evening_text(db, world["sadik"], date.today())
     assert text.startswith("Садик тест-дн: не сошлось — наличные Мунаратест −100. заметок бота 1")
     assert db.query(BotMessage).filter_by(kind="owner_copy").one().status == "noted"
+
+
+def test_accountant_purchase_text_gets_form_link_not_receipt_request(db, world):
+    """Махабат 24.09: «корм 1 200» без чека — она сама учётчик, ей форма, а не «пришлите фото»."""
+    m = world["m"]
+    reply = svc.handle_update(db, _private(m, "закуп корм 1200"))
+    assert reply.startswith("Махабаттест, закуп 1 200 без чека — внесите через «Закуп»") and "/new/buy" in reply
+    reply = svc.handle_update(db, _group(m, "Закуп 1200"))
+    assert "/new/buy" in reply
