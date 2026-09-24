@@ -243,3 +243,21 @@ def test_money_from_founder_is_funding_into_pocket(db, world, monkeypatch):
     svc.handle_update(db, _private(n, "да"))
     from app.services import cash
     assert cash.pocket_balance(db, world["sadik"].id, n.id) == Decimal("100000")
+
+
+def test_second_bank_screenshot_same_day_records_today(db, world, monkeypatch):
+    """Мунара 24.09: утром скрин → конец вчера; днём после снятия ещё скрин → сегодня, разница = комиссия."""
+    from app.services import cash
+    n = world["n"]
+    cash.bank_balance(db, user=n, org_id=world["sadik"].id, actual=Decimal("64797.68"),
+                      d=date.today() - timedelta(days=1), reason="утро")
+    cash.withdraw(db, user=n, site_org_id=world["sadik"].id, account_org_id=world["sadik"].id,
+                  amount=Decimal("64662"), d=date.today())
+    _model(monkeypatch, {"kind": "bank", "bank_op": "balance", "balance": 1.35, "date": None, "sure": True})
+    svc.handle_update(db, _group(n, photo_id="bank2"))
+    o = _offer(db, n)
+    assert o is not None and "на конец " + date.today().strftime("%d.%m") in o.text and "комиссия" in o.text
+    assert "Записал" in svc.handle_update(db, _private(n, "да, комиссия"))
+    rec = (db.query(Reconciliation).filter_by(kind="account", organization_id=world["sadik"].id)
+           .order_by(Reconciliation.id.desc()).first())
+    assert rec.date == date.today() and rec.reason == "комиссия"
