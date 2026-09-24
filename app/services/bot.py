@@ -679,6 +679,11 @@ def _handle_group(db: Session, msg: dict, user: User | None, text: str) -> str |
             reply, info, draft = intake_photo(db, site, user, data, media.get("file_unique_id"), text, "chat",
                                               mime=media.get("mime"), file_name=media.get("file_name"))
             payload.update({k: (v.isoformat() if isinstance(v, date) else v) for k, v in info.items()})
+            if reply and draft is None and "Подпишите фото" in reply and user is not None and user.tg_id                     and not group_talks():
+                # Уточнение по фото (24.09: «кухня или остаток?») в молчащем режиме уходило только
+                # владельцу — отправитель его не видел. Вопрос — тому, кто прислал, в личку.
+                send(db, user.tg_id, f"{grp._first(user.name)}, фото в группе — {reply[0].lower() + reply[1:]}",
+                     "group_question", user_id=user.id)
             if reply and draft is None and info.get("kind") == grp.BANK:
                 reply += bot_money.asked_note(db, bot_money.offer(db, site, user, info, today_d))
             if draft is not None:
