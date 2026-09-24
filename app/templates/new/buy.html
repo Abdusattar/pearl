@@ -22,10 +22,18 @@
   .skipbox .in { flex: 1 1 240px; height: 44px; font-size: 16px; }
   .who { color: var(--muted); font-size: 14px; margin: 0 0 12px; }
   .with-photo { display: grid; grid-template-columns: minmax(0, 1fr) 340px; gap: 24px; align-items: start; }
+  /* Ноутбук Махабат 24.09: фото закрывало «Цена» и «Сумма». Таблица живёт в своей колонке
+     (не заезжает под фото, в крайнем случае листается), фото на ноутбуке уже, его можно скрыть. */
+  @media (max-width: 1500px) { .with-photo { grid-template-columns: minmax(0, 1fr) 240px; gap: 16px; } }
+  .with-photo > div:first-child { min-width: 0; overflow-x: auto; }
+  .with-photo .tbl .in.wide { min-width: 140px; }
+  .with-photo.nophoto { grid-template-columns: 1fr; }
+  .with-photo.nophoto .photo-side img, .with-photo.nophoto .photo-side blockquote, .with-photo.nophoto .photo-side .s { display: none; }
+  .photo-toggle { font-size: 14px; background: none; border: 0; color: var(--accent, #2563eb); padding: 6px 0; cursor: pointer; min-height: 32px; }
   .photo-side { position: sticky; top: 16px; }
   .photo-side img { width: 100%; max-height: 78vh; object-fit: contain; border-radius: 8px; border: 1px solid var(--line); background: var(--field); display: block; }
   .photo-side .s { display: block; font-size: 13px; color: var(--muted); margin-top: 6px; }
-  @media (max-width: 1000px) { .with-photo { grid-template-columns: 1fr; } .photo-side { position: static; order: -1; } .photo-side img { max-height: 50vh; } }
+  @media (max-width: 1250px) { .with-photo { grid-template-columns: 1fr; } .photo-side { position: static; order: -1; } .photo-side img { max-height: 35vh; width: auto; max-width: 100%; } }
   #items.numbered tbody { counter-reset: r; }
   #items.numbered tr.row { counter-increment: r; }
   #items.numbered tr.row td.ac { position: relative; padding-left: 30px; }
@@ -185,10 +193,10 @@
   </div></div>
   </div>
   {% if draft.text %}
-  <aside class="photo-side"><blockquote style="margin:0;padding:12px 14px;border-radius:12px;background:var(--bg-2, #f3f4f6);white-space:pre-wrap;font-size:15px">{{ draft.text }}</blockquote>
+  <aside class="photo-side"><button type="button" class="photo-toggle" onclick="var w=this.closest('.with-photo');w.classList.toggle('nophoto');this.textContent=w.classList.contains('nophoto')?'Показать чек':'Скрыть чек'">Скрыть чек</button><blockquote style="margin:0;padding:12px 14px;border-radius:12px;background:var(--bg-2, #f3f4f6);white-space:pre-wrap;font-size:15px">{{ draft.text }}</blockquote>
     <span class="s">Закуп написали текстом в чате — чека нет. Сверяйте строки с текстом.</span></aside></div>
   {% else %}
-  <aside class="photo-side"><a href="/media/{{ draft.path }}" target="_blank" aria-label="Открыть фото чека во весь экран"><img src="/media/{{ draft.path }}" alt="Фото чека"></a>
+  <aside class="photo-side"><button type="button" class="photo-toggle" onclick="var w=this.closest('.with-photo');w.classList.toggle('nophoto');this.textContent=w.classList.contains('nophoto')?'Показать чек':'Скрыть чек'">Скрыть чек</button><a href="/media/{{ draft.path }}" target="_blank" aria-label="Открыть фото чека во весь экран"><img src="/media/{{ draft.path }}" alt="Фото чека"></a>
     <span class="s">Сверяйте строки с чеком. Нажмите — откроется во весь экран.</span></aside></div>
   {% endif %}
   {% endif %}
