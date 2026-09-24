@@ -1145,6 +1145,12 @@ def intake_photo(db: Session, site: Organization, author: User | None, data: byt
     kind = drafts.KIND_FROM_BOT.get(info["kind"])
     if kind == drafts.KITCHEN and not info.get("sure") and "кухн" not in caption.lower():
         kind = None   # «лист кухни или пересчёт?» — сначала ответ человека
+    if kind is None and info["kind"] not in (grp.BANK, "dup") and (
+            "чек" in (caption or "").lower() or info.get("amount")):
+        # Махабат 24.09: «этот чек бот не подготовил?» — фото документом, модель не узнала, файл
+        # пропал. Названо «чек» или видна сумма — всегда черновик, пусть человек решит.
+        kind = drafts.RECEIPT
+        info = {**info, "kind": grp.PURCHASE}
     if is_pdf and kind is not None:
         # PDF (платёжка из банка, счёт-фактура): экран проверки показывает картинку,
         # PDF в нём не откроется — пока только понимаем и отвечаем, черновик не заводим

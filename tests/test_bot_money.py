@@ -557,3 +557,17 @@ def test_date_in_caption_is_not_amount():
             return Q()
     info = grp.read_text(_DB(), "Карта да остаток 24.09.2026", None, _d.today())
     assert info["kind"] == "balance" and info["amount"] is None
+
+
+def test_unrecognized_photo_called_receipt_becomes_draft(db, world, monkeypatch):
+    """Махабат 24.09: фото документом с подписью «этот чек бот не подготовил?» — модель сказала
+    «other», файл пропал. Теперь — черновик чека."""
+    from app.models import Receipt
+    m = world["m"]
+    _model(monkeypatch, {"kind": "other", "sure": False})
+    msg = {"message_id": 9, "chat": {"id": GROUP, "type": "supergroup"}, "from": {"id": m.tg_id},
+           "caption": "этот чек бот не подготовил для ввода?",
+           "document": {"file_id": "d9", "file_unique_id": "ud9", "file_name": "x.jpg", "mime_type": "image/jpeg"}}
+    svc.handle_update(db, {"message": msg})
+    r = db.query(Receipt).filter_by(created_by=m.id).one()
+    assert r.kind == "receipt" and r.ocr_status == "pending"
