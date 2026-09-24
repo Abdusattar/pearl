@@ -284,6 +284,12 @@ def answer(db: Session, site: Organization, user: User, ask: BotMessage, yes: bo
             rec = no_receipt.record(db, user=user, site_org_id=site.id, supplier=sup, kind=o["exp_kind"], amount=amount,
                                     what=o["what"], payment="cash", payer_id=o["payer_id"], account_org_id=None,
                                     founder_id=None, for_org_id=None, d=d, repeat_confirmed=True)
+            if o["exp_kind"] == "other":
+                # услуга без товара (мойка ковра 24.09) — «Сервисные расходы», не «без категории»
+                from app.models import ExpenseCategory, Transaction
+                cat = db.query(ExpenseCategory).filter(ExpenseCategory.name == "Сервисные расходы").first()
+                if cat is not None:
+                    db.query(Transaction).filter(Transaction.purchase_id == rec.id).update({"category_id": cat.id})
         elif o["op"] == "recount":
             rec = cash.recount(db, user=user, site_org_id=site.id, pocket_user_id=o["pocket_user_id"], actual=amount, d=d,
                                reason=reason or "по сообщению в боте")
