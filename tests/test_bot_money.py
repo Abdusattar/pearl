@@ -202,3 +202,12 @@ def test_on_hand_with_thousands_comma(db, world):
     n = world["n"]
     reply = svc.handle_update(db, _private(n, "На руках-90,055"))
     assert "на руках 90 055" in reply
+
+
+def test_bank_screenshot_in_group_is_never_echoed_in_group(db, world, monkeypatch):
+    n = world["n"]
+    monkeypatch.setenv(svc.GROUP_TALK_ENV, "1")
+    _model(monkeypatch, {"kind": "bank", "bank_op": "balance", "balance": 64797.68, "date": date.today().isoformat(), "sure": True})
+    svc.handle_update(db, _group(n, photo_id="bank7"))
+    assert db.query(BotMessage).filter_by(kind="group_reply", chat_id=GROUP).count() == 0
+    assert _offer(db, n) is not None and _offer(db, n).chat_id == n.tg_id

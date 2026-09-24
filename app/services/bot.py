@@ -677,8 +677,11 @@ def _handle_group(db: Session, msg: dict, user: User | None, text: str) -> str |
     payload["reply"] = reply
     db.add(BotMessage(kind=kind, chat_id=chat_id, user_id=user.id if user else None, direction="in",
                       text=text[:2000], status="understood" if reply else "silent", payload=payload))
+    # Остаток счёта в общий чат не озвучиваем, даже если бот в группе говорит (24.09: скрин
+    # банка, брошенный в группу по ошибке, — вопрос «верно?» ушёл в личку, в чате — тишина)
+    confidential = payload.get("kind") in (grp.BANK, grp.BALANCE)
     if reply:
-        if group_talks():
+        if group_talks() and not confidential:
             send(db, chat_id, reply, "group_reply", user_id=user.id if user else None, reply_to=message_id)
         else:
             # бот молчит в группе: владелец видит, что бот ответил бы, у себя в личке
