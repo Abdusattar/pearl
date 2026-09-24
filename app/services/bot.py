@@ -482,6 +482,10 @@ def handle_update(db: Session, update: dict) -> str | None:
         text, msg = transcript, {**msg, "text": transcript, "_voice": True}   # дальше как обычный текст
     if media and media["kind"] == "document" and user:
         msg = {**msg, "_doc": media}
+    if media and media["kind"] == "file" and user:
+        reply = _save_file(db, msg, media, user, chat_id)
+        send(db, chat_id, reply, "reply", user_id=user.id)
+        return reply
     if not user:
         # 23.09: номер человеку ни к чему — владелец привязывает кнопкой «Это он(а)»
         reply = "Здравствуйте. Я бот Жемчужины. Абдусаттар подключит вас, передавать ничего не нужно."
@@ -540,6 +544,9 @@ def handle_update(db: Session, update: dict) -> str | None:
     return reply
 
 
+_ON_HAND = re.compile(r"(?:на\s*руках|наличн\w*)\D{0,25}?(\d[\d\s]*(?:[.,]\d+)?)|(\d[\d\s]*(?:[.,]\d+)?)\s*(?:сом\w*\s*)?(?:на\s*руках|наличн)", re.I)
+
+
 def _last_out(db: Session, user_id: int) -> str | None:
     m = (db.query(BotMessage).filter(BotMessage.user_id == user_id, BotMessage.direction == "out")
          .order_by(BotMessage.id.desc()).first())
@@ -552,6 +559,12 @@ def _private_money(db: Session, site: Organization, user: User, text: str) -> st
     from app.services import bot_group as grp, bot_money
     if not grp.worth_reading(text):
         return None
+    if m := _ON_HAND.search(text):
+        # «на руках 15 000», «наличных 0» — точка кармана автора (Айжан, старт школы 24.09)
+        amount = Decimal((m.group(1) or m.group(2)).replace(" ", "").replace(",", "."))
+        info = {"kind": "pocket", "amount": float(amount), "date": date.today()}
+        asked = bot_money.offer(db, site, user, info, date.today())
+        return asked.text if asked is not None else None
     try:
         info = grp.read_text(db, text, user, date.today())
     except Exception:  # noqa: BLE001 — модель недоступна: обычный ответ ниже
@@ -727,6 +740,10 @@ def _media(msg: dict) -> dict | None:
     if d and ((d.get("mime_type") or "") in IMAGE_MIMES or (d.get("mime_type") or "") == "application/pdf"):
         return {"kind": "document", "file_id": d["file_id"], "file_unique_id": d.get("file_unique_id"),
                 "mime": d.get("mime_type"), "file_name": d.get("file_name")}
+    if d and d.get("file_id"):
+        # Excel/Word/csv (таблица сумм по детям от Айжан, 24.09): сохранить и отдать владельцу
+        return {"kind": "file", "file_id": d["file_id"], "file_unique_id": d.get("file_unique_id"),
+                "mime": d.get("mime_type"), "file_name": d.get("file_name")}
     v = msg.get("voice") or msg.get("audio")
     if v:
         return {"kind": "voice", "file_id": v["file_id"], "file_unique_id": v.get("file_unique_id"),
@@ -759,6 +776,26 @@ def _voice_text(db: Session, msg: dict, media: dict, user: User | None, chat_id:
                                "message_id": msg.get("message_id"), "from_id": (msg.get("from") or {}).get("id"),
                                "from_name": _sender_name(msg.get("from") or {})}))
     return transcript
+
+
+def _save_file(db: Session, msg: dict, media: dict, user: User, chat_id: int | None) -> str:
+    """Файл не картинка и не PDF (Excel по детям, список сотрудников): в media/bot/files,
+    владельцу — что пришло и где лежит. Разбирать такие файлы бот не пробует."""
+    data = download_file(media["file_id"])
+    if data is None:
+        return "Файл не смог скачать. Попробуйте ещё раз."
+    month = datetime.now().strftime("%Y-%m")
+    folder = MEDIA_ROOT / "bot" / "files" / month
+    folder.mkdir(parents=True, exist_ok=True)
+    safe = re.sub(r"[^\w.\-а-яА-ЯёЁ ]", "_", media.get("file_name") or "file")
+    fname = f"{(media.get('file_unique_id') or compute_hash(data)[:12])}_{safe}"
+    (folder / fname).write_bytes(data)
+    rel = f"bot/files/{month}/{fname}"
+    db.add(BotMessage(kind="file", chat_id=chat_id, user_id=user.id, direction="in", status="saved",
+                      text=media.get("file_name") or "", payload={"file": rel, "message_id": msg.get("message_id")}))
+    if user.id != OWNER_USER_ID:
+        owner_copy(db, f"Файл от {user.name}: {media.get('file_name') or 'без имени'} — media/{rel}")
+    return "Файл получил, передал Абдусаттару. Спасибо!"
 
 
 def _pending_summary(db: Session) -> BotMessage | None:

@@ -79,6 +79,13 @@ def build(db: Session, site: Organization, author: User | None, info: dict, toda
         return {"op": "supplier", "amount": str(amount), "date": d.strftime(_DATE_FMT), "supplier_id": supplier.id,
                 "payer_id": payer.id, "ask": payer.id,
                 "what": f"оплата {supplier.name} {grp.fmt_money(amount)} из кармана {grp._first(payer.name)}"}
+    if kind == "pocket" and author is not None and amount is not None:
+        # своя точка наличных: разница с записями видна сразу, «да, причина» — причина
+        expected = cash.pocket_balance(db, site.id, author.id)
+        delta = Decimal(str(amount)) - expected
+        tail = " — с записями сходится" if abs(delta) < 1 else             f". По записям {grp.fmt_money(expected)}, разница {grp._signed(delta)}"
+        return {"op": "recount", "amount": str(amount), "date": today.strftime(_DATE_FMT), "pocket_user_id": author.id,
+                "ask": author.id, "what": f"наличных у {grp._first(author.name)} на руках {grp.fmt_money(amount)}{tail}"}
     if kind in (grp.BALANCE, grp.BANK):
         bal = info.get("balance") or (info.get("amount") if kind == grp.BALANCE else None)
         if not bal or (kind == grp.BANK and info.get("bank_op") not in ("balance", None)):
@@ -115,7 +122,7 @@ def offer(db: Session, site: Organization, author: User | None, info: dict, toda
         return None
     d = datetime.strptime(o["date"], _DATE_FMT).date()
     day = "сегодня" if d == today else ("вчера" if d == today - timedelta(days=1) else grp._d(d))
-    when = "" if o["op"] == "bank" else f", {day}"
+    when = "" if o["op"] in ("bank", "recount") else f", {day}"
     text = (f"{grp._first(who.name)}, записываю: {o['what']}{when}. Верно? "
             "Ответьте «да» — запишу, «нет» — не буду.")
     return send(db, who.tg_id, text, OFFER, user_id=who.id, payload=o)
@@ -156,6 +163,9 @@ def answer(db: Session, site: Organization, user: User, ask: BotMessage, yes: bo
         elif o["op"] == "supplier":
             rec = ledger.pay_supplier(db, user=user, site_org_id=site.id, supplier_id=o["supplier_id"], amount=amount,
                                       d=d, source="cash", payer_id=o["payer_id"], account_org_id=None, comment=note)
+        elif o["op"] == "recount":
+            rec = cash.recount(db, user=user, site_org_id=site.id, pocket_user_id=o["pocket_user_id"], actual=amount, d=d,
+                               reason=reason or "по сообщению в боте")
         else:
             # разница видна в Кассе как есть; «да, причина» — причина пишется рядом
             rec = cash.bank_balance(db, user=user, org_id=o["org_id"], actual=amount, d=d,

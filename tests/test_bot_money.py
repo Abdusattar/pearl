@@ -129,3 +129,26 @@ def test_unknown_person_is_not_guessed(db, world, monkeypatch):
     _model(monkeypatch, {"kind": "transfer", "amount": 5000, "who": "Гульнара", "to": "Бакыт", "date": "today"})
     svc.handle_update(db, _group(m, "Гульнара передала Бакыту 5 000"))
     assert db.query(BotMessage).filter_by(kind=bot_money.OFFER).count() == 0
+
+
+def test_on_hand_in_private_asks_self_and_yes_records_pocket_point(db, world, monkeypatch):
+    """Айжан 24.09: «наличных школы у меня 12 400» в личку → «верно?» → «да, причина» → точка кармана."""
+    n = world["n"]
+    reply = svc.handle_update(db, _private(n, "наличных у меня на руках 12 400"))
+    assert reply.startswith("Мунаратест, записываю: наличных у Мунаратест на руках 12 400")
+    assert "Записал" in svc.handle_update(db, _private(n, "да, остаток с прошлого месяца", mid=51))
+    rec = db.query(Reconciliation).filter_by(kind="pocket", subject_id=n.id).one()
+    assert rec.actual_amount == Decimal("12400") and rec.reason == "остаток с прошлого месяца"
+
+
+def test_excel_in_private_is_saved_and_owner_told(db, world, monkeypatch, tmp_path):
+    n = world["n"]
+    monkeypatch.setattr(svc, "MEDIA_ROOT", tmp_path)
+    upd = {"message": {"message_id": 7, "chat": {"id": n.tg_id, "type": "private"}, "from": {"id": n.tg_id},
+                       "document": {"file_id": "x1", "file_unique_id": "ux1", "file_name": "дети.xlsx",
+                                    "mime_type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"}}}
+    reply = svc.handle_update(db, upd)
+    assert reply == "Файл получил, передал Абдусаттару. Спасибо!"
+    saved = db.query(BotMessage).filter_by(kind="file", user_id=n.id).one()
+    assert (tmp_path / saved.payload["file"]).read_bytes() == b"photo-x1"
+    assert db.query(BotMessage).filter_by(kind="owner_copy").count() == 1
