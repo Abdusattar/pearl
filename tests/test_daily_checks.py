@@ -78,3 +78,30 @@ def test_bank_answer_records_yesterday(db, world, monkeypatch):
     assert reply.startswith("Записал остаток")
     rec = db.query(Reconciliation).filter_by(kind="account", organization_id=world["sadik"].id).one()
     assert rec.date == date.today() - timedelta(days=1)
+
+
+def test_morning_no_without_number_asks_figure_then_yes_with_reason(db, world, monkeypatch):
+    """Махабат 24.09: «нет хлеб взяли в долг» — не дежурная фраза, а просьба одной цифрой;
+    «да, хлеб в долг» — подтверждение с причиной."""
+    monkeypatch.setattr(cash, "pocket_people", lambda db, s: [world["m"]])
+    monkeypatch.setattr(cash, "state", lambda db, s: {"accounts": []})
+    if not bot._morning_checks(db, world["sadik"], _at(9)):
+        return   # выходной
+    def say(t, mid):
+        return bot.handle_update(db, {"message": {"message_id": mid, "chat": {"id": 557001, "type": "private"},
+                                                  "from": {"id": 557001}, "text": t}})
+    assert "цифрой" in say("нет хлеб взяли в долг", 3)
+    assert db.query(Reconciliation).filter_by(kind="pocket", subject_id=world["m"].id).count() == 0
+    assert "Записано" in say("да, хлеб в долг", 4)
+    rec = db.query(Reconciliation).filter_by(kind="pocket", subject_id=world["m"].id).one()
+    assert rec.reason == "хлеб в долг"
+
+
+def test_morning_no_with_number_records(db, world, monkeypatch):
+    monkeypatch.setattr(cash, "pocket_people", lambda db, s: [world["m"]])
+    monkeypatch.setattr(cash, "state", lambda db, s: {"accounts": []})
+    if not bot._morning_checks(db, world["sadik"], _at(9)):
+        return
+    reply = bot.handle_update(db, {"message": {"message_id": 5, "chat": {"id": 557001, "type": "private"},
+                                               "from": {"id": 557001}, "text": "нет, 0 хлеб в долг"}})
+    assert "Записано" in reply

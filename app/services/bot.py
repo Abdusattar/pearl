@@ -39,6 +39,7 @@ REVIEW_ENV = "BOT_REVIEW_SUMMARY"      # «1» — сводка учредите
 # только в журнал — пока на живых сообщениях не станет видно, что понимает верно.
 GROUP_TALK_ENV = "BOT_GROUP_TALK"
 OWNER_USER_ID = 1                      # Абдусаттар: проверяет сводку
+COUNT_GRACE_DAYS = 3                   # пересчёт за столько дней до дня пересчёта засчитан
 
 MEDIA_ROOT = Path(__file__).parent.parent.parent / "media"
 
@@ -272,7 +273,7 @@ def _meal_and_count_asks(db: Session, site: Organization, now: datetime) -> list
                              "потом неделя смажется. Склад → Пересчитать → «Ключевые».")
             if bank and slot == "first":
                 who = _bank_holder(db, site)
-                lines.append((f"{who}, " if who else "") + "и остаток в банке на конец вчерашнего дня, одной цифрой: "
+                lines.append((f"{who}, " if who else "") + ("и " if lines else "") + "остаток в банке на конец вчерашнего дня, одной цифрой: "
                              + ", ".join(a["org"].name for a in bank) + ". Касса → Остаток в банке.")
             send(db, group, "\n\n".join(lines), "count_ask", job_key=key)
             out.append(key)
@@ -385,12 +386,14 @@ def _week_praise(db: Session, site: Organization, now: datetime) -> list[str]:
 
 
 def key_count_done(db: Session, site_org_id: int, d: date) -> bool:
-    """Ключевые пересчитаны с начала этой «недели пересчёта» (с последнего дня пересчёта)."""
+    """Ключевые пересчитаны с начала этой «недели пересчёта» (с последнего дня пересчёта).
+    Пересчёт за COUNT_GRACE_DAYS до дня пересчёта тоже засчитан (24.09: точку ноль
+    записали в среду — в четверг считать заново незачем)."""
     from app.models import StockCount, StockCountLine
     keys = rules.key_products(db)
     if not keys:
         return True
-    since = count_week_start(db, d)
+    since = count_week_start(db, d) - timedelta(days=COUNT_GRACE_DAYS)
     got = {pid for (pid,) in db.query(StockCountLine.product_id).join(StockCount, StockCount.id == StockCountLine.count_id)
            .filter(StockCount.organization_id == site_org_id, StockCount.status == "applied",
                    StockCount.count_date >= since, StockCountLine.product_id.in_(keys)).distinct().all()}
@@ -434,6 +437,10 @@ def _send_founders(db: Session, text: str, key: str | None = None) -> None:
 # ── входящие ─────────────────────────────────────────────────────────────
 
 _NUM = re.compile(r"^\s*(\d[\d\s]*(?:[.,]\d+)?)\s*(.*)$", re.S)
+# Ответ на утренний вопрос: «да» / «да, хлеб в долг» — подтверждение (хвост — причина);
+# «нет» / «нет, 3500 …» — дальше ждём цифру. Хвост «да» без цифр, иначе это не «да».
+_YES = re.compile(r"^\s*(?:да|верно|\+)(?![а-яё\w])[\s,.!—-]*([^\d]*)$", re.I | re.S)
+_NO = re.compile(r"^\s*(?:нет|неверно|не верно)(?![а-яё\w])[\s,.!—-]*(.*)$", re.I | re.S)
 
 
 def handle_update(db: Session, update: dict) -> str | None:
@@ -734,13 +741,16 @@ def _handle_pocket_answer(db: Session, user: User, site: Organization, text: str
     ask = (db.query(BotMessage).filter(BotMessage.kind == "pocket_ask", BotMessage.user_id == user.id)
            .order_by(BotMessage.id.desc()).first())
     expected = cash.pocket_balance(db, site.id, user.id)
-    low = text.lower().strip()
-    if low in ("да", "верно", "+"):
-        actual, reason = expected, "подтверждено в боте"
+    yes, no = _YES.match(text), _NO.match(text)
+    if yes:
+        actual, reason = expected, yes.group(1).strip() or "подтверждено в боте"
     else:
-        m = _NUM.match(text)
+        m = _NUM.match(no.group(1) if no else text)
         if not m:
-            return "Не понял. Ответьте «да» или суммой, например «60000 отдала за хлеб»."
+            # «нет, хлеб взяли в долг» (Махабат 24.09): «нет» без цифры — не угадываем, что
+            # она имела в виду, а просим одну цифру; вопрос остаётся открытым
+            return ("Сколько у вас на руках сейчас? Напишите цифрой, например «0» "
+                    "или «3500, отдала за хлеб».")
         actual = Decimal(m.group(1).replace(" ", "").replace(",", "."))
         reason = m.group(2).strip()
     delta = actual - expected
@@ -1028,12 +1038,13 @@ def morning_answer(db: Session, site: Organization, user: User, text: str) -> st
                                        BotMessage.status.in_(("sent", "logged")),
                                        BotMessage.created_at >= datetime.combine(d, datetime.min.time()))
            .order_by(BotMessage.id.desc()).first())
-    low = (text or "").strip().lower()
-    if ask is None or not (low in ("да", "верно", "+") or _NUM.match(text or "")):
+    text = text or ""
+    if ask is None or not (_YES.match(text) or _NO.match(text) or _NUM.match(text)):
         return None
     if ask.kind == "pocket_ask":
         return _handle_pocket_answer(db, user, site, text)
-    m = _NUM.match(text or "")
+    no = _NO.match(text)
+    m = _NUM.match(no.group(1) if no else text)
     if not m:
         return "Нужна цифра из банка, например «125 400»."
     actual = Decimal(m.group(1).replace(" ", "").replace(",", "."))

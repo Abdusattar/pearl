@@ -200,3 +200,26 @@ def test_incomplete_line_asks_for_rest_then_accepts_one_part(db, site, counter):
     # когда день полный — одиночное «садик 9» в чате больше не ловим
     upd["message"]["text"] = "садик 9"
     assert bot.handle_update(db, upd) is None or row.sadik == 8
+
+
+def test_count_day_after_fresh_count_asks_only_bank(db, site, counter, monkeypatch):
+    """24.09: точку ноль записали в среду — в четверг пересчёт не просим, остаётся банк."""
+    from app.models import StockCount, StockCountLine
+    p = Product(name="Говядина тест-ср", unit="кг")
+    db.add(p)
+    db.flush()
+    monkeypatch.setattr(rules, "key_products", lambda db: [p.id])
+    monkeypatch.setattr(rules, "count_weekday", lambda db: 3)
+    thu = _thursday_after(date.today() + timedelta(days=7))
+    sc = StockCount(organization_id=site.id, count_date=thu - timedelta(days=1), status="applied",
+                    started_by=counter.id)
+    db.add(sc)
+    db.flush()
+    db.add(StockCountLine(count_id=sc.id, product_id=p.id, actual_qty=5, mode="number"))
+    db.flush()
+    assert bot.key_count_done(db, site.id, thu)
+    assert not bot.key_count_done(db, site.id, thu + timedelta(days=7))   # через неделю — уже нужен
+    monkeypatch.setattr(bot.cash, "bank_due", lambda db, s, start: [{"org": site}])
+    keys = bot._meal_and_count_asks(db, site, datetime(thu.year, thu.month, thu.day, 15, 5))
+    text = db.query(BotMessage).filter_by(job_key=keys[-1]).one().text
+    assert "пересчёт" not in text and "остаток в банке" in text and ", и остаток" not in text
