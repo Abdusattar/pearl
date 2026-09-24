@@ -440,6 +440,8 @@ _NUM = re.compile(r"^\s*(\d[\d\s]*(?:[.,]\d+)?)\s*(.*)$", re.S)
 # Ответ на утренний вопрос: «да» / «да, хлеб в долг» — подтверждение (хвост — причина);
 # «нет» / «нет, 3500 …» — дальше ждём цифру. Хвост «да» без цифр, иначе это не «да».
 _YES = re.compile(r"^\s*(?:да|верно|\+)(?![а-яё\w])[\s,.!—-]*([^\d]*)$", re.I | re.S)
+# на «записываю …, верно?» цифры в хвосте — только причина («да, Optima 18.09 в пути»)
+_YES_REASON = re.compile(r"^\s*(?:да|верно|\+)(?![а-яё\w])[\s,.!—-]*(.*)$", re.I | re.S)
 _NO = re.compile(r"^\s*(?:нет|неверно|не верно)(?![а-яё\w])[\s,.!—-]*(.*)$", re.I | re.S)
 
 
@@ -492,6 +494,8 @@ def handle_update(db: Session, update: dict) -> str | None:
     site = site_for_bot(db)
     if (msg.get("photo") or msg.get("_doc")) and site is not None:
         reply = _handle_photo(db, msg, user, site, text)
+        if reply is None:
+            return _last_out(db, user.id)   # вопрос «Верно?» уже ушёл в этот чат
         send(db, chat_id, reply, "reply", user_id=user.id)
         return reply
     if site is not None and (meal := meal_reply(db, site, user, text)):
@@ -523,6 +527,8 @@ def handle_update(db: Session, update: dict) -> str | None:
             m = send(db, chat_id, reply + "\n\nОтправить Айдай и Таласу? Ответьте «ок» или «не так».",
                      "founders_review", user_id=user.id, payload={"summary": reply}, status="pending")
             return m.text
+    elif site is not None and (money := _private_money(db, site, user, text)):
+        return money
     elif user.role in OPERATIONAL_ROLES and site is not None and _NUM.match(text):
         reply = ("Сумму на руках запишет Махабат в Кассе («Пересчитать наличные»). "
                  "Скоро такие сообщения будут сами становиться черновиком ей на проверку.")
@@ -534,11 +540,37 @@ def handle_update(db: Session, update: dict) -> str | None:
     return reply
 
 
+def _last_out(db: Session, user_id: int) -> str | None:
+    m = (db.query(BotMessage).filter(BotMessage.user_id == user_id, BotMessage.direction == "out")
+         .order_by(BotMessage.id.desc()).first())
+    return m.text if m else None
+
+
+def _private_money(db: Session, site: Organization, user: User, text: str) -> str | None:
+    """«сняла 25 000», «передала Махабат 20 000» в личку (шаг 2, 24.09): вопрос «Верно?»
+    тому, чьи деньги. Себе — он и есть ответ; про другого — говорим, кого спросили."""
+    from app.services import bot_group as grp, bot_money
+    if not grp.worth_reading(text):
+        return None
+    try:
+        info = grp.read_text(db, text, user, date.today())
+    except Exception:  # noqa: BLE001 — модель недоступна: обычный ответ ниже
+        return None
+    if info.get("kind") is None:
+        return None
+    asked = bot_money.offer(db, site, user, info, date.today())
+    if asked is not None and asked.user_id == user.id:
+        return asked.text
+    reply = (grp.text_reply(db, site, user, info, date.today()) or "Понял.") + bot_money.asked_note(db, asked)
+    send(db, user.tg_id, reply, "reply", user_id=user.id)
+    return reply
+
+
 def _handle_group(db: Session, msg: dict, user: User | None, text: str) -> str | None:
     """Группа «Жемчужина», день 1 (21.09): понять и ответить под сообщением,
     ничего не записывая. Всё, что бот понял, — в журнале (payload), по нему
     владелец смотрит, как бот распознаёт, прежде чем разрешить запись."""
-    from app.services import bot_group as grp
+    from app.services import bot_group as grp, bot_money
     site = site_for_bot(db)
     if site is None:
         return None
@@ -581,6 +613,8 @@ def _handle_group(db: Session, msg: dict, user: User | None, text: str) -> str |
                 info = grp.read_text(db, text, user, today_d)
                 payload.update({k: (v.isoformat() if isinstance(v, date) else v) for k, v in info.items()})
                 reply = grp.text_reply(db, site, user, info, today_d)
+                if reply:
+                    reply += bot_money.asked_note(db, bot_money.offer(db, site, user, info, today_d))
         elif media and media["kind"] in ("photo", "document"):
             kind = "group_photo" if media["kind"] == "photo" else "group_document"
             payload["file_unique_id"] = media.get("file_unique_id")
@@ -590,6 +624,8 @@ def _handle_group(db: Session, msg: dict, user: User | None, text: str) -> str |
             reply, info, draft = intake_photo(db, site, user, data, media.get("file_unique_id"), text, "chat",
                                               mime=media.get("mime"), file_name=media.get("file_name"))
             payload.update({k: (v.isoformat() if isinstance(v, date) else v) for k, v in info.items()})
+            if reply and draft is None and info.get("kind") == grp.BANK:
+                reply += bot_money.asked_note(db, bot_money.offer(db, site, user, info, today_d))
             if draft is not None:
                 payload["draft_id"] = draft.id
                 if draft.kind == "count":
@@ -601,6 +637,8 @@ def _handle_group(db: Session, msg: dict, user: User | None, text: str) -> str |
             info = grp.read_text(db, text, user, today_d)
             payload.update({k: (v.isoformat() if isinstance(v, date) else v) for k, v in info.items()})
             reply = grp.text_reply(db, site, user, info, today_d)
+            if reply:
+                reply += bot_money.asked_note(db, bot_money.offer(db, site, user, info, today_d))
     except Exception as e:  # noqa: BLE001 — модель или сеть упали: в группе молчим, в журнал
         db.add(BotMessage(kind="group_error", chat_id=chat_id, user_id=user.id if user else None, direction="in",
                           status="failed", text=str(e)[:500], payload=payload))
@@ -827,7 +865,7 @@ def owner_copy(db: Session, text: str) -> None:
     send(db, owner.tg_id if owner else None, text, "owner_copy", user_id=OWNER_USER_ID)
 
 
-def _handle_photo(db: Session, msg: dict, user: User, site: Organization, caption: str) -> str:
+def _handle_photo(db: Session, msg: dict, user: User, site: Organization, caption: str) -> str | None:
     """Фото или файл в личку: тот же путь, что из группы — черновик на проверку Махабат."""
     media = msg.get("_doc") or _media(msg)
     data = download_file(media["file_id"])
@@ -836,6 +874,13 @@ def _handle_photo(db: Session, msg: dict, user: User, site: Organization, captio
     try:
         reply, _info, draft = intake_photo(db, site, user, data, media.get("file_unique_id"), caption, "private",
                                            mime=media.get("mime"), file_name=media.get("file_name"))
+        if reply and draft is None and _info.get("kind") == "bank":
+            # скрин банка в личку (шаг 2): держателю счёта — «записываю остаток, верно?»
+            from app.services import bot_money
+            asked = bot_money.offer(db, site, user, _info, date.today())
+            if asked is not None and asked.user_id == user.id:
+                return None
+            reply += bot_money.asked_note(db, asked)
     except Exception:  # noqa: BLE001 — модель недоступна: фото не теряем, кладём как чек
         from app.services import drafts
         if (media.get("mime") or "") == "application/pdf":
@@ -1032,13 +1077,21 @@ def _morning_checks(db: Session, site: Organization, now: datetime) -> list[str]
 
 
 def morning_answer(db: Session, site: Organization, user: User, text: str) -> str | None:
-    """Ответ на утренний вопрос в личке: последний открытый вопрос этого человека за сегодня."""
+    """Ответ на вопрос бота в личке: последний открытый вопрос этого человека — утренний
+    (за сегодня) или «записываю …, верно?» о деньгах (шаг 2, 24.09)."""
+    from app.services import bot_money
     d = date.today()
     ask = (db.query(BotMessage).filter(BotMessage.user_id == user.id, BotMessage.kind.in_(("pocket_ask", "bank_ask")),
                                        BotMessage.status.in_(("sent", "logged")),
                                        BotMessage.created_at >= datetime.combine(d, datetime.min.time()))
            .order_by(BotMessage.id.desc()).first())
     text = text or ""
+    offer = bot_money.open_offer(db, user)
+    if offer is not None and (ask is None or offer.id > ask.id):
+        yes, no = _YES_REASON.match(text), _NO.match(text)
+        if not (yes or no):
+            return None
+        return bot_money.answer(db, site, user, offer, bool(yes), yes.group(1).strip() if yes else None)
     if ask is None or not (_YES.match(text) or _NO.match(text) or _NUM.match(text)):
         return None
     if ask.kind == "pocket_ask":
