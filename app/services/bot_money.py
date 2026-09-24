@@ -96,7 +96,8 @@ def build(db: Session, site: Organization, author: User | None, info: dict, toda
         # своя точка наличных: разница с записями видна сразу, «да, причина» — причина
         expected = cash.pocket_balance(db, site.id, author.id)
         delta = Decimal(str(amount)) - expected
-        tail = " — с записями сходится" if abs(delta) < 1 else             f". По записям {grp.fmt_money(expected)}, разница {grp._signed(delta)}"
+        tail = " — с записями сходится" if abs(delta) < 1 else \
+            f". По записям {grp.fmt_money(expected)}, разница {grp._signed(delta)}"
         return {"op": "recount", "amount": str(amount), "date": today.strftime(_DATE_FMT), "pocket_user_id": author.id,
                 "ask": author.id, "what": f"наличных у {grp._first(author.name)} на руках {grp.fmt_money(amount)}{tail}"}
     if kind in (grp.BALANCE, grp.BANK):
@@ -110,9 +111,16 @@ def build(db: Session, site: Organization, author: User | None, info: dict, toda
         holder = _account_holder(db, acc)
         # Скрин сегодня утром = конец вчерашнего дня: Optima за вчера зачислена ночью,
         # за сегодня ещё нет (память: зачисление на следующий день)
+        def recorded(day):
+            return db.query(Reconciliation.id).filter(Reconciliation.organization_id == acc.id,
+                                                      Reconciliation.kind == "account", Reconciliation.date == day,
+                                                      Reconciliation.cancelled_at.is_(None)).first() is not None
         on = today - timedelta(days=1) if d >= today else d
-        if db.query(Reconciliation.id).filter(Reconciliation.organization_id == acc.id, Reconciliation.kind == "account",
-                                              Reconciliation.date == on, Reconciliation.cancelled_at.is_(None)).first():
+        if d >= today and recorded(on):
+            # вчера уже записано — второй скрин за день показывает счёт после сегодняшних
+            # движений (Мунара 24.09: скрин после снятия 64 662, разница −134 — комиссия)
+            on = today
+        if recorded(on):
             return None   # остаток на этот день уже записан — второй скрин не переспрашиваем
         first = not db.query(Reconciliation.id).filter(Reconciliation.organization_id == acc.id,
                                                        Reconciliation.kind == "account",
@@ -125,6 +133,8 @@ def build(db: Session, site: Organization, author: User | None, info: dict, toda
             delta = Decimal(str(bal)) - expected
             tail = " — с записями сходится" if abs(delta) <= 1 else \
                 f". По записям {grp.fmt_money(expected)}, разница {grp._signed(delta)}"
+            if -500 < delta < -1 and on == today:
+                tail += " — похоже, комиссия банка за сегодняшнее снятие; если так, ответьте «да, комиссия»"
         return {"op": "bank", "amount": str(bal), "date": on.strftime(_DATE_FMT), "org_id": acc.id,
                 "ask": holder.id if holder else None,
                 "what": f"остаток счёта {_label(acc)} {grp.fmt_money(bal)} на конец {grp._dd(on)}{tail}"}
