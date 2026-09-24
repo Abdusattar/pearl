@@ -279,7 +279,25 @@ def answer(db: Session, site: Organization, user: User, ask: BotMessage, yes: bo
         return f"Не записал: {e}. Поправьте в приложении: {public_url()}/new/cash"
     ask.status = "answered"
     ask.payload = {**o, "result_id": rec.id, "auto": auto}
+    if o["op"] in ("transfer", "founder_out", "founder_in"):
+        # Передачи между людьми — в группу (владелец 24.09): вторая сторона видит запись
+        from app.services.bot import group_chat_id, send
+        from app.services.bot import _d as _dd
+        day = "сегодня" if d == date.today() else ("вчера" if d == date.today() - timedelta(days=1) else _dd(d))
+        send(db, group_chat_id(), f"{_who_arrow(db, o)} {grp.fmt_money(amount)}, {day} — записал.", "group_transfer",
+             user_id=user.id)
     return "Записал. Спасибо!"
+
+
+def _who_arrow(db: Session, o: dict) -> str:
+    def name(uid):
+        u = db.get(User, uid)
+        return grp._first(u.name) if u else "?"
+    if o["op"] == "transfer":
+        return f"{name(o['from_user_id'])} → {name(o['to_user_id'])}"
+    if o["op"] == "founder_out":
+        return f"{name(o['pocket_user_id'])} → {name(o['founder_id'])}"
+    return f"{name(o['founder_id'])} → {name(o['pocket_user_id'])}"
 
 
 def _withdrew_today(db: Session, account_org_id: int, today: date) -> bool:

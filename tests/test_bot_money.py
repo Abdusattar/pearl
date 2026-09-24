@@ -469,3 +469,14 @@ def test_handed_over_cash_is_transfer_not_on_hand(db, world, monkeypatch):
                          "date": (date.today() - timedelta(days=1)).isoformat(), "sure": True})
     reply = svc.handle_update(db, _private(n, "Вчерашний остаток наличными 5229сом отдала Махабату"))
     assert reply == "Мунаратест, передача Мунаратест → Махабаттест 5 229, вчера. Верно? Да / нет"
+
+
+def test_confirmed_transfer_is_posted_to_group(db, world, monkeypatch):
+    """Владелец 24.09: передачи ведём в группе — вторая сторона видит запись."""
+    n = world["n"]
+    _model(monkeypatch, {"kind": "transfer", "amount": 5229, "who": None, "to": "Махабаттест",
+                         "date": (date.today() - timedelta(days=1)).isoformat(), "sure": True})
+    svc.handle_update(db, _private(n, "отдала Махабат 5229 вчера"))
+    assert "Записал" in svc.handle_update(db, _private(n, "да", mid=55))
+    g = db.query(BotMessage).filter_by(kind="group_transfer").one()
+    assert g.chat_id == GROUP and g.text == "Мунаратест → Махабаттест 5 229, вчера — записал."
