@@ -446,3 +446,14 @@ def test_accountant_purchase_text_gets_form_link_not_receipt_request(db, world):
     assert reply.startswith("Махабаттест, закуп 1 200 без чека — внесите через «Закуп»") and "/new/buy" in reply
     reply = svc.handle_update(db, _group(m, "Закуп 1200"))
     assert "/new/buy" in reply
+
+
+def test_first_receipt_of_day_pings_checker_once(db, world, monkeypatch):
+    m, n = world["m"], world["n"]
+    _model(monkeypatch, {"kind": "purchase", "amount": 12770, "supplier": "Торговый центр", "sure": True})
+    svc.handle_update(db, _group(n, photo_id="rcA"))
+    ping = db.query(BotMessage).filter_by(kind="draft_ping", user_id=m.id).one()
+    assert ping.text.startswith("Махабаттест, чек Мунаратест 12 770 ждёт проверки: ") and "/new/buy?receipt=" in ping.text
+    _model(monkeypatch, {"kind": "purchase", "amount": 1600, "supplier": None, "sure": True})
+    svc.handle_update(db, _group(n, photo_id="rcB", mid=2))
+    assert db.query(BotMessage).filter_by(kind="draft_ping").count() == 1   # второй чек дня — молча

@@ -779,6 +779,8 @@ def _handle_group(db: Session, msg: dict, user: User | None, text: str) -> str |
                     # лист остатка (23.09): Махабат должна видеть ссылку — отвечаем в группе всегда
                     link = draft_link_text(db, site, user, draft)
                     send(db, chat_id, link, "group_reply", user_id=user.id if user else None, reply_to=message_id)
+                elif draft.kind == "receipt":
+                    _ping_checker(db, site, user, draft, info)
         elif grp.worth_reading(text):
             kind = "group_text"
             info = grp.read_text(db, text, user, today_d)
@@ -1064,7 +1066,32 @@ def _handle_photo(db: Session, msg: dict, user: User, site: Organization, captio
         reply = "Фото сохранил, разобрать не смог. Черновик у Махабат на проверке."
     if draft is not None and user.id != OWNER_USER_ID:
         owner_copy(db, f"Черновик от {user.name}: {reply}")
+        if draft.kind == "receipt":
+            _ping_checker(db, site, user, draft, _info)
     return reply or "Понял. Это не чек и не лист кухни — в черновики не кладу."
+
+
+def _counter_user(db: Session, site: Organization) -> User | None:
+    from app.services.purchases import site_orgs as _orgs
+    org_ids = [o.id for o in _orgs(db, site.id)]
+    return (db.query(User).filter(User.role == "staff", User.deleted_at.is_(None), User.organization_id.in_(org_ids),
+                                  User.tg_id.isnot(None)).order_by(User.id).first())
+
+
+def _ping_checker(db: Session, site: Organization, author: User | None, draft, info: dict) -> None:
+    """Первый чек за день (владелец 24.09: между чеком и 17:00 Махабат не знает, что есть работа):
+    одно личное сообщение учётчику со ссылкой; следующие чеки дня — без сообщений, вечером напоминание."""
+    from app.services import bot_group as grp
+    checker = _counter_user(db, site)
+    if checker is None or (author is not None and author.id == checker.id):
+        return
+    key = f"draft_ping:{site.id}:{date.today().isoformat()}"
+    if _done(db, key):
+        return
+    amount = info.get("amount")
+    what = f"чек {grp._first(author.name)} {fmt_money(float(amount))}" if author and amount else "чек"
+    send(db, checker.tg_id, f"{grp._first(checker.name)}, {what} ждёт проверки: {public_url()}/new/buy?receipt={draft.id}",
+         "draft_ping", user_id=checker.id, job_key=key)
 
 
 def download_file(file_id: str) -> bytes | None:
