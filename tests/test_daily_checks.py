@@ -25,12 +25,21 @@ def world(db, monkeypatch):
     monkeypatch.setenv(bot.GROUP_ENV, "-100557")
     monkeypatch.setattr(rules, "kitchen_weekdays", lambda db: {0, 1, 2, 3, 4, 5, 6})
     monkeypatch.setattr(rules, "daily_checks_until", lambda db: date.today() + timedelta(days=30))
+    from app.services import today as _today
+    monkeypatch.setattr(_today, "supplier_debts", lambda db, s: [])   # долги — отдельным тестом
+    from app.services import meals as _meals
+    monkeypatch.setattr(_meals, "missing_today", lambda db, s: False)   # едоки записаны — отдельным тестом
     return {"sadik": sadik, "m": m, "mu": mu}
 
 
-def _at(h):
-    d = date.today()
+def _at(h, d=None):
+    d = d or date.today()
     return datetime(d.year, d.month, d.day, h, 5)
+
+
+def _monday():
+    d = date.today()
+    return d + timedelta(days=(7 - d.weekday()) % 7 or 7)
 
 
 def test_purchases_ask_only_when_nothing_bought(db, world):
@@ -54,11 +63,10 @@ def test_purchases_ask_silent_when_bought(db, world):
 def test_morning_pocket_ask_and_yes_records_recount(db, world, monkeypatch):
     monkeypatch.setattr(cash, "pocket_people", lambda db, s: [world["m"]])
     monkeypatch.setattr(cash, "state", lambda db, s: {"accounts": []})
-    keys = bot._morning_checks(db, world["sadik"], _at(9))
-    if date.today().weekday() >= 5:
-        assert keys == []
-        return
-    assert keys == [f"pocket_ask:{date.today().isoformat()}:{world['m'].id}"]
+    assert bot._morning_checks(db, world["sadik"], _at(9)) == [] or date.today().weekday() == 0   # не понедельник — молчим (24.09)
+    mon = _monday()
+    keys = bot._morning_checks(db, world["sadik"], _at(9, mon))
+    assert keys == [f"pocket_ask:{mon.isoformat()}:{world['m'].id}"]
     reply = bot.handle_update(db, {"message": {"message_id": 1, "chat": {"id": 557001, "type": "private"},
                                                "from": {"id": 557001}, "text": "да"}})
     assert "Записано" in reply
@@ -85,8 +93,8 @@ def test_morning_no_without_number_asks_figure_then_yes_with_reason(db, world, m
     «да, хлеб в долг» — подтверждение с причиной."""
     monkeypatch.setattr(cash, "pocket_people", lambda db, s: [world["m"]])
     monkeypatch.setattr(cash, "state", lambda db, s: {"accounts": []})
-    if not bot._morning_checks(db, world["sadik"], _at(9)):
-        return   # выходной
+    mon = _monday()
+    bot._morning_checks(db, world["sadik"], _at(9, mon))
     def say(t, mid):
         return bot.handle_update(db, {"message": {"message_id": mid, "chat": {"id": 557001, "type": "private"},
                                                   "from": {"id": 557001}, "text": t}})
@@ -100,8 +108,25 @@ def test_morning_no_without_number_asks_figure_then_yes_with_reason(db, world, m
 def test_morning_no_with_number_records(db, world, monkeypatch):
     monkeypatch.setattr(cash, "pocket_people", lambda db, s: [world["m"]])
     monkeypatch.setattr(cash, "state", lambda db, s: {"accounts": []})
-    if not bot._morning_checks(db, world["sadik"], _at(9)):
-        return
+    mon = _monday()
+    bot._morning_checks(db, world["sadik"], _at(9, mon))
     reply = bot.handle_update(db, {"message": {"message_id": 5, "chat": {"id": 557001, "type": "private"},
                                                "from": {"id": 557001}, "text": "нет, 0 хлеб в долг"}})
     assert "Записано" in reply
+
+
+def test_debts_asked_on_monday_and_when_crossing_month(db, world, monkeypatch):
+    """24.09: долги — Махабат по понедельникам в 17:00 и в день, когда долг стал старше месяца."""
+    from app.services import today as _today
+    d = date.today()
+    monkeypatch.setattr(_today, "supplier_debts",
+                        lambda db, s: [{"id": 77, "name": "Мясо тест-ут", "debt": Decimal("62595"), "since": d - timedelta(days=45)}])
+    monkeypatch.setattr(bot, "_bought_today", lambda db, s, day: True)   # закупки были — про закуп не спрашиваем
+    keys = bot._purchases_ask(db, world["sadik"], _at(17))
+    text = db.query(BotMessage).filter_by(job_key=keys[0]).one().text
+    assert "долги поставщикам: Мясо тест-ут 62 595" in text and "оплатила" in text
+    # на следующий день (не понедельник) — уже не повторяем: порог отмечен
+    nd = d + timedelta(days=1 if d.weekday() != 6 else 2)
+    keys2 = bot._purchases_ask(db, world["sadik"], datetime(nd.year, nd.month, nd.day, 17, 5))
+    if nd.weekday() != 0:
+        assert keys2 == []

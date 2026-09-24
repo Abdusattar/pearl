@@ -135,6 +135,12 @@ def build(db: Session, site: Organization, author: User | None, info: dict, toda
                 f". По записям {grp.fmt_money(expected)}, разница {grp._signed(delta)}"
             if -500 < delta < -1 and on == today:
                 tail += " — похоже, комиссия банка за сегодняшнее снятие; если так, ответьте «да, комиссия»"
+            if delta > max(Decimal("5000"), abs(expected) * Decimal("0.2")):
+                # счёт не растёт сам: без прихода такой скачок — скорее не про счёт (наличные?)
+                return {"op": "bank", "ask": holder.id if holder else None, "amount": str(bal),
+                        "date": on.strftime(_DATE_FMT), "org_id": acc.id,
+                        "what": f"остаток счёта {_label(acc)} {grp.fmt_money(bal)}{tail}",
+                        "doubt": "счёт не мог вырасти без прихода — возможно, это наличные"}
         return {"op": "bank", "amount": str(bal), "date": on.strftime(_DATE_FMT), "org_id": acc.id,
                 "ask": holder.id if holder else None,
                 "what": f"остаток счёта {_label(acc)} {grp.fmt_money(bal)} на конец {grp._dd(on)}{tail}"}
@@ -150,12 +156,42 @@ def offer(db: Session, site: Organization, author: User | None, info: dict, toda
     who = db.get(User, o["ask"])
     if not _can_answer(who):
         return None
+    if o.get("doubt"):
+        # Неправдоподобно (владелец 24.09: «бот гонит») — человека не дёргаем, владельцу тихо
+        from app.services.bot import owner_copy
+        owner_copy(db, f"{who.name}: {o['what']} — не спросил, {o['doubt']}. Разберитесь в Кассе.")
+        return None
     d = datetime.strptime(o["date"], _DATE_FMT).date()
     day = "сегодня" if d == today else ("вчера" if d == today - timedelta(days=1) else grp._d(d))
     when = "" if o["op"] in ("bank", "recount") else f", {day}"
-    text = (f"{grp._first(who.name)}, записываю: {o['what']}{when}. Верно? "
-            "Ответьте «да» — запишу, «нет» — не буду.")
+    # Один открытый вопрос на человека: новый заменяет старый без «поправок»
+    prev = open_offer(db, who)
+    if prev is not None:
+        prev.status = "superseded"
+    if trusted(db, who, o["op"]):
+        # Ступень 3: пять «да» подряд без «нет» — пишем сами, человек видит «записал»
+        m = send(db, who.tg_id, "", OFFER, user_id=who.id, payload=o, status="logged")
+        res = answer(db, site, who, m, True, None, auto=True)
+        m.text = f"Записал: {o['what']}{when}. Если не так — напишите «не так»."
+        m.status = "answered"
+        from app.services.bot import send as _send
+        _send(db, who.tg_id, m.text, "money_auto", user_id=who.id, payload={**o, "result": res})
+        return m
+    text = f"{grp._first(who.name)}, {o['what']}{when}. Верно? Да / нет"
     return send(db, who.tg_id, text, OFFER, user_id=who.id, payload=o)
+
+
+def trusted(db: Session, who: User, op: str) -> bool:
+    """Ступень 3 (24.09): последние N вопросов этого вида человеку — все «да», ни одного «нет»."""
+    from app.services import rules
+    n = int(rules.get(db, "auto_after_yes") or 0)
+    if n <= 0:
+        return False
+    last = (db.query(BotMessage).filter(BotMessage.kind == OFFER, BotMessage.user_id == who.id,
+                                        BotMessage.payload["op"].astext == op,
+                                        BotMessage.status.in_(("answered", "declined")))
+            .order_by(BotMessage.id.desc()).limit(n).all())
+    return len(last) >= n and all(m.status == "answered" and not (m.payload or {}).get("auto") for m in last)
 
 
 def asked_note(db: Session, msg: BotMessage | None) -> str:
@@ -173,7 +209,8 @@ def open_offer(db: Session, user: User) -> BotMessage | None:
             .order_by(BotMessage.id.desc()).first())
 
 
-def answer(db: Session, site: Organization, user: User, ask: BotMessage, yes: bool, reason: str | None) -> str:
+def answer(db: Session, site: Organization, user: User, ask: BotMessage, yes: bool, reason: str | None,
+           auto: bool = False) -> str:
     """«да» — записать тем, кто подтвердил; «нет» — не записывать, сказать, где поправить."""
     from app.services import ledger
     from app.services.bot import public_url
@@ -209,5 +246,5 @@ def answer(db: Session, site: Organization, user: User, ask: BotMessage, yes: bo
     except ValueError as e:
         return f"Не записал: {e}. Поправьте в приложении: {public_url()}/new/cash"
     ask.status = "answered"
-    ask.payload = {**o, "result_id": rec.id}
+    ask.payload = {**o, "result_id": rec.id, "auto": auto}
     return "Записал. Спасибо!"

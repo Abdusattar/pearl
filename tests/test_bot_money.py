@@ -118,7 +118,7 @@ def test_private_text_asks_self_once(db, world, monkeypatch):
     n = world["n"]
     _model(monkeypatch, {"kind": "withdrawal", "amount": 10000, "date": "yesterday"})
     reply = svc.handle_update(db, _private(n, "вчера сняла 10 000"))
-    assert reply.startswith("Мунаратест, записываю: снятие 10 000") and ", вчера." in reply
+    assert reply.startswith("Мунаратест, снятие 10 000") and ", вчера." in reply
     assert db.query(BotMessage).filter_by(kind=bot_money.OFFER, user_id=n.id).count() == 1
     svc.handle_update(db, _private(n, "да", mid=51))
     assert db.query(CashFunding).filter_by(organization_id=world["sadik"].id).one().date == date.today() - timedelta(days=1)
@@ -135,7 +135,7 @@ def test_on_hand_in_private_asks_self_and_yes_records_pocket_point(db, world, mo
     """Айжан 24.09: «наличных школы у меня 12 400» в личку → «верно?» → «да, причина» → точка кармана."""
     n = world["n"]
     reply = svc.handle_update(db, _private(n, "наличных у меня на руках 12 400"))
-    assert reply.startswith("Мунаратест, записываю: наличных у Мунаратест на руках 12 400")
+    assert reply.startswith("Мунаратест, наличных у Мунаратест на руках 12 400")
     assert "Записал" in svc.handle_update(db, _private(n, "да, остаток с прошлого месяца", mid=51))
     rec = db.query(Reconciliation).filter_by(kind="pocket", subject_id=n.id).one()
     assert rec.actual_amount == Decimal("12400") and rec.reason == "остаток с прошлого месяца"
@@ -183,7 +183,7 @@ def test_bot_chat_page_is_owner_only_and_shows_dialog(client, db, world, monkeyp
     assert client.get("/new/settings/bot/chat").status_code == 403
     monkeypatch.setattr("app.routers.new_bot.get_current_user", lambda request, db: owner)
     page = client.get("/new/settings/bot/chat").text
-    assert "сняла 25 000" in page and "записываю: снятие 25 000" in page and "Записал. Спасибо!" in page
+    assert "сняла 25 000" in page and "снятие 25 000" in page and "Записал. Спасибо!" in page
     page = client.get(f"/new/settings/bot/chat?who={n.id}").text
     assert "Записал. Спасибо!" in page
 
@@ -261,3 +261,20 @@ def test_second_bank_screenshot_same_day_records_today(db, world, monkeypatch):
     rec = (db.query(Reconciliation).filter_by(kind="account", organization_id=world["sadik"].id)
            .order_by(Reconciliation.id.desc()).first())
     assert rec.date == date.today() and rec.reason == "комиссия"
+
+
+def test_cash_on_hand_in_group_is_pocket_not_bank(db, world, monkeypatch):
+    """Мунара 24.09: «Остаток наличными 51090» в группе — наличные на руках, не счёт."""
+    n = world["n"]
+    _model(monkeypatch, {"kind": "balance", "amount": 51090, "date": "today", "sure": True})   # модель путает — не зовём
+    svc.handle_update(db, _group(n, "Остаток наличными 51090"))
+    o = _offer(db, n)
+    assert o is not None and o.payload["op"] == "recount" and "на руках 51 090" in o.text
+    assert db.query(BotMessage).filter_by(kind="group_reply").count() == 0
+
+
+def test_purchase_amount_in_group_asks_for_receipt(db, world, monkeypatch):
+    n = world["n"]
+    reply = svc.handle_update(db, _group(n, "Закуп 13570"))
+    assert reply.startswith("Мунаратест, закуп 13 570") and "фото чека" in reply and "проверит" in reply
+    assert _offer(db, n) is None

@@ -239,7 +239,9 @@ def _meal_and_count_asks(db: Session, site: Organization, now: datetime) -> list
     name = _counter_name(db, site)
     hi = f"{name}, " if name else ""
     group = group_chat_id()
-    slot_m = "first" if _at(now, rules.get(db, "meal_ask_time")) else ("again" if _at(now, rules.get(db, "meal_remind_time")) else None)
+    # Владелец 24.09: не переспрашивать — второго напоминания днём нет, незаписанное
+    # всплывёт в вечернем сообщении 17:00 вместе с закупками
+    slot_m = "first" if _at(now, rules.get(db, "meal_ask_time")) else None
     if meals.missing_today(db, site.id) and slot_m:
         key = f"meal_ask:{d.isoformat()}:{slot_m}"
         if not _done(db, key):
@@ -255,7 +257,7 @@ def _meal_and_count_asks(db: Session, site: Organization, now: datetime) -> list
     # счетам, где его давно не вносили: расход со счёта без чека всплывает за неделю.
     keys = rules.key_products(db)
     cw = rules.count_weekday(db)
-    slot = {(cw, 15): "first", (cw, 18): "again", ((cw + 1) % 7, 8): "last"}.get((d.weekday(), now.hour))
+    slot = {(cw, 15): "first", ((cw + 1) % 7, 8): "last"}.get((d.weekday(), now.hour))   # 18:00 убрано (24.09)
     if keys and slot:
         start = count_week_start(db, d)
         bank = cash.bank_due(db, site.id, start)
@@ -556,7 +558,10 @@ def handle_update(db: Session, update: dict) -> str | None:
     elif msg.get("_voice"):
         reply = f"Записал: «{text[:600]}»"
     else:
-        reply = "Понял. Сигналы и вопросы приходят сюда сами; фото чека или листа кухни можно прислать в любой момент."
+        # Непонятный текст (24.09, владелец: дежурная фраза сбивает людей) — молчим, владельцу копия
+        if user.id != OWNER_USER_ID:
+            owner_copy(db, f"{user.name} написал(а) боту, не понял: «{text[:200]}»")
+        return None
     send(db, chat_id, reply, "reply", user_id=user.id)
     return reply
 
@@ -630,6 +635,26 @@ def _handle_group(db: Session, msg: dict, user: User | None, text: str) -> str |
                 ok = "Понял, спасибо: сегодня без закупок."
                 send(db, chat_id, ok, "group_reply", user_id=user.id, reply_to=message_id)
                 return ok
+            # «Остаток наличными 51090» (Мунара 24.09): наличные на руках, не счёт — модель путала.
+            # Без модели: вопрос «верно?» в личку автору, в группе — молчим.
+            if user is not None and (m_on := _ON_HAND.search(text)) and user.role in OPERATIONAL_ROLES:
+                amount = parse_amount(m_on.group(1) or m_on.group(2))
+                asked = bot_money.offer(db, site, user, {"kind": "pocket", "amount": float(amount), "date": today_d}, today_d)
+                db.add(BotMessage(kind="pocket_text", chat_id=chat_id, user_id=user.id, direction="in", text=text[:500],
+                                  status="understood", payload={"message_id": message_id, "amount": float(amount)}))
+                if asked is not None:
+                    owner = db.get(User, OWNER_USER_ID)
+                    send(db, owner.tg_id if owner else None, f"Группа, {user.name}, «{text[:80]}»: наличные на руках — "
+                         + bot_money.asked_note(db, asked).strip(), "group_reply_owner", user_id=OWNER_USER_ID)
+                return None
+            if user is not None and re.match(r"^\s*закуп\w*\s*[-—:]?\s*\d", text.lower()):
+                # «Закуп 13570» — суммы без чека не записываем: закуп идёт строками со склада
+                m_buy = re.search(r"\d[\d\s]*(?:[.,]\d+)?", text)
+                buy_sum = fmt_money(float(parse_amount(m_buy.group(0)))) if m_buy else ""
+                reply_buy = (f"{grp._first(user.name)}, закуп {buy_sum} — пришлите фото чека сюда: "
+                             "я подготовлю запись из ваших наличных, Махабат проверит и подтвердит.")
+                send(db, chat_id, reply_buy, "group_reply", user_id=user.id, reply_to=message_id)
+                return reply_buy
             stock_reply = stock_text_reply(db, site, user, text, "chat")
             if stock_reply:
                 db.add(BotMessage(kind="stock_text", chat_id=chat_id, user_id=user.id if user else None, direction="in",
@@ -1076,7 +1101,8 @@ def _purchases_ask(db: Session, site: Organization, now: datetime) -> list[str]:
                                                BotMessage.job_key.like(f"no_purchases:{d.isoformat()}:%")).first()
     need_buy = not _bought_today(db, site, d) and said_none is None
     waiting = len(today.unchecked_receipts(db, site.id))
-    if not need_buy and not waiting:
+    debts_text, crossed = _debts_part(db, site, d)
+    if not need_buy and not waiting and not debts_text and not meals.missing_today(db, site.id):
         db.add(BotMessage(kind="purchases_ask", job_key=key, status="skipped"))
         return []
     name = _counter_name(db, site)
@@ -1086,8 +1112,31 @@ def _purchases_ask(db: Session, site: Organization, now: datetime) -> list[str]:
         parts.append(f"{hi}сегодня что-то покупали? Чеки фото сюда, или напишите «сегодня без закупок».")
     if waiting:
         parts.append(("И " if parts else hi) + f"в черновиках ждут {waiting} — проверить и записать: {public_url()}/new/receipts")
-    send(db, group_chat_id(), " ".join(parts), "purchases_ask", job_key=key)
+    if debts_text:
+        parts.append(("" if parts else hi) + debts_text)
+    if meals.missing_today(db, site.id):
+        parts.append(("" if parts else hi) + "сколько сегодня ели — ещё не записано. Одной строкой: школа …, садик …, персонал …")
+    for sid in crossed:
+        db.add(BotMessage(kind="debt_old", job_key=f"debt_old:{site.id}:{sid}", status="logged"))
+    send(db, group_chat_id(), "\n\n".join(parts), "purchases_ask", job_key=key)
     return [key]
+
+
+def _debts_part(db: Session, site: Organization, d: date) -> tuple[str | None, list[int]]:
+    """Долги поставщикам — Махабат раз в неделю (понедельник, в том же вечернем сообщении) и в
+    день, когда долг перевалил за месяц (владелец 24.09: «сумма не маленькая»). Ответ
+    «оплатила Мясо 30 000» бот превращает в запись сам."""
+    debts = [x for x in today.supplier_debts(db, site.id) if x["debt"] > 0]
+    if not debts:
+        return None, []
+    old_days = rules.debt_old_days(db)
+    crossed = [x["id"] for x in debts if x["since"] and (d - x["since"]).days >= old_days
+               and not _done(db, f"debt_old:{site.id}:{x['id']}")]
+    if d.weekday() != 0 and not crossed:
+        return None, []
+    lines = [f"{x['name']} {fmt_money(float(x['debt']))}" + (f" (с {_d(x['since'])})" if x["since"] else "")
+             for x in debts[:5]]
+    return ("долги поставщикам: " + ", ".join(lines) + ". Если что-то уже оплатили — напишите «оплатила Мясо 30 000», запишу."), crossed
 
 
 def _account_holder(db: Session, org: Organization) -> User | None:
@@ -1107,7 +1156,9 @@ def _morning_checks(db: Session, site: Organization, now: datetime) -> list[str]
     if now.hour != MORNING_HOUR or d > rules.daily_checks_until(db) or d.weekday() >= 5:
         return []
     out = []
-    for u in cash.pocket_people(db, site.id):
+    # Владелец 24.09 («слишком много вопросов»): карман — раз в неделю, в понедельник;
+    # счёт — только если остаток не вносили неделю. Остальное люди присылают сами.
+    for u in (cash.pocket_people(db, site.id) if d.weekday() == 0 else []):
         if not u.tg_id or u.role == "founder":
             continue
         key = f"pocket_ask:{d.isoformat()}:{u.id}"
@@ -1121,7 +1172,7 @@ def _morning_checks(db: Session, site: Organization, now: datetime) -> list[str]
     y = d - timedelta(days=1)
     for a in cash.state(db, site.id)["accounts"]:
         holder = _account_holder(db, a["org"])
-        if holder is None:
+        if holder is None or (a.get("since") and (d - a["since"]).days < 7):
             continue
         key = f"bank_ask:{d.isoformat()}:{a['org'].id}"
         if _done(db, key):
