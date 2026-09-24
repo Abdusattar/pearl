@@ -101,10 +101,17 @@ def build(db: Session, site: Organization, author: User | None, info: dict, toda
         if db.query(Reconciliation.id).filter(Reconciliation.organization_id == acc.id, Reconciliation.kind == "account",
                                               Reconciliation.date == on, Reconciliation.cancelled_at.is_(None)).first():
             return None   # остаток на этот день уже записан — второй скрин не переспрашиваем
-        expected = cash.expected_account(db, acc.id, on)
-        delta = Decimal(str(bal)) - expected
-        tail = " — с записями сходится" if abs(delta) <= 1 else \
-            f". По записям {grp.fmt_money(expected)}, разница {grp._signed(delta)}"
+        first = not db.query(Reconciliation.id).filter(Reconciliation.organization_id == acc.id,
+                                                       Reconciliation.kind == "account",
+                                                       Reconciliation.cancelled_at.is_(None)).first()
+        if first:
+            # первая цифра по счёту (школа 24.09): сравнивать не с чем — «по записям 80» сбило Айжан
+            tail = " — первая цифра по этому счёту, станет точкой отсчёта"
+        else:
+            expected = cash.expected_account(db, acc.id, on)
+            delta = Decimal(str(bal)) - expected
+            tail = " — с записями сходится" if abs(delta) <= 1 else \
+                f". По записям {grp.fmt_money(expected)}, разница {grp._signed(delta)}"
         return {"op": "bank", "amount": str(bal), "date": on.strftime(_DATE_FMT), "org_id": acc.id,
                 "ask": holder.id if holder else None,
                 "what": f"остаток счёта {_label(acc)} {grp.fmt_money(bal)} на конец {grp._dd(on)}{tail}"}

@@ -1127,6 +1127,12 @@ def morning_answer(db: Session, site: Organization, user: User, text: str) -> st
     if offer is not None and (ask is None or offer.id > ask.id):
         yes, no = _YES_REASON.match(text), _NO.match(text)
         if not (yes or no):
+            if text.strip().endswith("?") or len(text.split()) <= 6:
+                # «По каким записям?» (Айжан 24.09): вопрос при открытом «верно?» — владельцу,
+                # человеку — как ответить; дежурная фраза здесь хуже молчания
+                owner_copy(db, f"{user.name} на «{offer.text[:120]}…» спрашивает: «{text[:300]}»")
+                return ("Передал ваш вопрос Абдусаттару, он ответит. Если цифра верна — напишите «да», "
+                        "если нет — «нет».")
             return None
         return bot_money.answer(db, site, user, offer, bool(yes), yes.group(1).strip() if yes else None)
     if ask is None or not (_YES.match(text) or _NO.match(text) or _NUM.match(text)):

@@ -152,3 +152,37 @@ def test_excel_in_private_is_saved_and_owner_told(db, world, monkeypatch, tmp_pa
     saved = db.query(BotMessage).filter_by(kind="file", user_id=n.id).one()
     assert (tmp_path / saved.payload["file"]).read_bytes() == b"photo-x1"
     assert db.query(BotMessage).filter_by(kind="owner_copy").count() == 1
+
+
+def test_first_bank_figure_is_point_zero_and_question_goes_to_owner(db, world, monkeypatch):
+    n = world["n"]
+    _model(monkeypatch, {"kind": "bank", "bank_op": "balance", "balance": 2089650, "date": date.today().isoformat(), "sure": True})
+    svc.handle_update(db, _group(n, photo_id="bank9"))
+    o = _offer(db, n)
+    assert "первая цифра" in o.text and "По записям" not in o.text
+    reply = svc.handle_update(db, _private(n, "По каким записям?"))
+    assert reply.startswith("Передал ваш вопрос")
+    assert db.query(BotMessage).filter_by(kind="owner_copy").count() == 1
+    assert _offer(db, n).status in ("sent", "logged")   # вопрос открыт, «да» ещё сработает
+    assert "Записал" in svc.handle_update(db, _private(n, "да", mid=52))
+
+
+def test_bot_chat_page_is_owner_only_and_shows_dialog(client, db, world, monkeypatch):
+    from app.models import User as _U
+    owner = _U(name="Владелец тест-дн", role="owner", organization_id=world["sadik"].id, tg_id=900000000299,
+               password_hash="x")
+    db.add(owner)
+    db.flush()
+    n = world["n"]
+    _model(monkeypatch, {"kind": "withdrawal", "amount": 25000, "date": "today"})
+    svc.handle_update(db, _group(n, "сняла 25 000"))
+    svc.handle_update(db, _private(n, "да"))
+    db.commit()
+    from app.dependencies import get_current_user
+    monkeypatch.setattr("app.routers.new_bot.get_current_user", lambda request, db: n)
+    assert client.get("/new/settings/bot/chat").status_code == 403
+    monkeypatch.setattr("app.routers.new_bot.get_current_user", lambda request, db: owner)
+    page = client.get("/new/settings/bot/chat").text
+    assert "сняла 25 000" in page and "записываю: снятие 25 000" in page and "Записал. Спасибо!" in page
+    page = client.get(f"/new/settings/bot/chat?who={n.id}").text
+    assert "Записал. Спасибо!" in page

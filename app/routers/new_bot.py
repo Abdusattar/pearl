@@ -93,6 +93,52 @@ def bot_settings(request: Request, sent: int = 0, db: Session = Depends(get_db))
     return templates.TemplateResponse("new/settings_bot.html", ctx)
 
 
+@router.get("/new/settings/bot/chat", response_class=HTMLResponse)
+def bot_chat(request: Request, who: str | None = None, db: Session = Depends(get_db)):
+    """Переписка бота как чат — только владельцу (24.09: «плохо, что я не вижу общения
+    с ботом в личке»). Личка каждого человека и группа; входящие слева, бот справа."""
+    user = get_current_user(request, db)
+    if not user:
+        return RedirectResponse("/login", status_code=302)
+    if user.role != "owner":
+        return HTMLResponse("Только владелец", status_code=403)
+    site = _site(user, db)
+    ctx = _base_ctx(request, user, site, db, "settings")
+    users = db.query(User).filter(User.deleted_at.is_(None)).order_by(User.id).all()
+    names = {u.id: u.name for u in users}
+    group = svc.group_chat_id()
+    SKIP = ("webhook", "test", "group_threshold", "group_error")
+    rows = (db.query(BotMessage).filter(BotMessage.kind.notin_(SKIP), BotMessage.status != "skipped")
+            .order_by(BotMessage.id.desc()).limit(600).all())
+    items, counts = [], {}
+    for m in reversed(rows):
+        is_group = group is not None and m.chat_id == group
+        # «inbound» дублирует разбор того же сообщения (group_text, stock_text…) — показываем один раз
+        if m.direction == "in" and m.kind != "inbound" and m.kind != "voice":
+            continue
+        key = "group" if is_group else m.user_id
+        counts[key] = counts.get(key, 0) + 1
+        if who and str(key) != who:
+            continue
+        p = m.payload or {}
+        text = m.text or ""
+        if not text and m.direction == "in":
+            text = {"photo": "📷 фото", "document": "📎 файл", "voice": "🎤 голосовое", "file": "📎 файл"}.get(p.get("media") or "", "…")
+            if m.kind == "voice":
+                text = "🎤 " + (m.text or "")
+        note = ""
+        if m.direction == "in" and (p.get("reply") or p.get("what")):
+            note = "бот понял: " + (p.get("reply") or p.get("what"))[:160]
+        elif m.direction == "out" and m.kind == "group_reply_owner":
+            note = "копия вам"
+        items.append({"dir": m.direction, "text": text, "status": m.status, "group": is_group,
+                      "who": names.get(m.user_id) or p.get("from_name") or ("группа" if is_group else "?"),
+                      "day": m.created_at.strftime("%d.%m.%Y") if m.created_at else "",
+                      "time": m.created_at.strftime("%H:%M") if m.created_at else "", "note": note})
+    ctx.update({"items": items, "users": [u for u in users if u.tg_id], "counts": counts, "sel": who})
+    return templates.TemplateResponse("new/bot_chat.html", ctx)
+
+
 @router.post("/new/settings/bot")
 async def bot_settings_save(request: Request, db: Session = Depends(get_db)):
     user = get_current_user(request, db)

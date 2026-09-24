@@ -1,0 +1,35 @@
+{% extends "new/base.html" %}
+{% block title %}Переписка бота — Жемчужина{% endblock %}
+{% block head %}<style>
+  .who { display:flex; gap:8px; flex-wrap:wrap; margin: 8px 0 14px; }
+  .who a { padding: 8px 12px; border: 1px solid var(--line); border-radius: 999px; font-size: 14px; color: inherit; text-decoration: none; }
+  .who a.on { background: var(--ink, #1a1a1a); color: #fff; border-color: transparent; }
+  .who a .n { color: var(--muted); font-size: 12px; margin-left: 4px; }
+  .who a.on .n { color: #ddd; }
+  .day { text-align:center; color: var(--muted); font-size: 12px; margin: 14px 0 6px; }
+  .b { max-width: 78%; padding: 8px 12px; border-radius: 14px; margin: 4px 0; font-size: 15px; line-height: 1.35; white-space: pre-wrap; word-break: break-word; }
+  .b.in { background: var(--surface); border: 1px solid var(--line); margin-right: auto; border-bottom-left-radius: 4px; }
+  .b.out { background: #dcf2e3; margin-left: auto; border-bottom-right-radius: 4px; }
+  .b.out.failed { background: #fde3e3; }
+  .b .m { display:block; font-size: 11px; color: var(--muted); margin-top: 4px; }
+  .b.in .m::before { content: "→ "; }
+  .grp .b.in { background: #f3f0e6; }
+</style>{% endblock %}
+{% block content %}
+<h3 class="title">Переписка бота</h3>
+<p class="sub">Только вам. Личка каждого и группа — как чат. Страница сама обновляется раз в 30 секунд.</p>
+<div class="who">
+  <a href="/new/settings/bot/chat" class="{{ 'on' if not sel else '' }}">Все</a>
+  <a href="/new/settings/bot/chat?who=group" class="{{ 'on' if sel == 'group' else '' }}">Группа <span class="n">{{ counts.get('group', 0) }}</span></a>
+  {% for u in users %}<a href="/new/settings/bot/chat?who={{ u.id }}" class="{{ 'on' if sel == u.id|string else '' }}">{{ u.name }} <span class="n">{{ counts.get(u.id, 0) }}</span></a>{% endfor %}
+</div>
+{% set ns = namespace(day=None) %}
+{% for m in items %}
+  {% if m.day != ns.day %}<div class="day">{{ m.day }}</div>{% set ns.day = m.day %}{% endif %}
+  <div class="{{ 'grp' if m.group else '' }}">
+  <div class="b {{ m.dir }} {{ m.status if m.status == 'failed' else '' }}">{{ m.text }}<span class="m">{{ m.time }} · {% if m.dir == 'in' %}{{ m.who }}{% if m.group %} в группе{% endif %}{% else %}бот → {{ m.who }}{% endif %}{% if m.status == 'failed' %} · <b>не доставлено</b>{% elif m.status == 'logged' %} · только журнал{% endif %}{% if m.note %} · {{ m.note }}{% endif %}</span></div>
+  </div>
+{% else %}<p class="sub">Пока пусто.</p>{% endfor %}
+<p class="after"><a href="/new/settings/bot">Настройки бота</a></p>
+<script>setTimeout(function(){ location.reload(); }, 30000);</script>
+{% endblock %}
