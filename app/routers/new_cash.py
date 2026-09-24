@@ -55,10 +55,10 @@ def cash_page(request: Request, saved: str | None = None, db: Session = Depends(
         return HTMLResponse("Объект не найден", status_code=404)
     ctx = _base_ctx(request, user, site, db, "cash")
     only_checks = request.query_params.get("f") == "checks"
-    items = svc.history(db, site.id, only_checks=only_checks)
+    items = svc.history(db, site.id, only_checks=only_checks, viewer=user)
     for it in items:
         it["can_remove"] = user.role in WRITE_ROLES and svc.can_remove(user, it)
-    st = svc.state(db, site.id)
+    st = svc.state(db, site.id, viewer=user)
     if not sees_accounts(user):
         st = {**st, "accounts": [], "gaps": [g for g in st["gaps"] if g["where"] != "account"]}
         items = [it for it in items if it.get("kind") != "bank"]
@@ -78,7 +78,9 @@ def _form_ctx(request, user, site, db, kind: str, **kw) -> dict:
     ctx.update({
         "kind": kind, "title": FORMS[kind], "people": people, "site_orgs": site_orgs(db, site.id),
         "founders": svc.founder_list(db), "today": date.today(), "my_balance": my,
-        "pocket_balances": {p.id: svc.pocket_balance(db, site.id, p.id) for p in people},
+        # суммы чужого объекта в форме не показываем (24.09), выбрать человека — можно
+        "pocket_balances": {p.id: svc.pocket_balance(db, site.id, p.id) for p in people
+                            if svc._sees_org(svc.visible_orgs(db, user), p.organization_id)},
         # Остаток в банке — на конец вчерашнего дня (23.09): Optima Business показывает
         # оплаты с задержкой, а система видит их сразу; закрытый день сходится честно.
         "amount": kw.get("amount", ""), "d": kw.get("d", date.today() - timedelta(days=1) if kind == "bank" else date.today()),
@@ -90,7 +92,8 @@ def _form_ctx(request, user, site, db, kind: str, **kw) -> dict:
         # Все счета площадки, не только «живые»: первый остаток по счёту школы (23.09)
         # и есть то, что делает его живым — из state() он бы не попал в форму
         "bank_orgs": [(a["org"], svc.expected_account(db, a["org"].id, kw.get("d", date.today() - timedelta(days=1))))
-                      for a in svc.accounts(db, site.id)] if kind == "bank" else [],
+                      for a in svc.accounts(db, site.id)
+                      if svc._sees_org(svc.visible_orgs(db, user), a["org"].id)] if kind == "bank" else [],
     })
     return ctx
 

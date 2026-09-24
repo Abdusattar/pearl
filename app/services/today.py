@@ -158,11 +158,12 @@ def kitchen_action(db: Session, site_org_id: int) -> dict:
             "sub": f"за {_date_short(d)} не внесён" if late else "за сегодня"}
 
 
-def now_figures(db: Session, site_org_id: int) -> dict:
-    """Три цифры «Сейчас»: касса площадки, продукты на складе (основные), долги."""
+def now_figures(db: Session, site_org_id: int, viewer=None) -> dict:
+    """Три цифры «Сейчас»: касса площадки, продукты на складе (основные), долги.
+    viewer — чьи деньги показывать (24.09: Мунара и Махабат не видят школу)."""
     # Наличные и счета — из того же источника, что экран Кассы (21.09), с тем же
     # признаком «сходится / не хватает записи»: экраны не расходятся в словах.
-    st = cash.state(db, site_org_id)
+    st = cash.state(db, site_org_id, viewer=viewer)
     org_ids = {o.id for o in site_orgs(db, site_org_id)} | {site_org_id}
     balances = get_product_balances(db, org_ids)
     stock_value = sum(b["balance_value"] for b in balances

@@ -280,11 +280,34 @@ def _account_active(db: Session, org_id: int, since: date | None) -> bool:
     return bool(income or out)
 
 
-def state(db: Session, site_org_id: int) -> dict:
+def visible_orgs(db: Session, viewer: User | None) -> set[int] | None:
+    """Чьи деньги видит человек (владелец 24.09): владелец, учредители и директор (Айжан —
+    общий директор) — все; управляющая и сотрудник — только свой объект (Мунара, Махабат —
+    садик). Счёт и наличные чужого объекта не показываем нигде: ни в Кассе, ни в «Сегодня»,
+    ни в истории. None — всё."""
+    if viewer is None or viewer.role in ("owner", "founder", "director"):
+        return None
+    return {viewer.organization_id}
+
+
+def _sees_org(vis: set[int] | None, org_id: int | None) -> bool:
+    return vis is None or org_id in vis
+
+
+def _sees_person(db: Session, vis: set[int] | None, user_id: int | None) -> bool:
+    if vis is None:
+        return True
+    u = db.get(User, user_id) if user_id else None
+    return u is not None and u.organization_id in vis
+
+
+def state(db: Session, site_org_id: int, viewer: User | None = None) -> dict:
     """Два остатка с признаком доверия и пробелами. Один источник для Кассы,
-    «Сегодня» и Обзора — чтобы экраны не расходились в словах и цифрах."""
+    «Сегодня» и Обзора — чтобы экраны не расходились в словах и цифрах.
+    viewer — кто смотрит: чужой объект (счёт школы, карман Айжан) отсекается."""
+    vis = visible_orgs(db, viewer)
     pk = pockets(db, site_org_id)
-    rows = [r for r in pk["rows"] if abs(r["balance"]) >= 1 or r["start"]["own"]]
+    rows = [r for r in pk["rows"] if (abs(r["balance"]) >= 1 or r["start"]["own"]) and _sees_org(vis, r["user"].organization_id)]
     gaps = []
     for r in rows:
         name = r["user"].name
@@ -303,7 +326,7 @@ def state(db: Session, site_org_id: int) -> dict:
 
     accs = []
     for a in accounts(db, site_org_id):
-        if not _account_active(db, a["org"].id, a["since"]):
+        if not _account_active(db, a["org"].id, a["since"]) or not _sees_org(vis, a["org"].id):
             continue
         name = a["org"].name
         if a["since"] is None:
@@ -376,8 +399,11 @@ def can_remove(user: User, item: dict) -> bool:
     return item["kind"] in MINE and item.get("created_by") == user.id
 
 
-def history(db: Session, site_org_id: int, only_checks: bool = False, limit: int = 60) -> list[dict]:
-    """Движения кассы и счетов одной лентой, убранные — зачёркнутыми."""
+def history(db: Session, site_org_id: int, only_checks: bool = False, limit: int = 60,
+            viewer: User | None = None) -> list[dict]:
+    """Движения кассы и счетов одной лентой, убранные — зачёркнутыми.
+    viewer — чужой объект не показываем (строка помечена _org/_person, фильтр в конце)."""
+    vis = visible_orgs(db, viewer)
     names = {u.id: u.name for u in db.query(User).all()}
     org_ids = [o.id for o in site_orgs(db, site_org_id)] + [site_org_id]
     items: list[dict] = []
@@ -398,6 +424,7 @@ def history(db: Session, site_org_id: int, only_checks: bool = False, limit: int
             else:
                 title = f"Наличные в карман {who}"
             items.append({"kind": "funding", "id": f.id, "date": f.date, "at": f.created_at, "title": title,
+                          "_person": f.accountable_user_id,
                           "sub": f.comment or "", "amount": Decimal(f.amount), "created_by": f.created_by,
                           "by": names.get(f.created_by), "removed": f.deleted_at is not None, "why": why.get(f.id, ""),
                           "locked": f.id in linked or f.source_transaction_id is not None})
@@ -406,6 +433,7 @@ def history(db: Session, site_org_id: int, only_checks: bool = False, limit: int
         why = _removal_reasons(db, "cash_transfer", [t.id for t in ts if t.deleted_at])
         for t in ts:
             items.append({"kind": "transfer", "id": t.id, "date": t.date, "at": t.created_at,
+                          "_person": t.from_user_id, "_person2": t.to_user_id,
                           "title": f"{names.get(t.from_user_id, '?')} передал(а) {names.get(t.to_user_id, '?')}",
                           "sub": t.comment or "", "amount": Decimal(t.amount), "created_by": t.created_by,
                           "by": names.get(t.created_by), "removed": t.deleted_at is not None, "why": why.get(t.id, "")})
@@ -414,6 +442,7 @@ def history(db: Session, site_org_id: int, only_checks: bool = False, limit: int
         why = _removal_reasons(db, "capital_withdrawal", [w.id for w in ws if w.deleted_at])
         for w in ws:
             items.append({"kind": "founder_out", "id": w.id, "date": w.date, "at": w.created_at,
+                          "_person": w.from_user_id,
                           "title": f"{names.get(w.founder_user_id, 'Учредитель')} взял(а) из кармана {names.get(w.from_user_id, 'кассы')}",
                           "sub": w.comment or "", "amount": -Decimal(w.amount), "created_by": w.created_by,
                           "by": names.get(w.created_by), "removed": w.deleted_at is not None, "why": why.get(w.id, "")})
@@ -422,6 +451,7 @@ def history(db: Session, site_org_id: int, only_checks: bool = False, limit: int
                   .order_by(SupplierPayment.date.desc(), SupplierPayment.id.desc()).limit(limit).all()):
             src = "со счёта" if p.paid_directly else f"из кармана {names.get(p.paid_from_user_id, '')}"
             items.append({"kind": None, "id": p.id, "date": p.date, "at": p.created_at,
+                          "_person": p.paid_from_user_id, "_org": p.account_org_id,
                           "title": f"Оплата {p.supplier.name if p.supplier else ''}", "sub": src,
                           "amount": -Decimal(p.amount), "by": names.get(p.created_by)})
         salary = (db.query(Transaction.date, func.sum(Transaction.amount), func.count(Transaction.id))
@@ -453,9 +483,19 @@ def history(db: Session, site_org_id: int, only_checks: bool = False, limit: int
         if r.reason:
             sub += f". «{r.reason}»"
         items.append({"kind": kind, "id": r.id, "date": r.date, "at": r.created_at, "title": title, "sub": sub,
+                      "_person": r.subject_id if r.kind == POCKET else None,
+                      "_org": r.organization_id if r.kind == ACCOUNT else None,
                       "amount": None if same else d, "created_by": r.created_by, "by": names.get(r.created_by),
                       "removed": r.cancelled_at is not None, "why": r.cancel_reason or ""})
 
+    if vis is not None:
+        def ok(it):
+            if it.get("_org") is not None and not _sees_org(vis, it["_org"]):
+                return False
+            people = [x for x in (it.get("_person"), it.get("_person2")) if x]
+            # передача Айжан → Махабат видна обеим сторонам; чужой карман сам по себе — нет
+            return not people or any(_sees_person(db, vis, x) for x in people)
+        items = [it for it in items if ok(it)]
     items.sort(key=lambda x: (x["date"], x["at"] or datetime.min), reverse=True)
     return items[:limit]
 

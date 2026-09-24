@@ -2,6 +2,12 @@
 Test infrastructure: isolated DB per test via transaction rollback.
 Each test gets a clean session; all writes are rolled back on exit.
 """
+import os
+
+# Планировщик бота при старте приложения пишет настоящие вопросы в dev-базу (24.09:
+# тесты падали на уникальном job_key «meal_ask:…»). В тестах он не нужен.
+os.environ.setdefault("BOT_SCHEDULER", "0")
+
 import pytest
 from sqlalchemy import create_engine, event
 from sqlalchemy.orm import sessionmaker
