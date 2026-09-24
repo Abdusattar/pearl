@@ -413,7 +413,8 @@ def test_cash_figure_waits_for_receipt_drafts_then_settles(db, world, monkeypatc
     _model(monkeypatch, {"kind": "purchase", "amount": 26340, "supplier": None, "sure": True})
     svc.handle_update(db, _group(n, photo_id="rc26340"))
     reply = svc.handle_update(db, _private(n, "Остаток наличными 38322"))
-    assert reply == "Принял 38 322, сверю, когда Махабат проведёт чеки."
+    assert reply == ("Принял 38 322. По записям у вас 64 662, закупы на 26 340 подготовлены: спишутся, когда Махабат "
+                     "подтвердит их в системе, и станет 38 322 — как у вас.")
     assert _offer(db, n).status == "deferred"
     assert bot_money.settle_deferred(db, world["sadik"], date.today()) == []   # чек ещё висит
     from app.models import Receipt

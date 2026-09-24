@@ -187,8 +187,7 @@ def offer(db: Session, site: Organization, author: User | None, info: dict, toda
         for old in db.query(BotMessage).filter(BotMessage.kind == OFFER, BotMessage.user_id == who.id,
                                                BotMessage.status == "deferred").all():
             old.status = "superseded"
-        m = send(db, who.tg_id, f"Принял {grp.fmt_money(Decimal(o['amount']))}, сверю, когда Махабат проведёт чеки.",
-                 OFFER, user_id=who.id, payload=o)
+        m = send(db, who.tg_id, _deferred_text(db, site, who, Decimal(o["amount"])), OFFER, user_id=who.id, payload=o)
         m.status = "deferred"
         return m
     d = datetime.strptime(o["date"], _DATE_FMT).date()
@@ -312,3 +311,19 @@ def settle_deferred(db: Session, site: Organization, today: date) -> list[str]:
         res = offer(db, site, who, info, today)
         done.append(f"deferred:{m.id}:{res.id if res is not None else 'none'}")
     return done
+
+
+def _deferred_text(db: Session, site: Organization, who: User, stated: Decimal) -> str:
+    """Владелец 24.09: «сказать, что у вас спишется и станет столько, когда Махабат подтвердит» —
+    человек видит, что закупы подготовлены, и сам подталкивает учётчика."""
+    from app.services import today as td
+    have = cash.pocket_balance(db, site.id, who.id)
+    mine = [r for r in td.unchecked_receipts(db, site.id) if r.created_by == who.id]
+    prepared = sum(Decimal(str((r.payload or {}).get("amount") or 0)) for r in mine)
+    after = have - prepared
+    head = f"Принял {grp.fmt_money(stated)}. По записям у вас {grp.fmt_money(have)}"
+    if not prepared:
+        return head + ", чеки ещё не проведены — сверю после проверки Махабат."
+    tail = " — как у вас." if abs(after - stated) < 1 else f"; сверю с вашими {grp.fmt_money(stated)} после подтверждения."
+    return (head + f", закупы на {grp.fmt_money(prepared)} подготовлены: спишутся, когда Махабат подтвердит их "
+            f"в системе, и станет {grp.fmt_money(after)}" + tail)
