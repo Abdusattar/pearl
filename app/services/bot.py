@@ -720,11 +720,12 @@ def small_expense_reply(db: Session, site: Organization, user: User, text: str) 
     return asked.text if asked is not None else None
 
 
-def purchase_text_reply(db: Session, site: Organization, user: User, text: str, source: str) -> str | None:
+def purchase_text_reply(db: Session, site: Organization, user: User, text: str, source: str,
+                        force: bool = False) -> str | None:
     """Закуп текстом → черновик закупа у Махабат без фото (владелец 24.09: «сейчас бот подготовит
     черновик»). Учётчику — ссылка на проверку, остальным — «принял, Махабат проверит»."""
     from app.services import bot_group as grp, drafts
-    if user is None or user.role not in OPERATIONAL_ROLES or not purchase_text(text):
+    if user is None or user.role not in OPERATIONAL_ROLES or not (force or purchase_text(text)):
         return None
     draft = drafts.create_text(db, site_org_id=site.id, author=user, text=text, kind=drafts.RECEIPT, source=source,
                                info={"kind": "purchase"})
@@ -752,6 +753,30 @@ def _answer_to_question(db: Session, user: User, text: str) -> bool:
     return True
 
 
+def _route_text(db: Session, site: Organization, user: User, info: dict, text: str, source: str) -> str | None:
+    """Разобранное моделью (промпт v2, 24.09) → что делать. None — не наш случай (деньги между
+    людьми/счёт идут старым путём), "" — молчание, строка — ответ автору."""
+    from app.services import bot_group as grp, bot_money
+    kind, amount = info.get("kind"), info.get("amount")
+    if kind == "pocket" and amount is not None:
+        asked = bot_money.offer(db, site, user, {"kind": "pocket", "amount": float(amount), "date": date.today()}, date.today())
+        return asked.text if asked is not None else ""
+    if kind == grp.EXPENSE and amount:
+        if float(amount) > float(rules.get(db, "small_expense_max") or 0):
+            return _buy_ask_text(user, float(amount))
+        exp = small_expense(db, text) or {"kind": "expense", "exp_kind": "other", "what": text.strip()[:40],
+                                          "amount": float(amount), "date": date.today()}
+        asked = bot_money.offer(db, site, user, exp, date.today())
+        return asked.text if asked is not None else ""
+    if kind == grp.PURCHASE:
+        return purchase_text_reply(db, site, user, text, source, force=True) or ""
+    if kind == grp.PURCHASE_TOTAL and amount:
+        return _buy_ask_text(user, float(amount))
+    if kind in (grp.MEALS, grp.STOCK, grp.ANSWER, grp.QUESTION):
+        return ""   # едоки и склад разбираются раньше своими парсерами; ответы и вопросы — не запись
+    return None
+
+
 def _private_money(db: Session, site: Organization, user: User, text: str) -> str | None:
     """«сняла 25 000», «передала Махабат 20 000» в личку (шаг 2, 24.09): вопрос «Верно?»
     тому, чьи деньги. Себе — он и есть ответ; про другого — говорим, кого спросили."""
@@ -769,6 +794,11 @@ def _private_money(db: Session, site: Organization, user: User, text: str) -> st
         return None
     if info.get("kind") is None:
         return None
+    routed = _route_text(db, site, user, info, text, "private")
+    if routed is not None:
+        if routed and not routed.endswith("Да / нет"):
+            send(db, user.tg_id, routed, "reply", user_id=user.id)
+        return routed
     asked = bot_money.offer(db, site, user, info, date.today())
     if asked is not None and asked.user_id == user.id:
         return asked.text
@@ -889,9 +919,16 @@ def _handle_group(db: Session, msg: dict, user: User | None, text: str) -> str |
             kind = "group_text"
             info = grp.read_text(db, text, user, today_d)
             payload.update({k: (v.isoformat() if isinstance(v, date) else v) for k, v in info.items()})
-            reply = grp.text_reply(db, site, user, info, today_d)
-            if reply:
-                reply += bot_money.asked_note(db, bot_money.offer(db, site, user, info, today_d))
+            routed = _route_text(db, site, user, info, text, "chat") if user is not None else None
+            if routed is not None:
+                # наличные/расход — вопрос ушёл автору в личку; закуп — черновик; в группе молчим
+                if routed and "/new/buy" in routed:
+                    send(db, user.tg_id, routed, "reply", user_id=user.id)
+                reply = None
+            else:
+                reply = grp.text_reply(db, site, user, info, today_d)
+                if reply:
+                    reply += bot_money.asked_note(db, bot_money.offer(db, site, user, info, today_d))
     except Exception as e:  # noqa: BLE001 — модель или сеть упали: в группе молчим, в журнал
         db.add(BotMessage(kind="group_error", chat_id=chat_id, user_id=user.id if user else None, direction="in",
                           status="failed", text=str(e)[:500], payload=payload))
@@ -1520,6 +1557,8 @@ def morning_answer(db: Session, site: Organization, user: User, text: str) -> st
         if not (yes or no) and (offer.payload or {}).get("op") == "bank" and _COMMISSION.match(text):
             # «Комиссия» на подсказку «ответьте „да, комиссия“» (Мунара 24.09) — это «да» с причиной
             return bot_money.answer(db, site, user, offer, True, "комиссия банка")
+        if not (yes or no) and re.search(r"\d{3}", text.replace(" ", "")):
+            return None   # новое сообщение с суммой — разбираем как новое, старый вопрос погасит offer()
         if not (yes or no):
             if text.strip().endswith("?"):
                 # «По каким записям?» (Айжан 24.09): вопрос при открытом «верно?» — владельцу

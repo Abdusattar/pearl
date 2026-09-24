@@ -522,3 +522,38 @@ def test_small_expense_text_asks_author_and_yes_records_from_her_pocket(db, worl
     assert t.amount == Decimal("200") and t.paid_from_user_id == n.id and t.description == "такси"
     from app.models import ExpenseCategory
     assert db.get(ExpenseCategory, t.category_id).name == "Сервисные расходы"
+
+
+def test_model_kinds_v2_are_routed(db, world, monkeypatch):
+    """Промпт v2 (24.09): модель различает наличные на руках, закуп суммой, закуп с товарами, мелкий расход."""
+    from app.models import Receipt
+    n = world["n"]
+    _model(monkeypatch, {"kind": "cash_on_hand", "amount": 51090, "sure": True})
+    svc.handle_update(db, _group(n, "у меня осталось 51090 после закупа"))   # регексы молчат, читает модель
+    o = _offer(db, n)
+    assert o.payload["op"] == "recount" and "на руках 51 090" in o.text
+    _model(monkeypatch, {"kind": "purchase_total", "amount": 13570, "sure": True})
+    assert "фото чека" in svc.handle_update(db, _private(n, "потратила на покупки 13570"))
+    _model(monkeypatch, {"kind": "purchase", "amount": 675, "sure": True})
+    svc.handle_update(db, _group(n, "кунжут 400, мак 275", mid=4))
+    assert db.query(Receipt).filter_by(created_by=n.id, kind="receipt").count() == 1
+    _model(monkeypatch, {"kind": "expense", "amount": 300, "sure": True})
+    reply = svc.handle_update(db, _private(n, "перевозка мебели 300", mid=60))
+    assert reply.endswith("Верно? Да / нет") and "300 из наличных Мунаратест" in reply
+    _model(monkeypatch, {"kind": "answer", "amount": None, "sure": True})
+    assert svc.handle_update(db, _private(n, "хорошо 5", mid=61)) is None
+
+
+def test_date_in_caption_is_not_amount():
+    from datetime import date as _d
+    from app.services import bot_group as grp
+    import app.services.bot_group as g
+    g.ask_model = lambda prompt, image=None, mime="image/jpeg", pdf=None: {"kind": "balance", "amount": 24.09, "sure": True}
+    class _DB:
+        def query(self, *a, **k):
+            class Q:
+                def filter(self, *a, **k): return self
+                def all(self): return []
+            return Q()
+    info = grp.read_text(_DB(), "Карта да остаток 24.09.2026", None, _d.today())
+    assert info["kind"] == "balance" and info["amount"] is None

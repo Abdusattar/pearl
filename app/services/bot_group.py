@@ -37,6 +37,11 @@ from app.services.recognize import MODEL, OR_URL, _num, _parse_json
 PURCHASE, KITCHEN, COUNT, SUPPLIER_PAY, SERVICE, BANK, SALARY, OTHER = (
     "purchase", "kitchen", "count", "supplier_payment", "service", "bank", "salary", "other")
 WITHDRAWAL, TRANSFER, BALANCE = "withdrawal", "transfer", "balance"
+# Промпт v2 (24.09: «настраивай — промпт, обвязка или модель»): модель знает все виды сообщений
+CASH_ON_HAND, PURCHASE_TOTAL, EXPENSE = "cash_on_hand", "purchase_total", "expense"
+MEALS, STOCK, ANSWER, QUESTION = "meals", "stock", "answer", "question"
+TEXT_KINDS = (WITHDRAWAL, TRANSFER, SUPPLIER_PAY, BALANCE, CASH_ON_HAND, PURCHASE, PURCHASE_TOTAL, EXPENSE,
+              MEALS, STOCK, ANSWER, QUESTION)
 
 MATCH_DAYS = 3          # чек и запись о нём расходятся по дате на день-два: внесли назавтра
 OLD_DAYS = 3            # чек старше — говорим дату вслух (09_bot.md: «чек от 7 сентября»)
@@ -97,20 +102,26 @@ PHOTO_PROMPT = (
 )
 
 TEXT_PROMPT = (
-    "A message from the work chat of a kindergarten in Kyrgyzstan (Russian, may mix Kyrgyz). People there: "
-    "{people}. Suppliers: {suppliers}.\n"
-    "Message from {author}: «{text}»\n\n"
-    "Is it a report about money? Kinds:\n"
-    "- withdrawal: someone took cash from the bank account (сняла, сняли с карты/счёта).\n"
-    "- transfer: cash passed from one person to another (передала, отдала, получила от).\n"
-    "- supplier_payment: a supplier was paid for goods (оплатила Халиме, отдала долг Кириллу).\n"
-    "- balance: the bank account balance now (на счету, остаток).\n"
-    "- none: anything else, including questions, greetings, plans, children, food.\n"
-    "Names: return them as written. If the person is not named, null — do not guess.\n"
-    "Return ONLY JSON: {{\"kind\": ..., \"amount\": number or null, \"who\": person who did it or null, "
-    "\"to\": receiving person for transfer or null, \"supplier\": supplier or null, "
-    "\"date\": \"today\" | \"yesterday\" | \"YYYY-MM-DD\" | null, \"account\": \"садик\" | \"школа\" | null, "
-    "\"sure\": true|false}}"
+    "Сообщение из рабочего чата садика и школы в Кыргызстане (русский, иногда кыргызский, опечатки, без знаков препинания). Люди: {people}. Поставщики: {suppliers}.\n"
+    "Автор: {author}. Сообщение: «{text}»\n"
+    "\n"
+    "Определи, о чём оно. Ровно один вид (kind):\n"
+    "- withdrawal — сняли наличные со счёта/карты в банке: «сняла 25 000», «снятие с банка 64662», «на руку брала 64662».\n"
+    "- transfer — наличные передали от человека человеку: «отдала Махабат 5229», «передала Айдай 20 000», «получила от Таласа». to = кому, who = кто отдал (если не автор).\n"
+    "- supplier_payment — заплатили поставщику за товар/долг: «оплатила Халиме 8000», «отдала долг Кириллу».\n"
+    "- balance — остаток на банковском счёте, названа сумма: «на счету 64 797», «остаток счёта 1,35».\n"
+    "- cash_on_hand — сколько наличных на руках у автора сейчас: «остаток наличными 51090», «нал 38 390», «на руках 12 400», «51090 остаток у меня наличка». Если написана арифметика «51090-12700=38 390» — amount = результат после «=».\n"
+    "- purchase — закуп с товарами и ценами: «кунжут 400 сом, мак 500 гр 275», «500 сом корм птицам 2 кг». amount = сумма всех.\n"
+    "- purchase_total — закуп одной суммой без товаров: «закуп 13570», «ещё закуп 12770», «закуп на 13570+12770=26 340» (amount = итог).\n"
+    "- expense — мелкий расход без товара: такси, доставка, курьер, свет, вода, интернет: «такси 200», «доставка 150 сом».\n"
+    "- meals — сколько человек ели и меню: «школа 344, садик 100, персонал 45, меню …».\n"
+    "- stock — остаток склада или передача продуктов между филиалами: «остаток склада: молоко 80 л…», «12 л молока в Кожомкул».\n"
+    "- answer — короткий ответ на вопрос бота: да, нет, ок, комиссия, часть чека, овощи, «вот это правильно», «нет, хлеб взяли в долг».\n"
+    "- question — вопрос боту: «по каким записям?».\n"
+    "- none — всё остальное: пояснения, планы, «мы в банке», «банк берёт комиссию», «от кармана Махабат», подпись к скрину без суммы.\n"
+    "Важно: «остаток» без слов «счёт/банк/карта» — это наличные (cash_on_hand), не balance. «Остаток банка» без суммы — none. Сумму бери как число с пробелами и запятыми тысяч: «90,055» = 90055, «1,35» = 1.35.\n"
+    "Имена возвращай как написаны. Не угадывай, кого не назвали (null).\n"
+    "Верни ТОЛЬКО JSON: {{\"kind\": ..., \"amount\": число или null, \"who\": кто сделал или null, \"to\": кому (transfer) или null, \"supplier\": поставщик или null, \"date\": \"today\" | \"yesterday\" | \"YYYY-MM-DD\" | null, \"account\": \"садик\" | \"школа\" | null, \"sure\": true|false}}"
 )
 
 
@@ -203,8 +214,14 @@ def read_text(db: Session, text: str, author: User | None, today: date) -> dict:
     suppliers = [s.name for s in db.query(Supplier).all()]
     data = ask_model(TEXT_PROMPT.format(people=", ".join(people), suppliers=", ".join(suppliers[:80]),
                                         author=author.name if author else "неизвестный", text=text[:600]))
-    kind = data.get("kind") if data.get("kind") in (WITHDRAWAL, TRANSFER, SUPPLIER_PAY, BALANCE) else None
-    return {"kind": kind, "amount": _num(data.get("amount")), "who": data.get("who"), "to": data.get("to"),
+    kind = data.get("kind") if data.get("kind") in TEXT_KINDS else None
+    amount = _num(data.get("amount"))
+    if amount is not None and kind in (BALANCE, CASH_ON_HAND) and re.search(r"\d{1,2}\.\d{1,2}\.\d{4}", text) \
+            and not re.search(r"\d[\d\s]{2,}", re.sub(r"\d{1,2}\.\d{1,2}\.\d{4}", " ", text)):
+        amount = None   # «Карта да остаток 24.09.2026» — дата, не сумма
+    if kind == CASH_ON_HAND:
+        kind = "pocket"   # bot_money.build: точка кармана автора
+    return {"kind": kind, "amount": amount, "who": data.get("who"), "to": data.get("to"),
             "supplier": data.get("supplier"), "date": _date(data.get("date"), today) or today,
             "account": data.get("account"), "sure": bool(data.get("sure"))}
 
