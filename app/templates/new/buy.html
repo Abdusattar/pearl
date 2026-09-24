@@ -77,7 +77,7 @@
 <h3 class="title">{% if replaces or legacy %}Поправить покупку{% elif draft %}Чек {% if draft.source == 'private' %}от бота{% elif draft.source == 'chat' %}из чата{% else %}с фото{% endif %}{% else %}Купили{% endif %}</h3>
 {% if draft %}
 <p class="who">{% if draft.by %}Прислал(а) {{ draft.by }}{% endif %}{% if draft.date %} {{ draft.date | human_date }}{% endif %}.
-  {% if supplier %}Строки заполнены с фото: сверьте с чеком справа и запишите.{% else %}Выберите, у кого купили — строки заполнятся с фото.{% endif %}</p>
+  {% set src = 'из текста' if draft.text else 'с фото' %}{% if supplier %}Строки заполнены {{ src }}: сверьте {% if draft.text %}с текстом{% else %}с чеком{% endif %} справа и запишите.{% else %}Выберите, у кого купили — строки заполнятся {{ src }}.{% endif %}</p>
 {% endif %}
 {% if error %}<div class="alert bad">{{ error }}</div>{% endif %}
 {% if legacy %}
