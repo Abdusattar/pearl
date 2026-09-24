@@ -83,12 +83,12 @@ def test_doubt_uses_own_history_not_roster(db, site, counter):
 
 def test_asks_with_example_in_own_hour_only(db, site, counter):
     d = date.today()
-    assert bot._meal_and_count_asks(db, site, datetime(d.year, d.month, d.day, 11, 30)) == []
-    keys = bot._meal_and_count_asks(db, site, datetime(d.year, d.month, d.day, 12, 5))
-    assert keys == [f"meal_ask:{d.isoformat()}:12"]
+    assert bot._meal_and_count_asks(db, site, datetime(d.year, d.month, d.day, 11, 10)) == []
+    keys = bot._meal_and_count_asks(db, site, datetime(d.year, d.month, d.day, 11, 25))
+    assert keys == [f"meal_ask:{d.isoformat()}:first"]
     msg = db.query(BotMessage).filter_by(job_key=keys[0]).one()
     assert "например" in msg.text and meals.EXAMPLE in msg.text and msg.text.startswith("Учётчик ед,")
-    assert bot._meal_and_count_asks(db, site, datetime(d.year, d.month, d.day, 12, 40)) == []   # один раз
+    assert bot._meal_and_count_asks(db, site, datetime(d.year, d.month, d.day, 11, 40)) == []   # один раз
 
 
 def test_key_products_open_count_first(db, site, counter, monkeypatch):
@@ -138,7 +138,7 @@ def test_stuck_goes_to_founder_only_after_bot_asked(db, site, counter, monkeypat
     at16 = datetime(d.year, d.month, d.day, 16, 5)
     assert bot._escalate(db, site, at16) == []            # бот не спрашивал — жаловаться не на что
     for x in (d - timedelta(days=1), d):
-        db.add(BotMessage(kind="meal_ask", job_key=f"meal_ask:{x.isoformat()}:12", direction="out", status="logged"))
+        db.add(BotMessage(kind="meal_ask", job_key=f"meal_ask:{x.isoformat()}:first", direction="out", status="logged"))
     db.flush()
     assert bot._escalate(db, site, at16) == [f"escalate:{d.isoformat()}:16"]
     msg = db.query(BotMessage).filter_by(job_key=f"escalate:{d.isoformat()}:16:{founder.id}").one()
@@ -180,7 +180,7 @@ def test_first_week_stuck_only_to_owner(db, site, counter, monkeypatch):
     monkeypatch.setattr(rules, "escalate_from", lambda db: date.today() + timedelta(days=3))
     d = date.today()
     for x in (d - timedelta(days=1), d):
-        db.add(BotMessage(kind="meal_ask", job_key=f"meal_ask:{x.isoformat()}:12", direction="out", status="logged"))
+        db.add(BotMessage(kind="meal_ask", job_key=f"meal_ask:{x.isoformat()}:first", direction="out", status="logged"))
     db.flush()
     assert bot._escalate(db, site, datetime(d.year, d.month, d.day, 16, 5))
     assert db.query(BotMessage).filter_by(user_id=founder.id, kind="escalate").count() == 0

@@ -239,10 +239,11 @@ def _meal_and_count_asks(db: Session, site: Organization, now: datetime) -> list
     name = _counter_name(db, site)
     hi = f"{name}, " if name else ""
     group = group_chat_id()
-    if meals.missing_today(db, site.id) and now.hour in (12, 15):
-        key = f"meal_ask:{d.isoformat()}:{now.hour}"
+    slot_m = "first" if _at(now, rules.get(db, "meal_ask_time")) else ("again" if _at(now, rules.get(db, "meal_remind_time")) else None)
+    if meals.missing_today(db, site.id) and slot_m:
+        key = f"meal_ask:{d.isoformat()}:{slot_m}"
         if not _done(db, key):
-            first = now.hour == 12
+            first = slot_m == "first"
             # 15:00 — не упрёк, а как проще (владелец 23.09: «мягко, но твёрдо»)
             text = (f"{hi}сколько сегодня едят? Одной строкой, например:\n{meals.EXAMPLE}" if first else
                     f"{hi}если сейчас некогда — можно и завтра утром одной строкой: "
@@ -280,6 +281,13 @@ def _meal_and_count_asks(db: Session, site: Organization, now: datetime) -> list
     return out
 
 
+def _at(now: datetime, hhmm: str) -> bool:
+    """Окно «в этот час, начиная с минуты»: тик раз в минуту, ключ раз в день — сработает
+    первый тик после 11:20 и не повторится."""
+    h, m = (int(x) for x in str(hhmm).split(":"))
+    return now.hour == h and now.minute >= m
+
+
 def count_week_start(db: Session, d: date) -> date:
     """Последний день пересчёта не позже d — начало «недели пересчёта»."""
     return d - timedelta(days=(d.weekday() - rules.count_weekday(db)) % 7)
@@ -311,7 +319,7 @@ def stuck_items(db: Session, site: Organization, now: datetime) -> list[str]:
     prev = d - timedelta(days=1)
     while not meals.expected_today(db, site.id, prev) and prev > d - timedelta(days=7):
         prev -= timedelta(days=1)
-    if (now.hour == 16 and all(_done(db, f"meal_ask:{x.isoformat()}:12") and meals.get(db, site.id, x) is None
+    if (now.hour == 16 and all(_done(db, f"meal_ask:{x.isoformat()}:first") and meals.get(db, site.id, x) is None
                                for x in (prev, d))):
         out.append(f"{who} второй день не присылает, сколько едят ({_d(prev)} и сегодня)")
     # пересчёт: утренний запасной вопрос был, а пересчёта так и нет
@@ -369,7 +377,7 @@ def _week_praise(db: Session, site: Organization, now: datetime) -> list[str]:
         return []
     monday = d - timedelta(days=d.weekday())
     asked = [x for x in (monday + timedelta(days=i) for i in range(5))
-             if meals.expected_today(db, site.id, x) and _done(db, f"meal_ask:{x.isoformat()}:12")]
+             if meals.expected_today(db, site.id, x) and _done(db, f"meal_ask:{x.isoformat()}:first")]
     good = []
     if asked and all(meals.get(db, site.id, x) is not None for x in asked):
         good.append(f"сколько едят — каждый день, {len(asked)} из {len(asked)}")
