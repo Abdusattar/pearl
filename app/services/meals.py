@@ -41,7 +41,9 @@ def parse(text: str, today: date | None = None, min_fields: int = 2) -> dict | N
     low = text.lower().replace("ё", "е")
     found = {}
     for key, words in _WORDS.items():
-        nums = re.findall(rf"(?:{words})\s*[:\-–—]?\s*{_NUM}\b", low) or re.findall(rf"\b{_NUM}\s*(?:{words})", low)
+        # «в школе детей 344, персонал 35» (Махабат 24.09): между словом и числом бывает «детей»
+        nums = (re.findall(rf"(?:{words})\s*[:\-–—]?\s*(?:(?:детей|дети|ребят|человек|чел\.?)\s*)?{_NUM}\b", low)
+                or re.findall(rf"\b{_NUM}\s*(?:детей\s+|дети\s+)?(?:{words})", low))
         if nums:
             # Махабат 23.09: «школа 328, персонал 33, садик 97, персонал 10» — персонал
             # по объектам; едят все, поэтому складываем
@@ -53,7 +55,9 @@ def parse(text: str, today: date | None = None, min_fields: int = 2) -> dict | N
     # Меню (владелец 23.09): что дали на завтрак и на обед. С первого «завтрак:/обед:/
     # полдник:» — до конца, с подписями; «меню:/готовят:» — просто список после двоеточия.
     menu = None
-    m = re.search(r"(завтрак|обед|полдник|ужин|меню|готов\w*|блюда)\s*[:\-–—]\s*(.+)$", text, re.I | re.S)
+    # «Меню сегодня гречневая каша, рисовый суп» — без двоеточия тоже меню
+    m = (re.search(r"(завтрак|обед|полдник|ужин|меню|готов\w*|блюда)\s*[:\-–—]\s*(.+)$", text, re.I | re.S)
+         or re.search(r"(меню|готов\w*|блюда)\s+(?:сегодня\s+|на\s+сегодня\s+)?(.+)$", text, re.I | re.S))
     if m:
         body = m.group(0) if m.group(1).lower() in ("завтрак", "обед", "полдник", "ужин") else m.group(2)
         menu = body.strip().strip(".").strip() or None
