@@ -37,7 +37,7 @@ def test_founder_sees_both_columns(client, db, site, monkeypatch):
     page = client.get("/new/overview")
     assert page.status_code == 200
     assert "Школа тест-об" in page.text and "Садик тест-об" in page.text
-    assert "На счетах" in page.text and "Должны нам родители" in page.text
+    assert "На счетах" in page.text and "Родители" in page.text and "просрочено" in page.text
 
 
 def test_manager_sees_only_kindergarten(client, db, site, monkeypatch):

@@ -31,6 +31,8 @@
   .nav a.on { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
   .nav a.soon { color: var(--muted); }
   .nav a.soon small { display: block; font-size: 11px; }
+  .nav .more summary { display: none; }
+  .nav .more { display: contents; }
   .side .who { margin-top: 24px; padding: 0 10px; font-size: 13px; color: var(--muted); }
   .side .old { margin-top: 18px; padding: 0 10px; font-size: 12px; }
   .side .old a { color: var(--muted); }
@@ -91,6 +93,11 @@
     .side { position: static; height: auto; border-right: 0; border-bottom: 1px solid var(--line); padding: 10px; }
     .brand { display: none; }
     .nav { display: flex; flex-wrap: wrap; gap: 4px; }
+    .nav.fnd .more { display: block; }
+    .nav.fnd .more summary { display: flex; align-items: center; min-height: 44px; padding: 10px; color: var(--muted); cursor: pointer; list-style: none; }
+    .nav.fnd .more summary::after { content: " ▾"; margin-left: 4px; }
+    .nav.fnd .more[open] summary::after { content: " ▴"; }
+    .nav.fnd .more a { display: inline-block; }
     .side .who, .side .old { display: none; }
     .main { padding: 16px 16px 40px; }
     .chip { min-height: 44px; padding: 11px 16px; font-size: 15px; }
@@ -105,13 +112,16 @@
 <div class="app">
   <aside class="side">
     <div class="brand">Жемчужина</div>
-    <nav class="nav">
+    {# Учредителю (24.09): Обзор первым, остальное на телефоне свёрнуто под «Ещё» — ему это редко нужно #}
+    <nav class="nav{% if current_user.role == 'founder' %} fnd{% endif %}">
+      {% if founder %}<a class="{% if active_page == 'overview' %}on{% endif %}" href="/new/overview">Обзор</a>{% endif %}
+      {% if current_user.role == 'founder' %}<details class="more"{% if active_page != 'overview' %} open{% endif %}><summary>Ещё</summary>{% endif %}
       <a class="{% if active_page == 'today' %}on{% endif %}" href="/new/today">Сегодня</a>
       <a class="{% if active_page == 'expenses' %}on{% endif %}" href="/new/expenses">Расходы</a>
       <a class="{% if active_page == 'warehouse' %}on{% endif %}" href="/new/stock">Склад</a>
       <a class="{% if active_page == 'cash' %}on{% endif %}" href="/new/cash">Касса</a>
       <a class="{% if active_page == 'children' %}on{% endif %}" href="/new/children">Дети</a>
-      {% if founder %}<a class="{% if active_page == 'overview' %}on{% endif %}" href="/new/overview">Обзор</a>{% endif %}
+      {% if current_user.role == 'founder' %}</details>{% endif %}
       {% if current_user.role == 'owner' %}<a class="{% if active_page == 'settings' %}on{% endif %}" href="/new/settings">Настройки</a>{% endif %}
     </nav>
     <div class="who">{{ current_user.name }}<br>{{ site.name }}</div>

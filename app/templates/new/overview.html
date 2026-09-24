@@ -4,33 +4,50 @@
 {% block head %}
 <style>
   .phone { max-width: 520px; }
-  .status { font-size: 20px; font-weight: 600; margin: 0 0 14px; }
+  .status { font-size: 20px; font-weight: 600; margin: 0 0 4px; }
   .status.ok { color: var(--ok); }
+  .fresh { color: var(--muted); font-size: 13px; margin: 0 0 14px; }
   .sig { display: grid; grid-template-columns: 1fr auto; align-items: center; gap: 10px; min-height: 48px; padding: 10px 12px; border-radius: 8px; background: var(--warn-soft); font-size: 15px; margin-top: 10px; color: inherit; text-decoration: none; }
   .sig.info { background: var(--accent-soft); }
   .sig .w { display: block; font-size: 13px; color: var(--muted); margin-top: 2px; }
   .sig::after { content: "›"; font-size: 22px; color: var(--muted); line-height: 1; }
   .sigs { margin-bottom: 18px; }
-  .fig { padding: 10px 0; border-top: 1px solid var(--line); }
+  .fig { padding: 12px 0; border-top: 1px solid var(--line); display: grid; gap: 2px; }
   .fig:first-of-type { border-top: 0; }
   .fig .l { font-size: 13px; color: var(--muted); }
-  .fig .v { font-size: 22px; font-weight: 600; font-variant-numeric: tabular-nums; }
+  .fig .v { font-size: 24px; font-weight: 600; font-variant-numeric: tabular-nums; letter-spacing: -0.01em; }
   .fig .v span { font-size: 13px; color: var(--muted); font-weight: 400; margin-left: 3px; }
-  .fig .pk { font-size: 13px; color: var(--muted); margin-top: 2px; }
-  .month { width: 100%; border-collapse: collapse; margin-top: 8px; font-size: 14px; font-variant-numeric: tabular-nums; }
+  .fig .pk { font-size: 13px; color: var(--muted); }
+  .fig .pk b { color: var(--text); font-weight: 500; }
+  .fig .rows { display: grid; gap: 4px; margin-top: 4px; font-size: 14px; }
+  .fig .rows div { display: flex; justify-content: space-between; gap: 12px; font-variant-numeric: tabular-nums; }
+  .fig .rows .k { color: var(--muted); }
+  .tag { display: inline-block; font-size: 12px; padding: 2px 8px; border-radius: 999px; background: var(--ok-soft); color: var(--ok); vertical-align: middle; white-space: nowrap; }
+  .tag.q { background: var(--warn-soft); color: var(--warn); }
+  .tag.bad { background: #fbe9e7; color: var(--bad); }
+  h4.m { margin: 22px 0 6px; font-size: 15px; }
+  h4.m span { color: var(--muted); font-weight: 400; }
+  .month { width: 100%; border-collapse: collapse; font-size: 14px; font-variant-numeric: tabular-nums; }
   .month th { text-align: right; font-weight: 500; color: var(--muted); font-size: 12px; padding: 4px 0; }
   .month th:first-child, .month td:first-child { text-align: left; }
-  .month td { padding: 6px 0; border-top: 1px solid var(--line); text-align: right; }
-  .month tr.tot td { font-weight: 600; }
+  .month td { padding: 8px 0; border-top: 1px solid var(--line); text-align: right; }
+  .month td.sub { font-size: 12px; color: var(--muted); padding-top: 0; border-top: 0; text-align: left; }
+  .month tr.tot td { font-weight: 600; border-top: 2px solid var(--line); }
   .month td.nd { color: var(--muted); }
+  .note { font-size: 13px; color: var(--muted); margin: 8px 0 0; }
+  .box { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 12px; font-size: 14px; margin-top: 14px; }
   .links { display: flex; flex-wrap: wrap; gap: 8px 18px; margin-top: 18px; font-size: 14px; }
-  .links a { text-decoration: none; }
+  .links a { text-decoration: none; min-height: 32px; display: inline-flex; align-items: center; }
 </style>
 {% endblock %}
 
 {% block content %}
+{% set d = figures.d %}
 <div class="phone">
   <p class="status {% if status == 'Всё в порядке' %}ok{% endif %}">{{ status }}</p>
+  <p class="fresh">{{ today | human_date(true) }} ·
+    {% if figures.cash_confirmed %}наличные подтверждены {{ d(figures.cash_confirmed) }}{% else %}наличные ещё не подтверждали{% endif %},
+    склад — {% if figures.stock_since %}пересчёт {{ d(figures.stock_since) }}{% else %}пересчёта ещё не было{% endif %}</p>
   {% if signals %}
   <div class="sigs">
     {% for s in signals %}<a class="sig {{ s.kind }}" href="{{ s.url }}"><span>{{ s.text }}{% if s.sub %}<span class="w">{{ s.sub }}</span>{% endif %}</span></a>{% endfor %}
@@ -38,26 +55,48 @@
   {% endif %}
 
   <div class="fig"><div class="l">На счетах</div><div class="v">{{ figures.accounts_total | money }}<span>сом</span></div>
-    <div class="pk">{% for a in figures.accounts %}{{ a.org.name | lower }} {{ a.expected | money }}{% if not loop.last %}, {% endif %}{% endfor %}</div></div>
+    <div class="pk">{% for a in figures.accounts %}{{ a.org.name | lower }} <b>{{ a.expected | money }}</b>{% if not loop.last %} · {% endif %}{% endfor %}
+      {% if figures.accounts %}{% set since = figures.accounts | map(attribute='since') | select | list %}{% if since %}<span class="tag">по банку на {{ d(since | min) }}</span>{% else %}<span class="tag q">остаток в банке не вносили</span>{% endif %}{% endif %}</div></div>
   <div class="fig"><div class="l">Наличных на руках</div><div class="v">{{ figures.cash | money }}<span>сом</span></div>
-    <div class="pk">{% for p in figures.pockets %}{{ p.user.name }} {{ p.balance | money }}{% if not loop.last %}, {% endif %}{% endfor %}</div></div>
-  <div class="fig"><div class="l">Продуктов на складе</div><div class="v">{{ figures.stock | money }}<span>сом</span></div><div class="pk">основные товары по цене закупки</div></div>
-  <div class="fig"><div class="l">Должны нам родители</div><div class="v">{{ figures.parents_total | money }}<span>сом</span></div>
-    <div class="pk">{% for p in figures.parents %}{{ p.org.name | lower }}: {% if p.tariff %}{{ p.debt | money }}{% else %}тариф не заведён{% endif %}{% if not loop.last %}; {% endif %}{% endfor %}</div></div>
-  <div class="fig"><div class="l">Должны мы поставщикам</div><div class="v">{{ figures.suppliers | money }}<span>сом</span></div><div class="pk">{{ figures.supplier_names }}</div></div>
+    <div class="pk">{% for p in figures.pockets %}{{ p.name }} <b>{{ p.balance | money }}</b>{% if not loop.last %} · {% endif %}{% endfor %}
+      {% if figures.cash_confirmed %}<span class="tag">подтверждено {{ d(figures.cash_confirmed) }}</span>{% endif %}</div></div>
+  <div class="fig"><div class="l">Продуктов на складе</div><div class="v">{{ figures.stock | money }}<span>сом</span></div>
+    <div class="pk">{% if figures.key_count %}{{ figures.key_count }} главных продуктов по цене закупки{% else %}основные товары по цене закупки{% endif %}{% if figures.stock_since %} · пересчёт {{ d(figures.stock_since) }}, следующий — {{ figures.weekday }} {{ d(figures.stock_next) }}{% endif %}</div></div>
+  <div class="fig"><div class="l">Родители</div>
+    <div class="v">{{ figures.overdue_total | money }}<span>сом просрочено</span></div>
+    <div class="rows">
+      {% for p in figures.parents %}
+        {% set short = 'Школа' if p.org.type == 'school' else ('Садик' if figures.parents | length < 3 else p.org.name) %}
+        {% if not p.tariff %}<div><span class="k">{{ short }}</span><span class="tag q">тариф не заведён</span></div>
+        {% elif p.no_payments %}<div><span class="k">{{ short }}: {{ p.count }} детей</span><span class="tag q">оплат пока нет</span></div>
+        {% else %}
+        <div><span class="k">{{ short }}: заплатили за месяц</span><span>{{ p.paid_kids }} из {{ p.count }}</span></div>
+        {% if p.waiting %}<div><span class="k">ещё ждём до конца месяца</span><span>{{ p.waiting | money }}</span></div>{% endif %}
+        {% endif %}
+      {% endfor %}
+    </div></div>
+  <div class="fig"><div class="l">Должны мы поставщикам</div><div class="v">{{ figures.suppliers | money }}<span>сом</span></div>
+    <div class="pk">{% for s in figures.supplier_rows %}{{ s.name }} <b>{{ s.debt | money }}</b>{% if s.since %} (с {{ d(s.since) }}){% endif %}{% if not loop.last %} · {% endif %}{% endfor %}</div></div>
 
-  <h4 style="margin-top:22px">{{ month_name | capitalize }}, по {{ table.last.day }} число</h4>
+  {% for o in table.orgs %}{% set c = table.cols[o.id] %}
+  <h4 class="m">{{ o.name }}, {{ month_name }} <span>по {{ table.last.day }} число</span></h4>
   <table class="month">
-    <tr><th></th>{% for o in orgs %}<th>{{ o.name }}</th>{% endfor %}</tr>
-    <tr><td>Пришло от родителей</td>{% for o in orgs %}{% set c = table.cols[o.id] %}<td class="{% if not c.tariff and c.income == 0 %}nd{% endif %}">{% if not c.tariff and c.income == 0 %}нет данных{% else %}{{ c.income | money }}{% endif %}</td>{% endfor %}</tr>
-    <tr><td>Еда</td>{% for o in orgs %}<td>{{ table.cols[o.id].food | money }}</td>{% endfor %}</tr>
-    {% if table.cols.values() | map(attribute='sent') | sum %}<tr><td style="font-size:13px;color:var(--muted)">передали другому садику</td>{% for o in orgs %}<td style="font-size:13px;color:var(--muted)">{% if table.cols[o.id].sent %}{{ table.cols[o.id].sent | money }}{% endif %}</td>{% endfor %}</tr>{% endif %}
-    <tr><td>Зарплата</td>{% for o in orgs %}<td>{{ table.cols[o.id].salary | money }}</td>{% endfor %}</tr>
-    <tr><td>Свет, вода, охрана</td>{% for o in orgs %}<td>{{ table.cols[o.id].util | money }}</td>{% endfor %}</tr>
-    <tr><td>Ремонт и прочее</td>{% for o in orgs %}<td>{{ table.cols[o.id].other | money }}</td>{% endfor %}</tr>
-    <tr class="tot"><td>Осталось</td>{% for o in orgs %}{% set c = table.cols[o.id] %}<td class="{% if not c.tariff and c.income == 0 %}nd{% endif %}">{% if not c.tariff and c.income == 0 %}нет данных{% else %}{{ c.left | money }}{% endif %}</td>{% endfor %}</tr>
+    <tr><td>Пришло от родителей</td><td>{% if 'income' in c.has %}{{ c.income | money }}{% else %}<span class="nd">— пока нет</span>{% endif %}</td></tr>
+    {% if c.income_pct is not none and 'income' in c.has %}<tr><td class="sub" colspan="2">{{ c.income_pct }} % от начисленного за месяц</td></tr>{% endif %}
+    <tr><td>Еда</td><td>{% if 'food' in c.has %}{{ c.food | money }}{% else %}<span class="nd">— не записано</span>{% endif %}</td></tr>
+    {% if c.sent %}<tr><td class="sub" colspan="2">из них передали другому садику {{ c.sent | money }}</td></tr>{% endif %}
+    <tr><td>Зарплата</td><td>{% if 'salary' in c.has %}{{ c.salary | money }}{% else %}<span class="nd">— не записано</span>{% endif %}</td></tr>
+    {% if 'salary' in c.has %}<tr><td class="sub" colspan="2">за {{ table.prev_month }} — зарплату платят за прошлый месяц</td></tr>{% endif %}
+    <tr><td>Свет, вода, охрана</td><td>{% if 'util' in c.has %}{{ c.util | money }}{% else %}<span class="nd">— не записано</span>{% endif %}</td></tr>
+    <tr><td>Ремонт и прочее</td><td>{% if 'other' in c.has %}{{ c.other | money }}{% else %}<span class="nd">— не записано</span>{% endif %}</td></tr>
+    <tr class="tot"><td>Пришло минус потратили</td><td>{% if c.left < 0 %}−{{ (-c.left) | money }}{% else %}{{ c.left | money }}{% endif %}</td></tr>
   </table>
-  <p class="after">Общие расходы площадки (еда, свет, общие сотрудники) пока в колонке садика: правила деления придут с Настройками. Взносы и изъятия учредителей в «Осталось» не входят.</p>
-  <div class="links"><a href="/new/expenses">Расходы</a><a href="/new/cash">Касса</a><a href="/new/children">Дети</a><a href="/new/stock">Склад</a></div>
+  {% if c.left < 0 and 'salary' in c.has %}<p class="note">Минус — зарплата за прошлый месяц легла на этот. Оплаты родителей приходят до конца месяца.</p>{% endif %}
+  {% endfor %}
+  {% for o in table.empty_orgs %}
+  <div class="box"><b>{{ o.name }}, {{ month_name }}.</b> Записей за месяц пока нет: приход и расходы появятся здесь по мере записи.</div>
+  {% endfor %}
+  <p class="note">Общие расходы площадки (еда, свет, общие сотрудники) пока в колонке садика. Взносы и изъятия учредителей в «Пришло минус потратили» не входят.</p>
+  <div class="links"><a href="/new/cash">Касса</a><a href="/new/children">Дети</a><a href="/new/stock">Склад</a><a href="/new/expenses">Расходы</a></div>
 </div>
 {% endblock %}
