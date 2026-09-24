@@ -437,6 +437,15 @@ def _send_founders(db: Session, text: str, key: str | None = None) -> None:
 # ── входящие ─────────────────────────────────────────────────────────────
 
 _NUM = re.compile(r"^\s*(\d[\d\s]*(?:[.,]\d+)?)\s*(.*)$", re.S)
+
+
+def parse_amount(s: str) -> Decimal:
+    """«90,055» и «12.500» — тысячи (Айжан 24.09: бот прочитал 90), «1,5» и «12.50» — дробь.
+    Запятая или точка ровно с тремя цифрами после и без другой дроби — разделитель тысяч."""
+    t = re.sub(r"\s+", "", s or "")
+    if re.fullmatch(r"\d{1,3}(?:[.,]\d{3})+", t):
+        return Decimal(re.sub(r"[.,]", "", t))
+    return Decimal(t.replace(",", "."))
 # Ответ на утренний вопрос: «да» / «да, хлеб в долг» — подтверждение (хвост — причина);
 # «нет» / «нет, 3500 …» — дальше ждём цифру. Хвост «да» без цифр, иначе это не «да».
 _YES = re.compile(r"^\s*(?:да|верно|\+)(?![а-яё\w])[\s,.!—-]*([^\d]*)$", re.I | re.S)
@@ -561,7 +570,7 @@ def _private_money(db: Session, site: Organization, user: User, text: str) -> st
         return None
     if m := _ON_HAND.search(text):
         # «на руках 15 000», «наличных 0» — точка кармана автора (Айжан, старт школы 24.09)
-        amount = Decimal((m.group(1) or m.group(2)).replace(" ", "").replace(",", "."))
+        amount = parse_amount(m.group(1) or m.group(2))
         info = {"kind": "pocket", "amount": float(amount), "date": date.today()}
         asked = bot_money.offer(db, site, user, info, date.today())
         return asked.text if asked is not None else None
@@ -826,7 +835,7 @@ def _handle_pocket_answer(db: Session, user: User, site: Organization, text: str
             # она имела в виду, а просим одну цифру; вопрос остаётся открытым
             return ("Сколько у вас на руках сейчас? Напишите цифрой, например «0» "
                     "или «3500, отдала за хлеб».")
-        actual = Decimal(m.group(1).replace(" ", "").replace(",", "."))
+        actual = parse_amount(m.group(1))
         reason = m.group(2).strip()
     delta = actual - expected
     if abs(delta) > rules.pocket_delta_threshold(db) and not reason:
@@ -1143,7 +1152,7 @@ def morning_answer(db: Session, site: Organization, user: User, text: str) -> st
     m = _NUM.match(no.group(1) if no else text)
     if not m:
         return "Нужна цифра из банка, например «125 400»."
-    actual = Decimal(m.group(1).replace(" ", "").replace(",", "."))
+    actual = parse_amount(m.group(1))
     reason = m.group(2).strip() or None
     p = ask.payload or {}
     try:

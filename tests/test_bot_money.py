@@ -186,3 +186,19 @@ def test_bot_chat_page_is_owner_only_and_shows_dialog(client, db, world, monkeyp
     assert "сняла 25 000" in page and "записываю: снятие 25 000" in page and "Записал. Спасибо!" in page
     page = client.get(f"/new/settings/bot/chat?who={n.id}").text
     assert "Записал. Спасибо!" in page
+
+
+def test_parse_amount_thousands_vs_fraction():
+    from app.services.bot import parse_amount
+    assert parse_amount("90,055") == Decimal("90055")
+    assert parse_amount("90 055") == Decimal("90055")
+    assert parse_amount("12.500") == Decimal("12500")
+    assert parse_amount("1,5") == Decimal("1.5")
+    assert parse_amount("12.50") == Decimal("12.50")
+    assert parse_amount("2 089 650,45") == Decimal("2089650.45")
+
+
+def test_on_hand_with_thousands_comma(db, world):
+    n = world["n"]
+    reply = svc.handle_update(db, _private(n, "На руках-90,055"))
+    assert "на руках 90 055" in reply
