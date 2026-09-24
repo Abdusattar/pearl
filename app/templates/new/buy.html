@@ -184,8 +184,13 @@
     <button class="btn ghost" type="button" id="nextflag" onclick="nextFlag()">К следующей</button>
   </div></div>
   </div>
+  {% if draft.text %}
+  <aside class="photo-side"><blockquote style="margin:0;padding:12px 14px;border-radius:12px;background:var(--bg-2, #f3f4f6);white-space:pre-wrap;font-size:15px">{{ draft.text }}</blockquote>
+    <span class="s">Закуп написали текстом в чате — чека нет. Сверяйте строки с текстом.</span></aside></div>
+  {% else %}
   <aside class="photo-side"><a href="/media/{{ draft.path }}" target="_blank" aria-label="Открыть фото чека во весь экран"><img src="/media/{{ draft.path }}" alt="Фото чека"></a>
     <span class="s">Сверяйте строки с чеком. Нажмите — откроется во весь экран.</span></aside></div>
+  {% endif %}
   {% endif %}
 
   <div class="foot">

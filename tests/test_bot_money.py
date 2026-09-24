@@ -443,10 +443,10 @@ def test_owner_evening_line(db, world, monkeypatch):
 def test_accountant_purchase_text_gets_form_link_not_receipt_request(db, world):
     """Махабат 24.09: «корм 1 200» без чека — она сама учётчик, ей форма, а не «пришлите фото»."""
     m = world["m"]
-    reply = svc.handle_update(db, _private(m, "закуп корм 1200"))
+    reply = svc.handle_update(db, _private(m, "закуп корм 1200"))   # товар назван — черновик
+    assert reply.startswith("Махабаттест, черновик закупа готов") and "/new/buy?receipt=" in reply
+    reply = svc.handle_update(db, _group(m, "Закуп 1200"))          # только сумма — форма
     assert reply.startswith("Махабаттест, закуп 1 200 без чека — внесите через «Закуп»") and "/new/buy" in reply
-    reply = svc.handle_update(db, _group(m, "Закуп 1200"))
-    assert "/new/buy" in reply
 
 
 def test_first_receipt_of_day_pings_checker_once(db, world, monkeypatch):
@@ -480,3 +480,24 @@ def test_confirmed_transfer_is_posted_to_group(db, world, monkeypatch):
     assert "Записал" in svc.handle_update(db, _private(n, "да", mid=55))
     g = db.query(BotMessage).filter_by(kind="group_transfer").one()
     assert g.chat_id == GROUP and g.text == "Мунаратест → Махабаттест 5 229, вчера — записал."
+
+
+def test_purchase_text_becomes_draft(db, world, monkeypatch):
+    """Махабат 24.09: «500 сом корм птицам 2 килограмма» — черновик закупа без фото, ей ссылка;
+    Мунара «Кг кунжут 400 сом Мак 500 гр 275» — черновик, Махабат зовём."""
+    from app.models import Receipt
+    from app.services.bot import purchase_text
+    assert purchase_text("500 сом корм птицам 2 килограмма")
+    assert purchase_text("Кг кунжут400сом Мак 500гр 275")
+    assert not purchase_text("Закуп 13570")
+    assert not purchase_text("Остаток наличными 51090")
+    assert not purchase_text("отдала Махабат 5229")
+    m, n = world["m"], world["n"]
+    reply = svc.handle_update(db, _group(m, "500 сом корм птицам 2 килограмма"))
+    r = db.query(Receipt).filter_by(created_by=m.id).one()
+    assert r.kind == "receipt" and r.file_path.endswith(".txt") and r.payload["text"].startswith("500 сом")
+    assert reply == f"Махабаттест, черновик закупа готов — проверьте и запишите: {svc.public_url()}/new/buy?receipt={r.id}"
+    reply = svc.handle_update(db, _group(n, "Кг кунжут400сом Мак 500гр 275", mid=3))
+    assert reply == "Мунаратест, принял закуп текстом — Махабаттест проверит и запишет."
+    assert db.query(Receipt).filter_by(created_by=n.id).count() == 1
+    assert db.query(BotMessage).filter_by(kind="draft_ping", user_id=m.id).count() == 1

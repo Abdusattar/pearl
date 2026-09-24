@@ -222,6 +222,7 @@ def run_scheduled(db: Session, now: datetime | None = None) -> list[str]:
     sent += _morning_checks(db, site, now)
     from app.services import bot_money
     sent += bot_money.settle_deferred(db, site, now.date())
+    sent += _day_close(db, site, now)
     sent += _owner_evening(db, site, now)
     # Пятничный «у вас на руках X, верно?» с записью ответа выключен 21.09: это ритуал
     # пересчёта (владелец: пересчёт — признак слабости), и бот не пишет в деньги мимо
@@ -329,14 +330,19 @@ def _bank_holder(db: Session, site: Organization) -> str | None:
 # учредителю в личку (дисциплина — её слово, владелец 23.09) и копия владельцу.
 # Только то, о чём бот уже спрашивал: без вопроса нет и жалобы.
 
-ESCALATE_HOURS = (12, 16)       # 12 — после пропущенного пересчёта, 16 — после напоминания про едоков
+ESCALATE_HOURS = (9, 12, 16)    # 9 — вчерашний день не закрыт, 12 — после пропущенного пересчёта, 16 — едоки
 RECEIPTS_STUCK_DAYS = 3
 
 
 def stuck_items(db: Session, site: Organization, now: datetime) -> list[str]:
-    from app.services import meals
+    from app.services import day_close, meals
     d, out = now.date(), []
     who = _counter_name(db, site) or "учётчик"
+    if now.hour == 9:
+        # Утро после незакрытого дня (владелец 24.09): учредителю один раз — что и кто отвечает
+        prev = day_close.last_working_day(db, site, d)
+        text = day_close.founder_text(db, site, prev)
+        return [text] if text else []
     # едоки: бот спрашивал сегодня и в прошлый рабочий день, записи нет ни за один
     prev = d - timedelta(days=1)
     while not meals.expected_today(db, site.id, prev) and prev > d - timedelta(days=7):
@@ -548,6 +554,9 @@ def handle_update(db: Session, update: dict) -> str | None:
         if morning:
             send(db, chat_id, morning, "reply", user_id=user.id)
         return morning or None
+    if site is not None and (buy_text := purchase_text_reply(db, site, user, text, "private")):
+        send(db, chat_id, buy_text, "reply", user_id=user.id)
+        return buy_text
     if site is not None and (buy := _private_buy(db, site, user, text)):
         send(db, chat_id, buy, "reply", user_id=user.id)
         return buy
@@ -650,6 +659,39 @@ def _buy_ask_text(user: User, amount: float) -> str:
             "я подготовлю запись из ваших наличных, Махабат проверит и подтвердит.")
 
 
+_UNITS = re.compile(r"\b(?:кг|гр|г|шт|штук\w*|килограмм\w*|грамм\w*|литр\w*|л|сом\w*|закуп\w*|ещ[её]|купил\w*|за|на|и|по)\b", re.I)
+_MONEY_WORDS = re.compile(r"остат|остал|налич|сч[её]т|банк|карман|долг|зарплат|аванс|оплат", re.I)
+
+
+def purchase_text(text: str) -> bool:
+    """«500 сом корм птицам 2 килограмма» (Махабат 24.09), «Кг кунжут 400 сом, мак 500 гр 275» —
+    закуп текстом: есть сумма, есть товар словами, нет слов о деньгах и передачах."""
+    t = text or ""
+    if not re.search(r"\d", t) or _HANDED.search(t) or _MONEY_WORDS.search(t):
+        return False
+    if not re.search(r"сом|закуп|купил", t, re.I):
+        return False
+    rest = _UNITS.sub(" ", re.sub(r"[\d.,]+", " ", t))
+    return bool(re.search(r"[а-яёa-z]{3,}", rest, re.I))
+
+
+def purchase_text_reply(db: Session, site: Organization, user: User, text: str, source: str) -> str | None:
+    """Закуп текстом → черновик закупа у Махабат без фото (владелец 24.09: «сейчас бот подготовит
+    черновик»). Учётчику — ссылка на проверку, остальным — «принял, Махабат проверит»."""
+    from app.services import bot_group as grp, drafts
+    if user is None or user.role not in OPERATIONAL_ROLES or not purchase_text(text):
+        return None
+    draft = drafts.create_text(db, site_org_id=site.id, author=user, text=text, kind=drafts.RECEIPT, source=source,
+                               info={"kind": "purchase"})
+    chk = _counter_user(db, site)
+    link = f"{public_url()}/new/buy?receipt={draft.id}"
+    if chk is not None and chk.id == user.id:
+        return f"{grp._first(user.name)}, черновик закупа готов — проверьте и запишите: {link}"
+    _ping_checker(db, site, user, draft, {"amount": None})
+    who = grp._first(chk.name) if chk else "учётчик"
+    return f"{grp._first(user.name)}, принял закуп текстом — {who} проверит и запишет."
+
+
 def _answer_to_question(db: Session, user: User, text: str) -> bool:
     """Короткий текст при открытом вопросе бота «ответьте одним словом» (третье фото, 24.09:
     «Часть чека») — это ответ, не новое сообщение: вопрос закрываем, владельцу — что ответили."""
@@ -743,6 +785,12 @@ def _handle_group(db: Session, msg: dict, user: User | None, text: str) -> str |
                     send(db, owner.tg_id if owner else None, f"Группа, {user.name}, «{text[:80]}»: наличные на руках — "
                          + bot_money.asked_note(db, asked).strip(), "group_reply_owner", user_id=OWNER_USER_ID)
                 return None
+            if user is not None and (buy_text := purchase_text_reply(db, site, user, text, "chat")):
+                db.add(BotMessage(kind="purchase_text", chat_id=chat_id, user_id=user.id, direction="in",
+                                  text=text[:2000], status="understood", payload={"message_id": message_id}))
+                send(db, user.tg_id if _counter_user(db, site) and _counter_user(db, site).id == user.id else chat_id,
+                     buy_text, "group_reply", user_id=user.id, reply_to=None if "/new/buy" in buy_text else message_id)
+                return buy_text
             if user is not None and _BUY.match(text):
                 # «Закуп 13570» — суммы без чека не записываем: закуп идёт строками со склада
                 m_buy = re.search(r"\d[\d\s]*(?:[.,]\d+)?", text)
@@ -1226,7 +1274,7 @@ def _purchases_ask(db: Session, site: Organization, now: datetime) -> list[str]:
     said_none = db.query(BotMessage.id).filter(BotMessage.kind == "no_purchases",
                                                BotMessage.job_key.like(f"no_purchases:{d.isoformat()}:%")).first()
     need_buy = not _bought_today(db, site, d) and said_none is None
-    waiting = len(today.unchecked_receipts(db, site.id))
+    waiting = 0   # черновики и едоки теперь ведёт закрытие дня (15:00 → 17:15), здесь не дублируем
     debts_text, crossed = _debts_part(db, site, d)
     if not need_buy and not waiting and not debts_text and not meals.missing_today(db, site.id):
         db.add(BotMessage(kind="purchases_ask", job_key=key, status="skipped"))
@@ -1296,10 +1344,53 @@ def _owner_evening(db: Session, site: Organization, now: datetime) -> list[str]:
     key = f"owner_evening:{site.id}:{d.isoformat()}"
     if _done(db, key):
         return []
+    from app.services import day_close, meals
+    if not meals.expected_today(db, site.id, d):
+        db.add(BotMessage(kind="owner_evening", job_key=key, status="skipped"))
+        return [key]
+    notes = (db.query(BotMessage).filter(BotMessage.status == "noted",
+                                         BotMessage.created_at >= datetime.combine(d, datetime.min.time())).count())
+    text = day_close.owner_line(db, site, d)
+    if notes:
+        text += f" Заметок бота {notes}: {public_url()}/new/settings/bot/chat"
     owner = db.get(User, OWNER_USER_ID)
-    send(db, owner.tg_id if owner else None, owner_evening_text(db, site, d), "owner_evening",
-         user_id=OWNER_USER_ID, job_key=key)
+    send(db, owner.tg_id if owner else None, text, "owner_evening", user_id=OWNER_USER_ID, job_key=key)
     return [key]
+
+
+def _day_close(db: Session, site: Organization, now: datetime) -> list[str]:
+    """Закрытие дня (владелец 24.09): 15:00 группа каждому по имени → 16:00 заведующей в личку →
+    16:45 группа заведующей → 17:15 итог. Всё закрыто — до итога молчим. Только в рабочие дни."""
+    from app.services import day_close, meals
+    d = now.date()
+    if not meals.expected_today(db, site.id, d):
+        return []
+    out = []
+    slots = (("check", rules.get(db, "close_check_time")), ("manager", rules.get(db, "close_manager_time")),
+             ("remind", rules.get(db, "close_remind_time")), ("final", rules.get(db, "close_final_time")))
+    for slot, hhmm in slots:
+        if not _at(now, str(hhmm)):
+            continue
+        key = f"day_close:{site.id}:{d.isoformat()}:{slot}"
+        if _done(db, key):
+            continue
+        if slot == "final":
+            send(db, group_chat_id(), day_close.result_text(db, site, d), "day_close", job_key=key)
+        elif slot == "manager":
+            text = day_close.manager_text(db, site, d)
+            m = day_close.manager(db, site)
+            if text and m is not None:
+                send(db, m.tg_id, text, "day_close", user_id=m.id, job_key=key)
+            else:
+                db.add(BotMessage(kind="day_close", job_key=key, status="skipped"))
+        else:
+            text = day_close.group_text(db, site, d, to_manager=(slot == "remind"))
+            if text:
+                send(db, group_chat_id(), text, "day_close", job_key=key)
+            else:
+                db.add(BotMessage(kind="day_close", job_key=key, status="skipped"))
+        out.append(key)
+    return out
 
 
 def _debts_part(db: Session, site: Organization, d: date) -> tuple[str | None, list[int]]:

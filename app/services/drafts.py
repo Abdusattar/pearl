@@ -163,9 +163,16 @@ def receipt_rows(db: Session, r: Receipt, site_org_id: int, supplier_id: int) ->
     if cached is not None and cached.get("supplier_id") == supplier_id:
         return cached
     from app.services import recognize as rz
-    data = (MEDIA_ROOT / r.file_path).read_bytes()
-    out = rz.recognize(db, data, rz.RECEIPT, site_org_id, supplier_id,
-                       mime="image/png" if r.file_path.lower().endswith(".png") else "image/jpeg")
+    if is_text(r):
+        # закуп текстом («500 сом корм птицам 2 кг», Махабат 24.09): тот же конвейер, без фото
+        text = p.get("text") or (MEDIA_ROOT / r.file_path).read_text(encoding="utf-8")
+        candidates = rz.receipt_context(db, site_org_id, supplier_id)
+        result = rz.call_model(None, rz.RECEIPT, candidates, text=text)
+        out = {"rows": rz.post_process(db, rz.RECEIPT, result, candidates), "amount": result.get("amount")}
+    else:
+        data = (MEDIA_ROOT / r.file_path).read_bytes()
+        out = rz.recognize(db, data, rz.RECEIPT, site_org_id, supplier_id,
+                           mime="image/png" if r.file_path.lower().endswith(".png") else "image/jpeg")
     rec = json.loads(json.dumps({"rows": out["rows"], "amount": out.get("amount")}, default=float))
     rec["supplier_id"] = supplier_id
     p["receipt_rec"] = rec
