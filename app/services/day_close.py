@@ -62,7 +62,7 @@ def items(db: Session, site: Organization, d: date) -> list[dict]:
                                                Reconciliation.date == d, Reconciliation.cancelled_at.is_(None))
                .order_by(Reconciliation.id.desc()).first())
         if rec is not None:
-            if abs(Decimal(rec.delta or 0)) > 1 and not (rec.reason or "").strip():
+            if abs(Decimal(rec.delta or 0)) > rules.match_tolerance(db) and not (rec.reason or "").strip():
                 out.append({"who": u, "text": f"наличные не сошлись ({_fmt(rec.delta)}) — написать, что произошло"})
             continue
         offer = (db.query(BotMessage).filter(BotMessage.kind == "money_offer", BotMessage.user_id == u.id,

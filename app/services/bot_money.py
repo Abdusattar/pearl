@@ -105,11 +105,13 @@ def build(db: Session, site: Organization, author: User | None, info: dict, toda
         # своя точка наличных: разница с записями видна сразу, «да, причина» — причина
         expected = cash.pocket_balance(db, site.id, author.id)
         delta = Decimal(str(amount)) - expected
-        tail = " — с записями сходится" if abs(delta) < 1 else \
+        from app.services import rules as _rules
+        tol = _rules.match_tolerance(db)   # владелец 24.09: «до 10 сомов — не парить их»
+        tail = " — с записями сходится" if abs(delta) <= tol else \
             f". По записям {grp.fmt_money(expected)}, разница {grp._signed(delta)}"
         return {"op": "recount", "amount": str(amount), "date": today.strftime(_DATE_FMT), "pocket_user_id": author.id,
                 "ask": author.id, "what": f"наличных у {grp._first(author.name)} на руках {grp.fmt_money(amount)}{tail}",
-                "matches": abs(delta) < 1}
+                "matches": abs(delta) <= tol}
     if kind == "expense" and author is not None and amount:
         # мелкий расход без товара (24.09): из наличных автора, сегодня
         return {"op": "expense", "amount": str(amount), "date": d.strftime(_DATE_FMT), "payer_id": author.id,
@@ -147,7 +149,9 @@ def build(db: Session, site: Organization, author: User | None, info: dict, toda
         else:
             expected = cash.expected_account(db, acc.id, on)
             delta = Decimal(str(bal)) - expected
-            tail = " — с записями сходится" if abs(delta) <= 1 else \
+            from app.services import rules as _rules
+            tol = _rules.match_tolerance(db)
+            tail = " — с записями сходится" if abs(delta) <= tol else \
                 f". По записям {_kop(expected)}, разница {_kop(delta, signed=True)}"
             if -500 < delta < -1 and on == today and _withdrew_today(db, acc.id, today):
                 # Комиссия за снятие (владелец 24.09: «если комиссия — пиши комиссия»): расход со
@@ -161,7 +165,7 @@ def build(db: Session, site: Organization, author: User | None, info: dict, toda
                         "what": f"остаток счёта {_label(acc)} {_kop(bal)}{tail}",
                         "doubt": "счёт не мог вырасти без прихода — возможно, это наличные"}
         o = {"op": "bank", "amount": str(bal), "date": on.strftime(_DATE_FMT), "org_id": acc.id,
-             "ask": holder.id if holder else None, "matches": not first and (abs(delta) <= 1 or fee is not None),
+             "ask": holder.id if holder else None, "matches": not first and (fee is not None or abs(delta) <= rules_tol(db)),
              "what": f"остаток счёта {_label(acc)} {_kop(bal)} на конец {grp._dd(on)}{tail}"}
         if fee is not None:
             o["fee"] = str(fee)
@@ -369,3 +373,8 @@ def _deferred_text(db: Session, site: Organization, who: User, stated: Decimal) 
     tail = " — как у вас." if abs(after - stated) < 1 else f"; сверю с вашими {grp.fmt_money(stated)} после подтверждения."
     return (head + f", закупы на {grp.fmt_money(prepared)} подготовлены: спишутся, когда Махабат подтвердит их "
             f"в системе, и станет {grp.fmt_money(after)}" + tail)
+
+
+def rules_tol(db: Session) -> Decimal:
+    from app.services import rules
+    return rules.match_tolerance(db)

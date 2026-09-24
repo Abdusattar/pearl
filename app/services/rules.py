@@ -49,6 +49,8 @@ RULES = {
     "close_final_time": {"default": "17:15", "title": "Итог дня в группу"},
     # Мелкий расход без товара («такси 200», владелец 24.09): до этой суммы бот спрашивает автора
     # «верно?» и пишет сам; выше — черновик учётчику
+    # Мелкая разница наличных/счёта (владелец 24.09: «до 10 сомов — не парить», потом «давай 5, но просить до нуля»)
+    "match_tolerance": {"default": 5, "title": "Разница, которую считаем «сошлось»", "unit": "сом", "min": 0, "max": 1000},
     "small_expense_max": {"default": 1000, "title": "Мелкий расход без чека — до", "unit": "сом", "min": 0, "max": 100000},
 }
 WEEKDAYS = ["понедельник", "вторник", "среда", "четверг", "пятница", "суббота", "воскресенье"]
@@ -132,6 +134,10 @@ def escalate_from(db: Session):
 
 def kitchen_sheet_required(db: Session) -> bool:
     return bool(get(db, "kitchen_sheet_required"))
+
+
+def match_tolerance(db: Session) -> Decimal:
+    return Decimal(str(get(db, "match_tolerance")))
 
 
 def bot_paused(db: Session) -> bool:

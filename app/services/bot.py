@@ -1398,7 +1398,7 @@ def owner_evening_text(db: Session, site: Organization, d: date) -> str:
     bad = []
     for r in (db.query(Reconciliation).filter(Reconciliation.organization_id.in_(org_ids), Reconciliation.date == d,
                                               Reconciliation.cancelled_at.is_(None)).all()):
-        if abs(Decimal(r.delta or 0)) > 1:
+        if abs(Decimal(r.delta or 0)) > rules.match_tolerance(db):
             who = db.get(User, r.subject_id) if r.kind == "pocket" else None
             what = f"наличные {_first(who.name)}" if who else f"счёт {db.get(Organization, r.organization_id).name}"
             bad.append(f"{what} {_signed(Decimal(r.delta))}")

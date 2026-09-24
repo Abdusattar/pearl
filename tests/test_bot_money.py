@@ -571,3 +571,13 @@ def test_unrecognized_photo_called_receipt_becomes_draft(db, world, monkeypatch)
     svc.handle_update(db, {"message": msg})
     r = db.query(Receipt).filter_by(created_by=m.id).one()
     assert r.kind == "receipt" and r.ocr_status == "pending"
+
+
+def test_small_cash_difference_counts_as_match(db, world):
+    """Владелец 24.09: «до 10 сомов — не парить их»: разница 2 сома — записано молча, без «верно?»."""
+    from app.services import cash
+    n = world["n"]
+    cash.withdraw(db, user=n, site_org_id=world["sadik"].id, account_org_id=world["sadik"].id,
+                  amount=Decimal("21226"), d=date.today())
+    reply = svc.handle_update(db, _private(n, "на руках 21 228"))
+    assert reply.startswith("Записал: наличных у Мунаратест на руках 21 228 — с записями сходится")
