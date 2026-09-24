@@ -3,78 +3,75 @@
 
 {% block head %}
 <style>
+  /* Склад без живого остатка (владелец 24.09): на полке знаем только в день пересчёта.
+     По ключевым — что посчитали и что купили после. Остальное — поиском, в карточке. */
   .head { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; }
-  .btn2 { display: inline-flex; align-items: center; min-height: 44px; padding: 0 14px; border-radius: 8px; border: 1px solid var(--line); background: var(--surface); color: var(--accent); font-size: 14px; font-weight: 500; text-decoration: none; white-space: nowrap; }
-  .trust { display: flex; align-items: baseline; gap: 7px; font-size: 14px; margin-top: 14px; }
-  .trust::before { content: ""; flex: none; width: 9px; height: 9px; border-radius: 50%; background: currentColor; transform: translateY(-1px); }
-  .trust.ok { color: var(--ok); } .trust.warn { color: var(--warn); }
-  .trust span { color: var(--muted); }
-  .gap { display: grid; grid-template-columns: 1fr auto; gap: 4px 16px; align-items: center; margin-top: 10px; padding: 10px 16px; border-radius: 8px; background: var(--warn-soft); }
-  .gap .s { font-size: 13px; color: var(--muted); }
-  @media (max-width: 520px) { .gap { grid-template-columns: 1fr; } }
-  .find { margin: 18px 0 4px; }
+  .when { margin: 10px 0 16px; color: var(--muted); font-size: 14px; }
+  .when b { color: var(--text); font-weight: 500; }
   .find .in { width: 100%; height: 48px; font-size: 17px; padding: 0 16px; border-radius: 10px; }
-  details.cat { border-top: 1px solid var(--line); }
-  details.cat summary { list-style: none; display: flex; gap: 12px; padding: 12px 0; min-height: 48px; cursor: pointer; align-items: center; }
-  details.cat summary::-webkit-details-marker { display: none; }
-  details.cat summary::after { content: "›"; color: var(--muted); transition: transform .15s; }
-  details.cat[open] summary::after { transform: rotate(90deg); }
-  @media (prefers-reduced-motion: reduce) { details.cat summary::after { transition: none; } }
-  details.cat summary .c { color: var(--muted); font-size: 14px; margin-left: auto; }
-  .row { display: grid; grid-template-columns: 1fr auto; gap: 2px 16px; padding: 9px 0 9px 14px; border-top: 1px solid var(--line); min-height: 46px; color: inherit; text-decoration: none; align-items: baseline; }
-  .row .s { font-size: 13px; color: var(--muted); }
-  .row .n { font-weight: 500; text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
-  .row .n.bad { color: var(--bad); }
-  .quiet { display: flex; flex-wrap: wrap; gap: 8px 18px; font-size: 14px; margin-top: 20px; padding-top: 14px; border-top: 1px solid var(--line); }
-  .quiet span { color: var(--muted); }
+  .keys { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 2px 16px; margin-top: 14px; }
+  .hd, .kr { display: grid; grid-template-columns: minmax(0, 1fr) 6.5em 6.5em; gap: 10px; align-items: center; }
+  .hd { font-size: 12px; color: var(--muted); padding: 10px 0 8px; border-bottom: 1px solid var(--line); }
+  .hd span:not(:first-child), .kr span:not(:first-child) { text-align: right; }
+  .kr { padding: 11px 0; min-height: 44px; border-bottom: 1px solid var(--line); color: inherit; text-decoration: none; font-variant-numeric: tabular-nums; }
+  .kr:last-child { border-bottom: 0; }
+  .kr .buy { color: var(--muted); }
+  .kr .buy.has { color: var(--text); }
+  .kr.none span:nth-child(2) { color: var(--muted); font-size: 13px; }
+  .sect { font-size: 13px; color: var(--muted); padding: 14px 0 4px; }
+  .all a { display: block; padding: 11px 0; min-height: 44px; border-bottom: 1px solid var(--line); color: inherit; text-decoration: none; box-sizing: border-box; }
+  .quiet { display: flex; flex-wrap: wrap; gap: 8px 18px; font-size: 14px; margin-top: 20px; padding-top: 14px; border-top: 1px solid var(--line); color: var(--muted); }
   .quiet a { min-height: 32px; display: inline-flex; align-items: center; text-decoration: none; }
 </style>
 {% endblock %}
 
 {% block content %}
-{% if saved == 'transfer' %}<div class="alert ok">Передача записана: со склада ушло, в расход кухни не попало.</div>{% endif %}
-{% if saved == 'count' %}<div class="alert ok">Пересчёт записан: остатки по посчитанным строкам стали как на полке, разница видна в движении каждого продукта.</div>{% endif %}
+{% if saved == 'transfer' %}<div class="alert ok">Передача записана.</div>{% endif %}
+{% if saved == 'count' %}<div class="alert ok">Пересчёт записан. Спасибо!</div>{% endif %}
 <div class="head">
   <h3 class="title" style="margin:0">Склад</h3>
-  {% if can_write %}<a class="btn" href="/new/kitchen">Лист кухни</a>{% endif %}
+  {% if can_write %}<a class="btn" href="/new/stock/count">Пересчитать</a>{% endif %}
 </div>
-{% if st.ok %}
-<div class="trust ok">сходится <span>{% if st.last_count %}пересчёт {{ st.last_count | human_date }}, {% endif %}пробелов не видно</span></div>
-{% else %}
-<div class="trust warn">не хватает записи{% if st.missing %} <span>листы кухни не внесены, продукты ушли, а система не знает</span>{% endif %}</div>
-{% endif %}
-{% for g in st.gaps %}
-<div class="gap"><span>{{ g.title }}<br><span class="s">{{ g.sub }}</span></span>{% if can_write %}<a class="btn2" href="{{ g.url }}">{{ g.go }}</a>{% endif %}</div>
-{% endfor %}
+<p class="when">Что лежит на полке, знаем в день пересчёта.{% if v.last %} Последний — <b>{{ v.last | human_date }}</b>,{% endif %} следующий — <b>{{ v.next | human_date }}</b>.</p>
 
 <div class="find"><input class="in" id="q" placeholder="Найти продукт" aria-label="Найти продукт" autocomplete="off"></div>
-{% for g in st.groups %}
-<details class="cat" {% if loop.first %}open{% endif %}><summary>{{ g.name | capitalize }}<span class="c">{{ g.rows | length }}</span></summary>
-  {% for r in g.rows %}
-  <a class="row" href="/new/stock/{{ r.p.id }}" data-k="{{ r.p.name | lower }}"><span>{{ r.p.name }}{% if r.pack %}<br><span class="s">{{ r.pack }}</span>{% endif %}</span><span class="n {% if r.balance < 0 %}bad{% endif %}">{{ r.balance | qty }} {{ r.p.unit or '' }}</span></a>
-  {% endfor %}
-</details>
-{% else %}
-<p class="sub" style="margin-top:14px">На складе пока пусто: остаток появится с первой покупкой продуктов.</p>
-{% endfor %}
-<p class="sub" id="none" hidden>Такого продукта на складе нет. Он появится с первой покупкой.</p>
 
-<div class="quiet"><span>Реже:</span>{% if can_write %}<a href="/new/stock/count">Пересчитать склад</a><a href="/new/stock/transfer">Передали в другой садик</a>{% endif %}{% if st.minor_names %}<span>Остаток не считаем: {{ st.minor_names | join(', ') }}. Они сразу в расходе.</span>{% endif %}</div>
+<div class="keys" id="keys">
+  {% if v.rows or v.missing %}
+  <div class="hd"><span>Продукт</span><span>Посчитали{% if v.last %} {{ v.last.strftime('%d.%m') }}{% endif %}</span><span>Купили после</span></div>
+  {% for r in v.rows %}
+  <a class="kr" href="/new/stock/{{ r.p.id }}"><span>{{ r.p.name }}</span><span>{{ r.counted | qty }} {{ r.p.unit or '' }}</span><span class="buy {{ 'has' if r.bought else '' }}">{% if r.bought %}{{ r.bought | qty }} {{ r.p.unit or '' }}{% else %}—{% endif %}</span></a>
+  {% endfor %}
+  {% if v.missing %}
+  <div class="sect">Не считали{% if v.last %} {{ v.last.strftime('%d.%m') }}{% endif %} — посчитайте в следующий раз</div>
+  {% for r in v.missing %}
+  <a class="kr none" href="/new/stock/{{ r.p.id }}"><span>{{ r.p.name }}</span><span>не считали</span><span class="buy {{ 'has' if r.bought else '' }}">{% if r.bought %}{{ r.bought | qty }} {{ r.p.unit or '' }}{% else %}—{% endif %}</span></a>
+  {% endfor %}
+  {% endif %}
+  {% else %}
+  <p class="sub" style="padding:12px 0">Ключевые продукты не выбраны: их задают в Настройках.</p>
+  {% endif %}
+</div>
+
+<div class="all keys" id="all" hidden>
+  {% for p in v.all %}<a href="/new/stock/{{ p.id }}" data-k="{{ p.name | lower }}" hidden>{{ p.name }}</a>{% endfor %}
+  <p class="sub" id="none" hidden style="padding:12px 0">Такого продукта нет. Он появится с первой покупкой.</p>
+</div>
+
+<div class="quiet"><span>Остальные товары — специи, хозяйственное, мелочь — не пересчитываем. Любой найдётся поиском: в карточке видно, что и почём покупали.</span>{% if can_write %}<a href="/new/stock/transfer">Передали в другой садик</a>{% endif %}</div>
 {% endblock %}
 
 {% block scripts %}
 <script>
 (function () {
   var q = document.getElementById('q'); if (!q) return;
+  var keys = document.getElementById('keys'), all = document.getElementById('all');
   q.addEventListener('input', function () {
     var v = q.value.trim().toLowerCase(), any = false;
-    document.querySelectorAll('details.cat').forEach(function (d) {
-      var n = 0;
-      d.querySelectorAll('.row').forEach(function (r) {
-        var ok = !v || r.dataset.k.split(/[\s,.-]+/).some(function (w) { return w.indexOf(v) === 0; });
-        r.hidden = !ok; if (ok) n++;
-      });
-      d.hidden = !!v && !n; if (v && n) d.open = true; if (n) any = true;
+    keys.hidden = !!v; all.hidden = !v;
+    all.querySelectorAll('a').forEach(function (a) {
+      var ok = !!v && a.dataset.k.split(/[\s,.-]+/).some(function (w) { return w.indexOf(v) === 0; });
+      a.hidden = !ok; if (ok) any = true;
     });
     document.getElementById('none').hidden = any || !v;
   });

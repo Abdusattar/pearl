@@ -67,7 +67,8 @@ def test_main_shows_counted_only_and_minor_hidden(client, db, site, staff, cats)
     assert st["ok"] and st["gaps"] == []
     page = client.get("/new/stock")
     main = page.text[page.text.index("<main"):]
-    assert page.status_code == 200 and "Картофель тест-ск" in main and "сходится" in main
+    # 24.09: живого остатка на главной нет — «Что лежит на полке, знаем в день пересчёта»
+    assert page.status_code == 200 and "знаем в день пересчёта" in main and "сходится" not in main
     assert f'href="/new/stock/{potato.id}"' in main and "/warehouse" not in main
 
 
@@ -122,7 +123,7 @@ def test_product_card_moves_and_edit(client, db, site, staff, cats):
     assert db.query(ProductAlias).filter_by(product_id=p.id, raw_text="яйца куриные").count() == 1
     assert db.query(AuditLog).filter_by(entity_type="product", entity_id=p.id).count() == 1
     page = client.get(f"/new/stock/{p.id}")
-    assert page.status_code == 200 and "330 шт" in page.text and "лоток = 30 шт" in page.text
+    assert page.status_code == 200 and "лоток = 30 шт" in page.text and "Этот продукт не пересчитываем" in page.text
 
 
 def test_quick_count_changes_only_filled_rows(client, db, site, staff, cats):
@@ -203,3 +204,26 @@ def _sheet_required_mode(monkeypatch):
     """Эти тесты — про режим «лист кухни обязателен» (до 23.09 он был единственным)."""
     from app.services import rules as _rules
     monkeypatch.setattr(_rules, "kitchen_sheet_required", lambda db: True)
+
+
+def test_stock_page_shows_counted_and_bought_since_not_balance(client, db, site, staff, cats, monkeypatch):
+    """Владелец 24.09: остаток между пересчётами не знаем — показываем «посчитали» и «купили после»."""
+    from datetime import timedelta
+    from app.models import StockCount, StockCountLine, WarehouseReceipt
+    from app.services import rules
+    p = _product(db, site, "Картофель тест-пс", cats["овощи и фрукты"], qty=100)
+    monkeypatch.setattr(rules, "key_products", lambda db: [p.id])
+    c = StockCount(organization_id=site.id, count_date=date.today() - timedelta(days=1), status="applied", started_by=staff.id)
+    db.add(c)
+    db.flush()
+    db.add(StockCountLine(count_id=c.id, product_id=p.id, expected_qty=100, actual_qty=14))
+    db.add(WarehouseReceipt(date=date.today(), product_id=p.id, quantity=166, price_per_unit=30, total_cost=4980,
+                            organization_id=site.id))
+    db.flush()
+    v = svc.counted_view(db, site.id)
+    r = v["rows"][0]
+    assert float(r["counted"]) == 14 and float(r["bought"]) == 166 and v["last"] == c.count_date
+    page = client.get("/new/stock").text
+    assert "14 кг" in page and "166 кг" in page and "114 кг" not in page and "180 кг" not in page
+    card = client.get(f"/new/stock/{p.id}").text
+    assert "посчитали" in card and "Купили после: 166 кг" in card

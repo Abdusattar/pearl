@@ -38,7 +38,7 @@ def stock_page(request: Request, saved: str | None = None, db: Session = Depends
     if site is None:
         return HTMLResponse("Объект не найден", status_code=404)
     ctx = _base_ctx(request, user, site, db, "warehouse")
-    ctx.update({"st": svc.state(db, site.id), "saved": saved, "can_write": user.role in WRITE_ROLES})
+    ctx.update({"v": svc.counted_view(db, site.id), "saved": saved, "can_write": user.role in WRITE_ROLES})
     return templates.TemplateResponse("new/stock.html", ctx)
 
 

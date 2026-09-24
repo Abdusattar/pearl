@@ -116,6 +116,73 @@ def state(db: Session, site_id: int) -> dict:
             "count": sum(len(g["rows"]) for g in groups)}
 
 
+def counted_view(db: Session, site_id: int, today: date | None = None) -> dict:
+    """Склад без живого остатка (владелец 24.09): что на полке, знаем только в день пересчёта.
+    По ключевым продуктам — что посчитали на последнем пересчёте и что купили после. Остаток
+    между пересчётами не показываем: ежедневного расхода кухни система не знает."""
+    from datetime import timedelta
+    from sqlalchemy import func
+    from app.services import rules
+    today = today or date.today()
+    keys = rules.key_products(db)
+    org_ids = _org_ids(db, site_id)
+    last = (db.query(StockCount).filter(StockCount.organization_id.in_(org_ids), StockCount.status == "applied")
+            .order_by(StockCount.count_date.desc(), StockCount.id.desc()).first())
+    counted: dict[int, Decimal] = {}
+    if last is not None:
+        # последняя цифра по продукту — с последнего пересчёта, где его считали
+        for pid, qty_, _d in (db.query(StockCountLine.product_id, StockCountLine.actual_qty, StockCount.count_date)
+                              .join(StockCount, StockCount.id == StockCountLine.count_id)
+                              .filter(StockCount.organization_id.in_(org_ids), StockCount.status == "applied",
+                                      StockCount.count_date == last.count_date, StockCountLine.actual_qty.isnot(None))
+                              .all()):
+            counted[pid] = qty_
+    since = last.count_date if last is not None else None
+    bought = {}
+    if since is not None and keys:
+        bought = dict(db.query(WarehouseReceipt.product_id, func.sum(WarehouseReceipt.quantity))
+                      .filter(WarehouseReceipt.organization_id.in_(org_ids), WarehouseReceipt.product_id.in_(keys),
+                              WarehouseReceipt.date > since, WarehouseReceipt.deleted_at.is_(None))
+                      .group_by(WarehouseReceipt.product_id).all())
+    rows, missing = [], []
+    for p in (db.query(Product).filter(Product.id.in_(keys or [0]), Product.retired_at.is_(None),
+                                       Product.merged_into_id.is_(None)).all()):
+        r = {"p": p, "counted": counted.get(p.id), "bought": bought.get(p.id)}
+        (rows if p.id in counted else missing).append(r)
+    rows.sort(key=lambda r: r["p"].name.lower())
+    missing.sort(key=lambda r: r["p"].name.lower())
+    wd = rules.count_weekday(db)
+    # ближайший день пересчёта с сегодняшнего, но не раньше чем через 5 дней после прошлого
+    # (23.09 посчитали в среду — четверг 24.09 не считаем, следующий 1.10)
+    nxt = today + timedelta(days=(wd - today.weekday()) % 7)
+    while since is not None and (nxt - since).days < 5:
+        nxt += timedelta(days=7)
+    all_products = sorted(_live_products(db), key=lambda p: p.name.lower())
+    return {"last": since, "next": nxt, "rows": rows, "missing": missing, "all": all_products}
+
+
+def last_count_diff(db: Session, site_id: int) -> dict | None:
+    """Последний пересчёт: где разошлось с записями (24.09: контроль раз в неделю)."""
+    from app.models import StockCount, StockCountLine
+    c = (db.query(StockCount).filter(StockCount.organization_id == site_id, StockCount.status == "applied")
+         .order_by(StockCount.count_date.desc()).first())
+    if c is None:
+        return None
+    bad, ok = [], []
+    for ln in db.query(StockCountLine).filter(StockCountLine.count_id == c.id).all():
+        if ln.actual_qty is None or ln.expected_qty is None:
+            continue
+        p = db.get(Product, ln.product_id)
+        if p is None:
+            continue
+        diff = float(ln.actual_qty) - float(ln.expected_qty)
+        tol = max(0.05, abs(float(ln.expected_qty)) * 0.02)
+        (bad if abs(diff) > tol else ok).append({"p": p, "expected": float(ln.expected_qty),
+                                                 "actual": float(ln.actual_qty), "diff": diff})
+    bad.sort(key=lambda r: r["diff"])
+    return {"date": c.count_date, "bad": bad, "ok": ok, "total": len(bad) + len(ok)}
+
+
 def _plural(n: int, one: str, few: str, many: str) -> str:
     if n % 10 == 1 and n % 100 != 11:
         return one
@@ -164,7 +231,20 @@ def product_card(db: Session, site_id: int, p: Product) -> dict:
     minor = kitchen.is_minor(p)
     missing = kitchen.missing_days(db, site_id)
     aliases = [a.raw_text for a in db.query(ProductAlias).filter(ProductAlias.product_id == p.id).order_by(ProductAlias.id).all()]
-    return {"balance": b, "minor": minor, "moves": moves[:40], "missing": missing, "missing_text": _days_text(missing),
+    from sqlalchemy import func
+    last = (db.query(StockCountLine.actual_qty, StockCount.count_date)
+            .join(StockCount, StockCount.id == StockCountLine.count_id)
+            .filter(StockCountLine.product_id == p.id, StockCount.organization_id.in_(org_ids),
+                    StockCount.status == "applied", StockCountLine.actual_qty.isnot(None))
+            .order_by(StockCount.count_date.desc(), StockCount.id.desc()).first())
+    counted, counted_date, bought_since = (last[0], last[1], None) if last else (None, None, None)
+    if counted_date is not None:
+        bought_since = (db.query(func.sum(WarehouseReceipt.quantity))
+                        .filter(WarehouseReceipt.product_id == p.id, WarehouseReceipt.organization_id.in_(org_ids),
+                                WarehouseReceipt.date > counted_date, WarehouseReceipt.deleted_at.is_(None))
+                        .scalar())
+    return {"balance": b, "counted": counted, "counted_date": counted_date, "bought_since": bought_since,
+            "minor": minor, "moves": moves[:40], "missing": missing, "missing_text": _days_text(missing),
             "aliases": aliases, "pack": pack_text(p), "locked": has_moves(db, p.id),
             "cats": db.query(ProductCategory).order_by(ProductCategory.sort_order, ProductCategory.name).all()}
 
