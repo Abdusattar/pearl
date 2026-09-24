@@ -566,7 +566,19 @@ def handle_update(db: Session, update: dict) -> str | None:
     return reply
 
 
-_ON_HAND = re.compile(r"(?:на\s*руках|наличн\w*)\D{0,25}?(\d[\d\s]*(?:[.,]\d+)?)|(\d[\d\s]*(?:[.,]\d+)?)\s*(?:сом\w*\s*)?(?:на\s*руках|наличн)", re.I)
+# «на руках 15 000», «наличных 0», «Нал остаток 51090-12700=38 390» (Мунара 24.09): берём последнее число
+_ON_HAND = re.compile(r"(?:на\s*руках|наличн\w*|\bнал\b\.?)\D{0,25}?(\d[\d\s]*(?:[.,]\d+)?)"
+                      r"(?:[^\n]*?=\s*(\d[\d\s]*(?:[.,]\d+)?))?"
+                      r"|(\d[\d\s]*(?:[.,]\d+)?)\s*(?:сом\w*\s*)?(?:на\s*руках|наличн|\bнал\b)", re.I)
+
+
+def on_hand_amount(text: str):
+    """Сумма «на руках» из текста; при «51090-12700=38 390» — результат после «=»."""
+    m = _ON_HAND.search(text or "")
+    if not m:
+        return None
+    raw = m.group(2) or m.group(1) or m.group(3)
+    return parse_amount(raw) if raw else None
 
 
 def _last_out(db: Session, user_id: int) -> str | None:
@@ -581,9 +593,8 @@ def _private_money(db: Session, site: Organization, user: User, text: str) -> st
     from app.services import bot_group as grp, bot_money
     if not grp.worth_reading(text):
         return None
-    if m := _ON_HAND.search(text):
+    if (amount := on_hand_amount(text)) is not None:
         # «на руках 15 000», «наличных 0» — точка кармана автора (Айжан, старт школы 24.09)
-        amount = parse_amount(m.group(1) or m.group(2))
         info = {"kind": "pocket", "amount": float(amount), "date": date.today()}
         asked = bot_money.offer(db, site, user, info, date.today())
         return asked.text if asked is not None else None
@@ -637,8 +648,7 @@ def _handle_group(db: Session, msg: dict, user: User | None, text: str) -> str |
                 return ok
             # «Остаток наличными 51090» (Мунара 24.09): наличные на руках, не счёт — модель путала.
             # Без модели: вопрос «верно?» в личку автору, в группе — молчим.
-            if user is not None and (m_on := _ON_HAND.search(text)) and user.role in OPERATIONAL_ROLES:
-                amount = parse_amount(m_on.group(1) or m_on.group(2))
+            if user is not None and user.role in OPERATIONAL_ROLES and (amount := on_hand_amount(text)) is not None:
                 asked = bot_money.offer(db, site, user, {"kind": "pocket", "amount": float(amount), "date": today_d}, today_d)
                 db.add(BotMessage(kind="pocket_text", chat_id=chat_id, user_id=user.id, direction="in", text=text[:500],
                                   status="understood", payload={"message_id": message_id, "amount": float(amount)}))

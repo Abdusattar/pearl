@@ -278,3 +278,13 @@ def test_purchase_amount_in_group_asks_for_receipt(db, world, monkeypatch):
     reply = svc.handle_update(db, _group(n, "Закуп 13570"))
     assert reply.startswith("Мунаратест, закуп 13 570") and "фото чека" in reply and "проверит" in reply
     assert _offer(db, n) is None
+
+
+def test_on_hand_phrases():
+    from app.services.bot import on_hand_amount
+    assert on_hand_amount("Нал остаток 51090-12700=38 390") == Decimal("38390")
+    assert on_hand_amount("на руках 15 000") == Decimal("15000")
+    assert on_hand_amount("Остаток наличными 51090") == Decimal("51090")
+    assert on_hand_amount("нал. 0") == Decimal("0")
+    assert on_hand_amount("сняла 25 000") is None
+    assert on_hand_amount("Снятия с банка 64662") is None
