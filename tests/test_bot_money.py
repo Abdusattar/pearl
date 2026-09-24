@@ -211,3 +211,35 @@ def test_bank_screenshot_in_group_is_never_echoed_in_group(db, world, monkeypatc
     svc.handle_update(db, _group(n, photo_id="bank7"))
     assert db.query(BotMessage).filter_by(kind="group_reply", chat_id=GROUP).count() == 0
     assert _offer(db, n) is not None and _offer(db, n).chat_id == n.tg_id
+
+
+def test_transfer_to_founder_is_withdrawal_from_pocket(db, world, monkeypatch):
+    from app.models import User as _U
+    n = world["n"]
+    f = _U(name="Айдайтест Дн", role="founder", organization_id=world["sadik"].id, tg_id=900000000203)
+    db.add(f)
+    db.flush()
+    _model(monkeypatch, {"kind": "transfer", "amount": 50000, "who": None, "to": "Айдайтест", "date": "today"})
+    svc.handle_update(db, _group(n, "передала Айдай 50 000"))
+    o = _offer(db, n)
+    assert o is not None and "учредителю Айдайтест из кармана Мунаратест" in o.text
+    assert _offer(db, f) is None
+    assert "Записал" in svc.handle_update(db, _private(n, "да"))
+    assert db.query(CashTransfer).count() == 0
+    from app.services import cash
+    assert cash.pocket_balance(db, world["sadik"].id, n.id) == Decimal("-50000")
+
+
+def test_money_from_founder_is_funding_into_pocket(db, world, monkeypatch):
+    from app.models import User as _U
+    n = world["n"]
+    f = _U(name="Таластест Дн", role="founder", organization_id=world["sadik"].id, tg_id=900000000204)
+    db.add(f)
+    db.flush()
+    _model(monkeypatch, {"kind": "transfer", "amount": 100000, "who": "Таластест", "to": None, "date": "today"})
+    svc.handle_update(db, _group(n, "получила от Таласа 100 000"))
+    o = _offer(db, n)
+    assert "от учредителя Таластест в карман Мунаратест" in o.text
+    svc.handle_update(db, _private(n, "да"))
+    from app.services import cash
+    assert cash.pocket_balance(db, world["sadik"].id, n.id) == Decimal("100000")

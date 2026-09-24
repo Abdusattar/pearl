@@ -64,8 +64,21 @@ def build(db: Session, site: Organization, author: User | None, info: dict, toda
             giver = author
         if taker is None and giver is not None and author is not None and author.id != giver.id:
             taker = author
-        if giver is None or taker is None or giver.id == taker.id \
-                or grp.match_transfer(db, site.id, amount, d)["status"] == "found":
+        if giver is None or taker is None or giver.id == taker.id:
+            return None
+        # Учредителям карманов нет (24.09): деньги им — изъятие, от них — взнос; спрашиваем
+        # того, чей карман. Оба учредителя — не наше движение.
+        if giver.role == "founder" and taker.role == "founder":
+            return None
+        if taker.role == "founder":
+            return {"op": "founder_out", "amount": str(amount), "date": d.strftime(_DATE_FMT), "founder_id": taker.id,
+                    "pocket_user_id": giver.id, "ask": giver.id,
+                    "what": f"передача {grp.fmt_money(amount)} учредителю {grp._first(taker.name)} из кармана {grp._first(giver.name)}"}
+        if giver.role == "founder":
+            return {"op": "founder_in", "amount": str(amount), "date": d.strftime(_DATE_FMT), "founder_id": giver.id,
+                    "pocket_user_id": taker.id, "ask": taker.id,
+                    "what": f"{grp.fmt_money(amount)} от учредителя {grp._first(giver.name)} в карман {grp._first(taker.name)}"}
+        if grp.match_transfer(db, site.id, amount, d)["status"] == "found":
             return None
         return {"op": "transfer", "amount": str(amount), "date": d.strftime(_DATE_FMT), "from_user_id": giver.id,
                 "to_user_id": taker.id, "ask": giver.id,
@@ -170,6 +183,12 @@ def answer(db: Session, site: Organization, user: User, ask: BotMessage, yes: bo
         elif o["op"] == "supplier":
             rec = ledger.pay_supplier(db, user=user, site_org_id=site.id, supplier_id=o["supplier_id"], amount=amount,
                                       d=d, source="cash", payer_id=o["payer_id"], account_org_id=None, comment=note)
+        elif o["op"] == "founder_out":
+            rec = cash.founder_withdraw(db, user=user, site_org_id=site.id, founder_id=o["founder_id"],
+                                        pocket_user_id=o["pocket_user_id"], amount=amount, d=d, comment=note)
+        elif o["op"] == "founder_in":
+            rec = cash.founder_fund(db, user=user, site_org_id=site.id, founder_id=o["founder_id"],
+                                    pocket_user_id=o["pocket_user_id"], amount=amount, d=d, comment=note)
         elif o["op"] == "recount":
             rec = cash.recount(db, user=user, site_org_id=site.id, pocket_user_id=o["pocket_user_id"], actual=amount, d=d,
                                reason=reason or "по сообщению в боте")
