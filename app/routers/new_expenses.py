@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.dependencies import get_current_user
-from app.models import Purchase, Supplier
+from app.models import Purchase, Supplier, User
 from app.routers.new_buy import WRITE_ROLES, _base_ctx, _site, templates
 from app.services import ledger as svc
 from app.services import no_receipt, once, repeats
@@ -212,9 +212,15 @@ def nocheck_form(request: Request, edit: int | None = None, legacy: str | None =
             except ValueError:
                 d = None
         amount = p.get("amount")
+        # Из чьих наличных — того, кто прислал (такси Мунары 24.09 ушло из кармана Махабат)
+        author = db.get(User, r.created_by) if r.created_by else None
+        payer_id = None
+        if author is not None and author.id != user.id and author.id in {u.id for u in pocket_users(db, site.id)}:
+            payer_id = author.id
         kw = dict(amount=(f"{float(amount):g}".replace(".", ",") if amount else ""),
                   supplier_name=p.get("supplier_name") or p.get("supplier") or "", d=d or date.today(),
-                  draft=_nocheck_draft(db, r))
+                  draft=_nocheck_draft(db, r), what=p.get("what") or "",
+                  **({"payer_id": payer_id} if payer_id else {}))
         return templates.TemplateResponse("new/nocheck.html", _nocheck_ctx(request, user, site, db, **kw))
     if edit is None:
         return templates.TemplateResponse("new/nocheck.html", _nocheck_ctx(request, user, site, db))
