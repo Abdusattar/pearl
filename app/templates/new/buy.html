@@ -238,6 +238,7 @@
       <h4>Итого</h4>
       <div class="v"><span id="total">{{ total | money }}</span><span class="unit">сом</span></div>
       <div class="w"><span id="count">0</span> позиций</div>
+      <div class="w" id="mismatch" hidden style="color:var(--danger, #b42318)"></div>
       {% if dup %}
       <div class="dup">
         {% if dup.kind == 'photo' %}Это фото уже прикладывали{% if dup.date %} {{ dup.date | human_date }}{% endif %}{% if dup.total %}, чек на {{ dup.total | money }}{% endif %}.
@@ -276,7 +277,27 @@ function recalc() {
   var t = document.getElementById('total'); if (t) t.textContent = fmt(Math.round(total * 100) / 100);
   var c = document.getElementById('count'); if (c) c.textContent = count;
   var d = document.getElementById('debt-after'); if (d) d.textContent = fmt(Math.round((DEBT_NOW + total) * 100) / 100);
+  // Итог строк против итога чека (24.09: овощи записаны 12 780,7 при чеке 12 770 — разница 10,7 ушла в кассу)
+  var mm = document.getElementById('mismatch');
+  if (mm && RECEIPT_TOTAL !== null) {
+    var diff = Math.round((total - RECEIPT_TOTAL) * 100) / 100;
+    MISMATCH = Math.abs(diff) > 1;
+    mm.hidden = !MISMATCH;
+    mm.textContent = MISMATCH ? 'По чеку ' + fmt(RECEIPT_TOTAL) + ', по строкам ' + fmt(Math.round(total * 100) / 100)
+      + ' — разница ' + (diff > 0 ? '+' : '−') + fmt(Math.abs(diff)) + '. Проверьте строки.' : '';
+  }
 }
+var RECEIPT_TOTAL = {{ recognized_amount if recognized_amount else 'null' }}, MISMATCH = false, MISMATCH_OK = false;
+document.getElementById('buy').addEventListener('submit', function (e) {
+  if (e.submitter && e.submitter.value === 'recognize') return;
+  if (MISMATCH && !MISMATCH_OK) {
+    e.preventDefault();
+    MISMATCH_OK = true;
+    var mm = document.getElementById('mismatch');
+    mm.textContent += ' Если в чеке так и есть — нажмите «Записать» ещё раз.';
+    mm.scrollIntoView({ block: 'center' });
+  }
+});
 
 function setUnitMode(tr, mode, unit, pack, packQty) {
   var sel = tr.querySelector('.unit'), txt = tr.querySelector('.utext'), nb = tr.querySelector('.newbox');
