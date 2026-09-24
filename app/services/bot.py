@@ -91,10 +91,13 @@ def send(db: Session, chat_id: int | None, text: str, kind: str, *, user_id: int
         msg.status = "logged"
         return msg
     if user_id != OWNER_USER_ID and rules.bot_paused(db):
-        # Пауза (24.09): людям не пишем, всё задуманное остаётся в журнале со статусом «paused»
+        # Надзор (владелец 24.09): пока Claude в сессии, бот людям сам не пишет — сообщение ждёт
+        # в журнале со статусом «paused», Claude выпускает его (scripts/bot_queue.py) или гасит
         owner = db.get(User, OWNER_USER_ID)
         if owner is None or chat_id != owner.tg_id:
             msg.status = "paused"
+            if reply_to:
+                msg.payload = {**(payload or {}), "reply_to": reply_to}
             return msg
     try:
         body = {"chat_id": chat_id, "text": text, "disable_web_page_preview": True}
