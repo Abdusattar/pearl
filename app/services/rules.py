@@ -39,6 +39,9 @@ RULES = {
     "daily_checks_until": {"default": "2026-10-07", "title": "До какого дня бот каждое утро сверяет кассу и счёт"},
     # Ступень 3 (24.09): столько «да» подряд без «нет» — и бот пишет сам, лишь сообщая «записал»
     "auto_after_yes": {"default": 5, "title": "После скольких «да» подряд бот записывает сам", "min": 0, "max": 50},
+    # Пауза (владелец 24.09: «пока не разберёмся сами, приостанови сообщения бота»): бот
+    # читает и пишет в журнал, но людям не отвечает и не спрашивает; владельцу — как обычно.
+    "bot_paused": {"default": False, "title": "Бот на паузе (людям не пишет)"},
 }
 WEEKDAYS = ["понедельник", "вторник", "среда", "четверг", "пятница", "суббота", "воскресенье"]
 WEEKDAYS_SHORT = ["пн", "вт", "ср", "чт", "пт", "сб", "вс"]
@@ -121,6 +124,10 @@ def escalate_from(db: Session):
 
 def kitchen_sheet_required(db: Session) -> bool:
     return bool(get(db, "kitchen_sheet_required"))
+
+
+def bot_paused(db: Session) -> bool:
+    return bool(get(db, "bot_paused"))
 
 
 def weekdays_text(days) -> str:

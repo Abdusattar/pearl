@@ -90,6 +90,12 @@ def send(db: Session, chat_id: int | None, text: str, kind: str, *, user_id: int
     if not token() or chat_id is None:
         msg.status = "logged"
         return msg
+    if user_id != OWNER_USER_ID and rules.bot_paused(db):
+        # Пауза (24.09): людям не пишем, всё задуманное остаётся в журнале со статусом «paused»
+        owner = db.get(User, OWNER_USER_ID)
+        if owner is None or chat_id != owner.tg_id:
+            msg.status = "paused"
+            return msg
     try:
         body = {"chat_id": chat_id, "text": text, "disable_web_page_preview": True}
         if reply_to:
