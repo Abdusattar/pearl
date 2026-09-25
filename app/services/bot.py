@@ -1162,6 +1162,16 @@ def intake_photo(db: Session, site: Organization, author: User | None, data: byt
         supplier = grp.find_supplier(db, info.get("supplier"))
         if supplier is not None:
             extra["supplier_id"], extra["supplier_name"] = supplier.id, supplier.name
+    if kind == drafts.RECEIPT and info.get("amount"):
+        # Тот же чек вторым снимком (Мунара 25.09: в личку 09:59, в группу 10:16 — другое фото,
+        # хэш другой): черновик на ту же сумму ещё ждёт проверки — второй не заводим, иначе
+        # Махабат проведёт закуп дважды
+        tol, amt = rules.match_tolerance(db), Decimal(str(info["amount"]))
+        for r in today.unchecked_receipts(db, site.id):
+            if (r.kind == "receipt" and r.created_at >= datetime.combine(today_d - timedelta(days=2), datetime.min.time())
+                    and abs(Decimal(str((r.payload or {}).get("amount") or 0)) - amt) <= tol):
+                return (f"Этот чек на {grp.fmt_money(amt)} уже у Махабат на проверке.",
+                        {"kind": "dup", "same": r.id}, None)
     if kind == drafts.RECEIPT:
         supplier = grp.find_supplier(db, info.get("supplier"))
         if supplier is not None:
