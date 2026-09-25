@@ -96,7 +96,8 @@ def build(db: Session, site: Organization, author: User | None, info: dict, toda
         supplier = grp.find_supplier(db, info.get("supplier"))
         payer = grp.find_person(db, info.get("who")) or author
         if supplier is None or payer is None \
-                or grp.match_supplier_payment(db, site.id, amount, supplier, d)["status"] == "found":
+                or grp.match_supplier_payment(db, site.id, amount, supplier, d)["status"] == "found" \
+                or _draft_same_amount(db, site, amount):
             return None
         return {"op": "supplier", "amount": str(amount), "date": d.strftime(_DATE_FMT), "supplier_id": supplier.id,
                 "payer_id": payer.id, "ask": payer.id,
@@ -114,6 +115,8 @@ def build(db: Session, site: Organization, author: User | None, info: dict, toda
                 "matches": abs(delta) <= tol}
     if kind == "expense" and author is not None and amount:
         # мелкий расход без товара (24.09): из наличных автора, сегодня
+        if _draft_same_amount(db, site, amount):
+            return None
         return {"op": "expense", "amount": str(amount), "date": d.strftime(_DATE_FMT), "payer_id": author.id,
                 "exp_kind": info["exp_kind"], "what": info["what"], "ask": author.id,
                 "what_text": f"{info['what']} {grp.fmt_money(amount)} из наличных {grp._first(author.name)}"}
@@ -197,7 +200,16 @@ def offer(db: Session, site: Organization, author: User | None, info: dict, toda
                                                BotMessage.status == "deferred").all():
             old.status = "superseded"
         m = send(db, who.tg_id, _deferred_text(db, site, who, Decimal(o["amount"])), OFFER, user_id=who.id, payload=o)
-        m.status = "deferred"
+        if m.status == "paused":
+            # Надзор (25.09): текст ждёт выпуска в очереди как сообщение, а отметка «ждёт чеков» для
+            # settle_deferred — отдельной строкой. Раньше статус затирался, ответ Мунаре терялся.
+            m.kind = "money_note"
+            m = BotMessage(kind=OFFER, chat_id=who.tg_id, user_id=who.id, direction="out", text=m.text,
+                           status="deferred", payload=o)
+            db.add(m)
+            db.flush()
+        else:
+            m.status = "deferred"
         return m
     d = datetime.strptime(o["date"], _DATE_FMT).date()
     day = "сегодня" if d == today else ("вчера" if d == today - timedelta(days=1) else grp._d(d))
@@ -340,6 +352,17 @@ def _withdrew_today(db: Session, account_org_id: int, today: date) -> bool:
 def _drafts_pending(db: Session, site: Organization) -> bool:
     from app.services import today as td
     return bool(td.unchecked_receipts(db, site.id))
+
+
+def _draft_same_amount(db: Session, site: Organization, amount) -> bool:
+    """Чек на эту сумму уже ждёт проверки (Мунара 25.09: фото чека хлеба 21 183, потом «за хлеб
+    отдали 21183») — это та же трата: спишется, когда Махабат проведёт чек. Второй вопрос
+    «верно?» после «да» записал бы её дважды."""
+    from app.services import rules
+    from app.services import today as td
+    tol, amount = rules.match_tolerance(db), Decimal(str(amount))
+    return any(abs(Decimal(str((r.payload or {}).get("amount") or 0)) - amount) <= tol
+               for r in td.unchecked_receipts(db, site.id))
 
 
 def settle_deferred(db: Session, site: Organization, today: date) -> list[str]:
