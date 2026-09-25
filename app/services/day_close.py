@@ -47,9 +47,11 @@ def items(db: Session, site: Organization, d: date) -> list[dict]:
     """Что мешает закрыть день: [{who: User|None, text}] — текст без имени, коротко."""
     out: list[dict] = []
     since = datetime.combine(d, datetime.min.time())
+    until = since + timedelta(days=1)
     chk = checker(db, site)
-    # 1. чеки на проверке — учётчику
-    waiting = today.unchecked_receipts(db, site.id)
+    # 1. чеки на проверке — учётчику. Только пришедшие до конца дня d: утренний чек
+    # 25.09 не должен «открывать» закрытое 24.09 (ложная тревога владельцу 25.09)
+    waiting = [r for r in today.unchecked_receipts(db, site.id) if r.created_at < until]
     if waiting:
         n = len(waiting)
         out.append({"who": chk, "text": f"{n} {'чек' if n == 1 else 'чека' if n < 5 else 'чеков'} подтвердить"})
@@ -91,6 +93,7 @@ def items(db: Session, site: Organization, d: date) -> list[dict]:
             out.append({"who": _account_holder(db, org), "text": f"остаток счёта {org.name} после снятия — скрин боту"})
     # 5. открытые вопросы бота о деньгах (не про наличные — те уже выше)
     for m in (db.query(BotMessage).filter(BotMessage.kind == "money_offer", BotMessage.created_at >= since,
+                                          BotMessage.created_at < until,
                                           BotMessage.status.in_(("sent", "logged")),
                                           BotMessage.payload["op"].astext != "recount").all()):
         out.append({"who": db.get(User, m.user_id), "text": "ответить боту: " + (m.payload or {}).get("what", "")[:60]})
