@@ -69,6 +69,19 @@ def receipts_page(request: Request, db: Session = Depends(get_db)):
                      "what": drafts.title(r), "url": url, "kitchen": (r.kind or "receipt") == drafts.KITCHEN,
                      "text": ((r.payload or {}).get("text") or "")[:160] if drafts.is_text(r) else None,
                      "source": r.source})
+    # Тот же чек дважды (Мунара 25.09: личка и группа) — более поздний помечаем, чтобы Махабат
+    # не провела закуп второй раз. Бот второй черновик уже не заводит; это страховка.
+    seen = {}
+    for row in reversed(rows):   # список от новых к старым — идём от старых
+        r, amt = row["r"], (row["r"].payload or {}).get("amount")
+        if (r.kind or "receipt") != drafts.RECEIPT or not amt or row["date"] is None:
+            continue
+        key = (row["date"], round(float(amt)))
+        if key in seen:
+            row["what"] = {**row["what"], "s": "похоже, этот же чек уже есть ниже — второй раз не вносить",
+                           "warn": True}
+        else:
+            seen[key] = r.id
     ctx = _base_ctx(request, user, site, db, "today")
     ctx.update({"rows": rows, "can_write": user.role in WRITE_ROLES,
                 "skipped": request.query_params.get("skipped"), "done": request.query_params.get("done"),
